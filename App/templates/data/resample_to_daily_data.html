@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Resample to Daily Data</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <!-- Bootstrap CDN for styling -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body>
+    <div class="container mt-5">
+        <h1 class="mb-4">股票数据重采样</h1>
+        <p><strong>股票代码：</strong> {{ stock_code }}</p>
+        <p><strong>月份：</strong> {{ month }}</p>
+        
+        <!-- 上传文件表单 -->
+        <form method="POST" enctype="multipart/form-data">
+            <div class="mb-3">
+                <label for="fileInput" class="form-label">选择 CSV 文件:</label>
+                <input type="file" class="form-control" id="fileInput" name="file">
+            </div>
+            <button type="submit" class="btn btn-primary">开始重采样</button>
+        </form>
+
+        <!-- Flash 消息 -->
+        {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+            <div class="mt-3">
+                {% for category, message in messages %}
+                <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+                    {{ message }}
+                    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                </div>
+                {% endfor %}
+            </div>
+        {% endif %}
+        {% endwith %}
+
+        <!-- 显示转换后的日数据 -->
+        {% if data_daily is not none %}
+        <div class="mt-5">
+            <h2>转换后的日数据</h2>
+            <table class="table table-striped table-bordered">
+                <thead>
+                    <tr>
+                        {% for col in data_daily.columns %}
+                        <th>{{ col }}</th>
+                        {% endfor %}
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in data_daily.values %}
+                    <tr>
+                        {% for cell in row %}
+                        <td>{{ cell }}</td>
+                        {% endfor %}
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% endif %}
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

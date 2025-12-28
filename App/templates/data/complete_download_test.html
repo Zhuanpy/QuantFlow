@@ -1,0 +1,358 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container">
+    <div class="header">
+        <h1>完整下载流程测试</h1>
+        <p>测试1分钟数据完整下载流程：下载 → 分季度保存 → 15分钟转换 → 日线转换 → 更新统计</p>
+    </div>
+
+    <div class="test-section">
+        <h2>单个股票测试</h2>
+        <div class="form-group">
+            <label for="singleStockCode">股票代码:</label>
+            <input type="text" id="singleStockCode" placeholder="如：000001" value="000001">
+            <label for="singleDays">下载天数:</label>
+            <input type="number" id="singleDays" value="1" min="1" max="30">
+            <button id="testSingleBtn" class="btn btn-primary">测试单个股票</button>
+        </div>
+        
+        <div id="singleResult" class="result-section" style="display: none;">
+            <h3>测试结果:</h3>
+            <div id="singleResultContent"></div>
+        </div>
+    </div>
+
+    <div class="test-section">
+        <h2>批量股票测试</h2>
+        <div class="form-group">
+            <label for="batchStockCodes">股票代码列表 (每行一个):</label>
+            <textarea id="batchStockCodes" rows="5" placeholder="000001&#10;000002&#10;000003">000001
+000002</textarea>
+            <label for="batchDays">下载天数:</label>
+            <input type="number" id="batchDays" value="1" min="1" max="30">
+            <button id="testBatchBtn" class="btn btn-primary">测试批量下载</button>
+        </div>
+        
+        <div id="batchResult" class="result-section" style="display: none;">
+            <h3>批量测试结果:</h3>
+            <div id="batchResultContent"></div>
+        </div>
+    </div>
+
+    <div class="test-section">
+        <h2>流程步骤说明</h2>
+        <div class="steps-info">
+            <div class="step">
+                <span class="step-number">1</span>
+                <span class="step-text">下载1分钟数据</span>
+            </div>
+            <div class="step">
+                <span class="step-number">2</span>
+                <span class="step-text">分季度保存数据</span>
+            </div>
+            <div class="step">
+                <span class="step-number">3</span>
+                <span class="step-text">转换为15分钟数据</span>
+            </div>
+            <div class="step">
+                <span class="step-number">4</span>
+                <span class="step-text">转换为日线数据</span>
+            </div>
+            <div class="step">
+                <span class="step-number">5</span>
+                <span class="step-text">更新下载统计表单</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.container {
+    max-width: 1200px;
+    margin: 2rem auto;
+    padding: 0 1rem;
+}
+
+.header {
+    text-align: center;
+    margin-bottom: 3rem;
+    padding: 2rem;
+    background: var(--card-background);
+    border-radius: 1rem;
+    box-shadow: var(--shadow-md);
+}
+
+.test-section {
+    background: var(--card-background);
+    border-radius: 1rem;
+    padding: 2rem;
+    margin-bottom: 2rem;
+    box-shadow: var(--shadow-md);
+}
+
+.form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    margin-bottom: 2rem;
+}
+
+.form-group label {
+    font-weight: bold;
+    color: var(--text-primary);
+}
+
+.form-group input, .form-group textarea {
+    padding: 0.75rem;
+    border: 1px solid var(--border-color);
+    border-radius: 0.5rem;
+    font-size: 1rem;
+}
+
+.btn {
+    padding: 0.75rem 1.5rem;
+    border: none;
+    border-radius: 0.5rem;
+    font-size: 1rem;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.btn-primary {
+    background: var(--primary-color);
+    color: white;
+}
+
+.btn-primary:hover {
+    background: var(--primary-hover);
+}
+
+.result-section {
+    background: var(--background-secondary);
+    border-radius: 0.5rem;
+    padding: 1.5rem;
+    margin-top: 1rem;
+}
+
+.steps-info {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.step {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 1rem;
+    background: var(--background-secondary);
+    border-radius: 0.5rem;
+}
+
+.step-number {
+    background: var(--primary-color);
+    color: white;
+    width: 2rem;
+    height: 2rem;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+}
+
+.step-text {
+    font-size: 1.1rem;
+    color: var(--text-primary);
+}
+
+.success {
+    color: #28a745;
+    font-weight: bold;
+}
+
+.error {
+    color: #dc3545;
+    font-weight: bold;
+}
+
+.warning {
+    color: #ffc107;
+    font-weight: bold;
+}
+
+.step-result {
+    margin-left: 1rem;
+    padding: 0.25rem 0.5rem;
+    border-radius: 0.25rem;
+    font-size: 0.9rem;
+}
+
+.step-success {
+    background: #d4edda;
+    color: #155724;
+}
+
+.step-failed {
+    background: #f8d7da;
+    color: #721c24;
+}
+</style>
+
+<script>
+document.getElementById('testSingleBtn').onclick = function() {
+    const stockCode = document.getElementById('singleStockCode').value.trim();
+    const days = parseInt(document.getElementById('singleDays').value);
+    
+    if (!stockCode) {
+        alert('请输入股票代码');
+        return;
+    }
+    
+    this.disabled = true;
+    this.textContent = '测试中...';
+    
+    fetch('{{ url_for("download_data_bp.complete_download_single") }}', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            stock_code: stockCode,
+            days: days
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        displaySingleResult(data);
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        displaySingleResult({
+            success: false,
+            message: '请求失败: ' + error.message
+        });
+    })
+    .finally(() => {
+        this.disabled = false;
+        this.textContent = '测试单个股票';
+    });
+};
+
+document.getElementById('testBatchBtn').onclick = function() {
+    const stockCodesText = document.getElementById('batchStockCodes').value.trim();
+    const days = parseInt(document.getElementById('batchDays').value);
+    
+    if (!stockCodesText) {
+        alert('请输入股票代码列表');
+        return;
+    }
+    
+    const stockCodes = stockCodesText.split('\n').map(code => code.trim()).filter(code => code);
+    
+    if (stockCodes.length === 0) {
+        alert('请输入有效的股票代码');
+        return;
+    }
+    
+    this.disabled = true;
+    this.textContent = '测试中...';
+    
+    fetch('{{ url_for("download_data_bp.complete_download_batch") }}', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            stock_codes: stockCodes,
+            days: days
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        displayBatchResult(data);
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        displayBatchResult({
+            success: false,
+            message: '请求失败: ' + error.message
+        });
+    })
+    .finally(() => {
+        this.disabled = false;
+        this.textContent = '测试批量下载';
+    });
+};
+
+function displaySingleResult(data) {
+    const resultDiv = document.getElementById('singleResult');
+    const contentDiv = document.getElementById('singleResultContent');
+    
+    let html = `<div class="${data.success ? 'success' : 'error'}">${data.message}</div>`;
+    
+    if (data.steps) {
+        html += '<h4>步骤执行结果:</h4><ul>';
+        for (const [step, success] of Object.entries(data.steps)) {
+            const stepName = getStepName(step);
+            const stepClass = success ? 'step-success' : 'step-failed';
+            html += `<li>${stepName}: <span class="step-result ${stepClass}">${success ? '成功' : '失败'}</span></li>`;
+        }
+        html += '</ul>';
+    }
+    
+    if (data.data_info) {
+        html += '<h4>数据信息:</h4><ul>';
+        html += `<li>1分钟数据: ${data.data_info['1m_records']} 条</li>`;
+        html += `<li>15分钟数据: ${data.data_info['15m_records']} 条</li>`;
+        html += `<li>日线数据: ${data.data_info['daily_records']} 条</li>`;
+        html += '</ul>';
+    }
+    
+    contentDiv.innerHTML = html;
+    resultDiv.style.display = 'block';
+}
+
+function displayBatchResult(data) {
+    const resultDiv = document.getElementById('batchResult');
+    const contentDiv = document.getElementById('batchResultContent');
+    
+    let html = `<div class="${data.success ? 'success' : 'error'}">${data.message}</div>`;
+    
+    if (data.total !== undefined) {
+        html += `<h4>批量处理结果:</h4>`;
+        html += `<p>总计: ${data.total} 只股票</p>`;
+        html += `<p>成功: <span class="success">${data.success_count || 0}</span> 只</p>`;
+        html += `<p>失败: <span class="error">${data.failed_count || 0}</span> 只</p>`;
+    }
+    
+    if (data.details && data.details.length > 0) {
+        html += '<h4>详细结果:</h4><ul>';
+        data.details.forEach(detail => {
+            const statusClass = detail.success ? 'success' : 'error';
+            html += `<li>${detail.stock_code}: <span class="${statusClass}">${detail.success ? '成功' : '失败'}</span>`;
+            if (detail.message) {
+                html += ` - ${detail.message}`;
+            }
+            html += '</li>';
+        });
+        html += '</ul>';
+    }
+    
+    contentDiv.innerHTML = html;
+    resultDiv.style.display = 'block';
+}
+
+function getStepName(step) {
+    const stepNames = {
+        'download': '下载1分钟数据',
+        'quarterly_save': '分季度保存',
+        '15m_conversion': '15分钟转换',
+        'daily_conversion': '日线转换',
+        'record_update': '更新统计表单'
+    };
+    return stepNames[step] || step;
+}
+</script>
+{% endblock %}

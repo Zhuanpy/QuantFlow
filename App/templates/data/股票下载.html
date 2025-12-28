@@ -1,0 +1,234 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container">
+    <div class="header">
+        <h1>数据下载中心</h1>
+        <a href="{{ url_for('main_bp.index') }}" class="back-link">返回首页</a>
+    </div>
+
+    <div class="section-grid">
+        <section class="quick-actions">
+            <h3>快速操作</h3>
+            <div class="button-group">
+                <a href="{{url_for('download_data_bp.load_progress')}}" class="button">
+                    <span>下载股票1M数据</span>
+                </a>
+                <a href="{{url_for('dl_funds_awkward_bp.download_funds_awake_index')}}" class="button">
+                    <span>下载基金重仓数据</span>
+                </a>
+                <a href="#" class="button disabled">
+                    <span>通信达处理数据</span>
+                </a>
+            </div>
+        </section>
+
+        <section class="data-maintenance">
+            <h3>1分钟（1M）数据测试及维护</h3>
+            {% macro download_form(action_url, label_text, placeholder) %}
+            <form action="{{ url_for(action_url) }}" method="POST" class="download-form">
+                <div class="form-group">
+                    <label for="stock_code">{{ label_text }}</label>
+                    <input type="text" id="stock_code" name="stock_code" placeholder="{{ placeholder }}" required>
+                    <button type="submit" class="button">开始下载</button>
+                </div>
+            </form>
+            {% endmacro %}
+
+            <div class="download-section">
+                <h4>当日股票1分钟数据</h4>
+                <p class="function-name">函数：<code>stock_1m_1day</code></p>
+                {{ download_form('download_eastmoney_data.download_stock_1m_close_data_today_eastmoney', '股票代码', '如：002475') }}
+            </div>
+
+            <div class="download-section">
+                <h4>近5天股票1分钟数据</h4>
+                <p class="function-name">函数：<code>board_1m_multiple</code></p>
+                {{ download_form('download_eastmoney_data.download_stock_1m_5days_data', '股票代码', '如：002475') }}
+            </div>
+
+            <div class="download-section">
+                <h4>当日板块1分钟数据</h4>
+                <p class="function-name">函数：<code>board_1m_data</code></p>
+                {{ download_form('download_eastmoney_data.download_board_1m_close_data_today', '板块代码', '如：bk0420') }}
+            </div>
+
+            <div class="download-section">
+                <h4>板块近5天1分钟数据</h4>
+                <p class="function-name">函数：<code>board_1m_data</code></p>
+                {{ download_form('download_eastmoney_data.download_board_1m_close_data_multiple_days', '板块代码', '如：bk0420') }}
+            </div>
+
+            <div class="download-section">
+                <h4>基金重仓数据 (Request)</h4>
+                <p class="function-name">函数：<code>funds_awkward</code></p>
+                {{ download_form('download_eastmoney_data.download_funds_awkward_data', '基金代码', '如：003401') }}
+            </div>
+
+            <div class="download-section">
+                <h4>基金重仓数据 (Driver)</h4>
+                <p class="function-name">函数：<code>funds_awkward_by_driver</code></p>
+                {{ download_form('download_eastmoney_data.download_funds_awkward_data_by_driver', '基金代码', '如：003401') }}
+            </div>
+        </section>
+
+        <section class="process-guide">
+            <h3>通信达数据下载与处理流程</h3>
+            <div class="guide-content">
+                <p>总体思路：通过通信达手动下载数据后，使用Python进行解析和整理，并将数据存入数据库。</p>
+                <div class="guide-section">
+                    <h4>数据需求</h4>
+                    <p><strong>1M数据</strong>：每分钟的市场交易数据，用于后续实时或近实时分析。</p>
+                </div>
+            </div>
+        </section>
+    </div>
+</div>
+
+<style>
+    .container {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 20px;
+    }
+
+    .header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 30px;
+    }
+
+    .header h1 {
+        color: var(--text-primary);
+        margin: 0;
+    }
+
+    .back-link {
+        color: var(--primary-color);
+        text-decoration: none;
+        display: flex;
+        align-items: center;
+        gap: 5px;
+    }
+
+    .section-grid {
+        display: grid;
+        gap: 20px;
+    }
+
+    section {
+        background: var(--card-background);
+        border-radius: 8px;
+        padding: 20px;
+        box-shadow: var(--shadow-md);
+    }
+
+    section h3 {
+        color: var(--primary-color);
+        margin-top: 0;
+        margin-bottom: 20px;
+        padding-bottom: 10px;
+        border-bottom: 2px solid var(--background-color);
+    }
+
+    .button-group {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+    }
+
+    .button {
+        background-color: var(--primary-color);
+        color: white;
+        padding: 10px 20px;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        text-decoration: none;
+        font-size: 14px;
+        transition: all 0.3s ease;
+    }
+
+    .button:hover {
+        background-color: var(--secondary-color);
+    }
+
+    .button.disabled {
+        background-color: var(--text-secondary);
+        cursor: not-allowed;
+    }
+
+    .download-section {
+        background: var(--background-color);
+        padding: 15px;
+        border-radius: 6px;
+        margin-bottom: 15px;
+    }
+
+    .download-section h4 {
+        color: var(--text-primary);
+        margin: 0 0 10px 0;
+    }
+
+    .function-name {
+        color: var(--text-secondary);
+        font-size: 14px;
+        margin: 5px 0;
+    }
+
+    .function-name code {
+        background: var(--card-background);
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-family: monospace;
+    }
+
+    .download-form {
+        margin-top: 10px;
+    }
+
+    .form-group {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+    }
+
+    .form-group label {
+        min-width: 100px;
+        color: var(--text-primary);
+    }
+
+    .form-group input {
+        flex: 1;
+        padding: 8px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        font-size: 14px;
+    }
+
+    .guide-content {
+        color: var(--text-secondary);
+    }
+
+    .guide-section {
+        margin-top: 15px;
+    }
+
+    .guide-section h4 {
+        color: var(--text-primary);
+        margin-bottom: 10px;
+    }
+
+    @media (max-width: 768px) {
+        .form-group {
+            flex-direction: column;
+            align-items: stretch;
+        }
+
+        .form-group label {
+            margin-bottom: 5px;
+        }
+    }
+</style>
+{% endblock %}

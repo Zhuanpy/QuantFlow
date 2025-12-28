@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>基金数据下载</title>
+    <script>
+        function fetchDownloadStatus() {
+            fetch('/dl_funds/status')
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById('status').innerText = data.status;
+                    document.getElementById('progress').innerText = `${data.progress}%`;
+                })
+                .catch(error => console.error('Error fetching status:', error));
+        }
+
+        setInterval(fetchDownloadStatus, 3000); // 每3秒刷新一次状态
+    </script>
+</head>
+<body>
+    <h1>基金持仓数据下载</h1>
+    <p>任务状态: <span id="status">未开始</span></p>
+    <p>下载进度: <span id="progress">0%</span></p>
+    <button onclick="fetch('/dl_funds/start_download', { method: 'POST' })">启动下载</button>
+    <button onclick="fetch('/dl_funds/stop_download', { method: 'POST' })">停止下载</button>
+</body>
+</html>

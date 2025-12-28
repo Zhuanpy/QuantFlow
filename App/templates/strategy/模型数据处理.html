@@ -1,0 +1,883 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>股票数据处理中心</title>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary-color: #2563eb;
+            --secondary-color: #1e40af;
+            --success-color: #10b981;
+            --warning-color: #f59e0b;
+            --error-color: #ef4444;
+            --background-color: #f1f5f9;
+            --card-background: #ffffff;
+            --text-primary: #1e293b;
+            --text-secondary: #64748b;
+            --border-color: #e2e8f0;
+            --shadow-sm: 0 1px 3px rgba(0,0,0,0.12);
+            --shadow-md: 0 4px 6px rgba(0,0,0,0.1);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Noto Sans SC', sans-serif;
+            background-color: var(--background-color);
+            color: var(--text-primary);
+            line-height: 1.6;
+            padding: 2rem;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .card {
+            background: var(--card-background);
+            border-radius: 1rem;
+            padding: 2rem;
+            margin-bottom: 2rem;
+            box-shadow: var(--shadow-md);
+        }
+
+        h2 {
+            color: var(--primary-color);
+            margin-bottom: 1.5rem;
+            font-size: 1.5rem;
+            border-bottom: 2px solid var(--border-color);
+            padding-bottom: 0.5rem;
+        }
+
+        .input-group {
+            margin-bottom: 1.5rem;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 0.5rem;
+            color: var(--text-secondary);
+            font-weight: 500;
+        }
+
+        input[type="number"] {
+            width: 200px;
+            padding: 0.75rem;
+            border: 1px solid var(--border-color);
+            border-radius: 0.5rem;
+            font-size: 1rem;
+            transition: all 0.3s ease;
+        }
+
+        input[type="number"]:focus {
+            outline: none;
+            border-color: var(--primary-color);
+            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+        }
+
+        .button {
+            background-color: var(--primary-color);
+            color: white;
+            border: none;
+            padding: 0.75rem 1.5rem;
+            border-radius: 0.5rem;
+            cursor: pointer;
+            font-weight: 500;
+            transition: all 0.3s ease;
+        }
+
+        .button:hover {
+            background-color: var(--secondary-color);
+            transform: translateY(-1px);
+        }
+
+        .quarter-buttons {
+            display: flex;
+            gap: 1rem;
+            margin-top: 1rem;
+            flex-wrap: wrap;
+            justify-content: flex-start;
+        }
+
+        .quarter-button {
+            background-color: var(--card-background);
+            border: 2px solid var(--primary-color);
+            color: var(--primary-color);
+            padding: 0.75rem 1.5rem;
+            border-radius: 0.5rem;
+            cursor: pointer;
+            font-weight: 500;
+            transition: all 0.3s ease;
+            min-width: 120px;
+            max-width: 120px;
+            text-align: center;
+            margin-bottom: 0.5rem;
+        }
+
+        .quarter-button.full-year {
+            background-color: var(--secondary-color);
+            color: white;
+            border-color: var(--secondary-color);
+        }
+
+        .quarter-button:hover {
+            background-color: var(--primary-color);
+            color: white;
+            transform: translateY(-2px);
+        }
+
+        .quarter-button.full-year:hover {
+            background-color: var(--primary-color);
+            border-color: var(--primary-color);
+        }
+
+        .quarter-button.active {
+            background-color: var(--primary-color);
+            color: white;
+        }
+
+        .result-container {
+            margin-top: 2rem;
+            padding: 1rem;
+            border-radius: 0.5rem;
+            background-color: #f8fafc;
+            border: 1px solid var(--border-color);
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 6px;
+            background-color: var(--border-color);
+            border-radius: 3px;
+            margin-top: 1rem;
+            overflow: hidden;
+            display: none;
+        }
+
+        .progress-bar-fill {
+            height: 100%;
+            background-color: var(--primary-color);
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+
+        .status {
+            margin-top: 1rem;
+            padding: 1rem;
+            border-radius: 0.5rem;
+            display: none;
+        }
+
+        .status.success {
+            background-color: #f0fdf4;
+            color: var(--success-color);
+            border: 1px solid var(--success-color);
+        }
+
+        .status.error {
+            background-color: #fef2f2;
+            color: var(--error-color);
+            border: 1px solid var(--error-color);
+        }
+
+        /* 修改Home按钮样式 */
+        .home-button {
+            position: relative;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            background-color: var(--card-background);
+            border: 2px solid var(--primary-color);
+            color: var(--primary-color);
+            padding: 0.75rem 1.5rem;
+            border-radius: 0.5rem;
+            cursor: pointer;
+            font-weight: 500;
+            transition: all 0.3s ease;
+            text-decoration: none;
+            margin-bottom: 1rem;
+        }
+
+        .home-button:hover {
+            background-color: var(--primary-color);
+            color: white;
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-md);
+        }
+
+        .home-button svg {
+            width: 20px;
+            height: 20px;
+        }
+
+        @media (max-width: 768px) {
+            .home-button {
+                top: 1rem;
+                left: 1rem;
+            }
+            
+            body {
+                padding: 1rem;
+                padding-top: 4rem;
+            }
+
+            .quarter-buttons {
+                flex-wrap: wrap;
+            }
+
+            .quarter-button {
+                min-width: calc(50% - 0.5rem);
+            }
+        }
+
+        /* 添加新的样式 */
+        .processing-details {
+            margin-top: 1rem;
+            padding: 1rem;
+            background-color: var(--card-background);
+            border-radius: 0.5rem;
+            border: 1px solid var(--border-color);
+        }
+
+        .processing-details h3 {
+            color: var(--text-primary);
+            margin-bottom: 0.5rem;
+            font-size: 1.1rem;
+        }
+
+        .stock-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin-top: 0.5rem;
+        }
+
+        .stock-item {
+            background-color: var(--primary-color);
+            color: white;
+            padding: 0.25rem 0.5rem;
+            border-radius: 0.25rem;
+            font-size: 0.9rem;
+        }
+
+        .progress-details {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 0.5rem;
+        }
+
+        .progress-label {
+            color: var(--text-secondary);
+        }
+
+        .progress-value {
+            color: var(--text-primary);
+            font-weight: 500;
+        }
+
+        .status-success {
+            color: var(--success-color);
+        }
+
+        .status-error {
+            color: var(--error-color);
+        }
+
+        /* 修改命令行风格进度条样式 */
+        .cli-progress {
+            font-family: 'Consolas', 'Monaco', monospace;
+            background-color: var(--background-color);
+            color: var(--text-primary);
+            padding: 1rem;
+            border-radius: 0.5rem;
+            margin-top: 0.5rem;
+            white-space: pre;
+            font-size: 14px;
+            border: 1px solid var(--border-color);
+            box-shadow: var(--shadow-sm);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .cli-progress .progress-text {
+            color: var(--text-secondary);
+            margin-right: 0.5rem;
+        }
+
+        .cli-progress .bar {
+            color: var(--primary-color);
+            letter-spacing: -1px;
+            flex-grow: 1;
+            font-weight: bold;
+        }
+
+        .cli-progress .percentage {
+            color: var(--primary-color);
+            font-weight: bold;
+            min-width: 4em;
+            text-align: right;
+        }
+
+        /* 添加动画效果 */
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.7; }
+            100% { opacity: 1; }
+        }
+
+        .cli-progress.processing .bar,
+        .cli-progress.processing .percentage {
+            animation: pulse 1.5s ease-in-out infinite;
+        }
+
+        /* 成功和失败状态 */
+        .cli-progress.success .bar,
+        .cli-progress.success .percentage {
+            color: var(--success-color);
+        }
+
+        .cli-progress.error .bar,
+        .cli-progress.error .percentage {
+            color: var(--error-color);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <a href="{{ url_for('index_bp.index') }}" class="home-button">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+            </svg>
+            返回首页
+        </a>
+
+        <div class="card">
+            <h2>15分钟基础数据处理</h2>
+            <div class="input-group">
+                <label for="baseYearInput">选择年份</label>
+                <input type="number" id="baseYearInput" min="2000" max="2099" placeholder="请输入年份">
+                <button class="button" onclick="processBaseData()" id="processButton">处理基础数据</button>
+            </div>
+            <div class="progress-bar" id="baseProgress">
+                <div class="progress-bar-fill"></div>
+            </div>
+            <div class="cli-progress" id="cliProgress" style="display: none;">
+                <span class="progress-text">处理进度:</span>
+                <span class="bar"></span>
+                <span class="percentage">0%</span>
+            </div>
+            <div class="status" id="baseStatus"></div>
+            <div class="processing-details" id="processingDetails" style="display: none;">
+                <div class="progress-details">
+                    <span class="progress-label">总进度:</span>
+                    <span class="progress-value" id="progressPercentage">0%</span>
+                </div>
+                <div class="progress-details">
+                    <span class="progress-label">处理数量:</span>
+                    <span class="progress-value" id="progressCount">0/0</span>
+                </div>
+                <div class="progress-details">
+                    <span class="progress-label">成功:</span>
+                    <span class="progress-value status-success" id="successCount">0</span>
+                </div>
+                <div class="progress-details">
+                    <span class="progress-label">失败:</span>
+                    <span class="progress-value status-error" id="failedCount">0</span>
+                </div>
+                <h3>正在处理的股票:</h3>
+                <div class="stock-list" id="processingStocks"></div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>15分钟标准化数据处理</h2>
+            <div class="input-group">
+                <label for="standardYearInput">选择年份</label>
+                <input type="number" id="standardYearInput" min="2000" max="2099" placeholder="请输入年份">
+                <button class="button" onclick="generateQuarterButtons()" id="standardButton">生成季度选项</button>
+            </div>
+            <div class="quarter-buttons" id="quarterButtons"></div>
+            <div class="progress-bar" id="standardProgress">
+                <div class="progress-bar-fill"></div>
+            </div>
+            <div class="cli-progress" id="standardCliProgress" style="display: none;">
+                <span class="progress-text">处理进度:</span>
+                <span class="bar"></span>
+                <span class="percentage">0%</span>
+            </div>
+            <div class="status" id="standardStatus"></div>
+            <div class="processing-details" id="standardProcessingDetails" style="display: none;">
+                <div class="progress-details">
+                    <span class="progress-label">总进度:</span>
+                    <span class="progress-value" id="standardProgressPercentage">0%</span>
+                </div>
+                <div class="progress-details">
+                    <span class="progress-label">处理数量:</span>
+                    <span class="progress-value" id="standardProgressCount">0/0</span>
+                </div>
+                <div class="progress-details">
+                    <span class="progress-label">成功:</span>
+                    <span class="progress-value status-success" id="standardSuccessCount">0</span>
+                </div>
+                <div class="progress-details">
+                    <span class="progress-label">失败:</span>
+                    <span class="progress-value status-error" id="standardFailedCount">0</span>
+                </div>
+                <h3>正在处理的股票:</h3>
+                <div class="stock-list" id="standardProcessingStocks"></div>
+            </div>
+            <div class="result-container" id="result"></div>
+        </div>
+    </div>
+    
+    <script>
+        function showStatus(elementId, message, type) {
+            const status = document.getElementById(elementId);
+            status.innerHTML = message;
+            status.className = `status ${type}`;
+            status.style.display = 'block';
+
+            // 更新进度条状态
+            const cliProgress = document.getElementById('cliProgress');
+            if (type === 'error') {
+                cliProgress.className = 'cli-progress error';
+            } else if (type === 'success') {
+                cliProgress.className = 'cli-progress success';
+            }
+        }
+
+        function updateProgress(elementId, progress) {
+            const progressBar = document.getElementById(elementId);
+            const fill = progressBar.querySelector('.progress-bar-fill');
+            progressBar.style.display = 'block';
+            fill.style.width = `${progress}%`;
+
+            // 更新命令行风格进度条
+            const cliProgress = document.getElementById('cliProgress');
+            const barWidth = 40; // 进度条字符数
+            const filledWidth = Math.round((progress * barWidth) / 100);
+            const emptyWidth = barWidth - filledWidth;
+            
+            const bar = '█'.repeat(filledWidth) + '░'.repeat(emptyWidth);
+            cliProgress.style.display = 'flex'; // 改为flex布局
+            cliProgress.className = 'cli-progress processing'; // 添加处理中的动画效果
+            cliProgress.querySelector('.bar').textContent = bar;
+            cliProgress.querySelector('.percentage').textContent = `${progress.toFixed(1)}%`;
+
+            // 根据进度更新状态样式
+            if (progress >= 100) {
+                cliProgress.className = 'cli-progress success';
+            } else if (progress === 0) {
+                cliProgress.className = 'cli-progress';
+            }
+        }
+
+        function updateProcessingDetails(data) {
+            const details = document.getElementById('processingDetails');
+            details.style.display = 'block';
+            
+            // 更新进度百分比
+            document.getElementById('progressPercentage').textContent = 
+                `${data.percentage.toFixed(1)}%`;
+            
+            // 更新处理数量
+            document.getElementById('progressCount').textContent = 
+                `${data.current}/${data.total}`;
+            
+            // 更新成功数量
+            document.getElementById('successCount').textContent = 
+                data.success;
+            
+            // 更新失败数量
+            document.getElementById('failedCount').textContent = 
+                data.failed;
+            
+            // 更新正在处理的股票列表
+            const stockList = document.getElementById('processingStocks');
+            stockList.innerHTML = data.processing_stocks
+                .map(stock => `<span class="stock-item">${stock}</span>`)
+                .join('');
+        }
+
+        function processBaseData() {
+            const year = document.getElementById('baseYearInput').value;
+            if (!year) {
+                showStatus('baseStatus', '请输入有效的年份', 'error');
+                return;
+            }
+
+            // 禁用按钮
+            const processButton = document.getElementById('processButton');
+            processButton.disabled = true;
+            processButton.textContent = '处理中...';
+
+            // 重置进度显示
+            updateProgress('baseProgress', 0);
+            document.getElementById('cliProgress').style.display = 'flex';
+            showStatus('baseStatus', '正在处理基础数据...', 'success');
+
+            // 显示处理详情区域
+            document.getElementById('processingDetails').style.display = 'block';
+
+            // 开始轮询进度（在发送请求之前就开始）
+            startProgressPolling();
+
+            // 发起处理请求
+            fetch(`/RnnData/original_15M/${year}`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                }
+            })
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                return response.json();
+            })
+            .then(data => {
+                if (data.status === 'success') {
+                    showStatus('baseStatus', data.message, 'success');
+                } else {
+                    showStatus('baseStatus', data.message, 'error');
+                    stopProgressPolling();
+                }
+            })
+            .catch(error => {
+                showStatus('baseStatus', `处理失败: ${error.message}`, 'error');
+                stopProgressPolling();
+            })
+            .finally(() => {
+                // 恢复按钮状态
+                processButton.disabled = false;
+                processButton.textContent = '处理基础数据';
+            });
+        }
+
+        let progressInterval = null;
+        let isProcessing = false;
+
+        function stopProgressPolling() {
+            if (progressInterval) {
+                clearInterval(progressInterval);
+                progressInterval = null;
+            }
+            isProcessing = false;
+        }
+
+        function startProgressPolling() {
+            if (progressInterval) {
+                clearInterval(progressInterval);
+            }
+            
+            isProcessing = true;
+            let lastPercentage = 0;
+            let stableCount = 0;
+
+            progressInterval = setInterval(() => {
+                if (!isProcessing) {
+                    stopProgressPolling();
+                    return;
+                }
+
+                fetch('/RnnData/processing_progress')
+                    .then(response => response.json())
+                    .then(data => {
+                        const percentage = data.percentage;
+                        updateProgress('baseProgress', percentage);
+                        updateProcessingDetails(data);
+
+                        // 检查进度是否完成
+                        if (data.current >= data.total) {
+                            stopProgressPolling();
+                            // 隐藏处理详情区域
+                            setTimeout(() => {
+                                document.getElementById('processingDetails').style.display = 'none';
+                                document.getElementById('cliProgress').style.display = 'none';
+                            }, 3000);
+                        }
+                        // 检查进度是否停滞
+                        else if (percentage === lastPercentage) {
+                            stableCount++;
+                            // 如果进度停滞超过10秒，检查是否真的还在处理
+                            if (stableCount > 10) {
+                                fetch('/RnnData/processing_progress')
+                                    .then(response => response.json())
+                                    .then(checkData => {
+                                        if (checkData.current >= checkData.total) {
+                                            stopProgressPolling();
+                                        }
+                                    });
+                            }
+                        } else {
+                            stableCount = 0;
+                            lastPercentage = percentage;
+                        }
+                    })
+                    .catch(error => {
+                        console.error('获取进度信息失败:', error);
+                        stableCount++;
+                        // 如果连续失败超过5次，停止轮询
+                        if (stableCount > 5) {
+                            stopProgressPolling();
+                        }
+                    });
+            }, 500); // 更新频率提高到每500ms一次
+        }
+
+        function generateQuarterButtons() {
+            const year = document.getElementById('standardYearInput').value;
+            if (!year) {
+                showStatus('standardStatus', '请输入有效的年份', 'error');
+                return;
+            }
+
+            const buttonContainer = document.getElementById('quarterButtons');
+            buttonContainer.innerHTML = '';
+            
+            // 添加全年按钮
+            const fullYearButton = document.createElement('button');
+            fullYearButton.className = 'quarter-button full-year';
+            fullYearButton.innerText = '全年数据';
+            fullYearButton.onclick = () => processFullYearData(year);
+            buttonContainer.appendChild(fullYearButton);
+            
+            // 添加季度按钮
+            for (let i = 1; i <= 4; i++) {
+                const button = document.createElement('button');
+                button.className = 'quarter-button';
+                button.innerText = `第${i}季度`;
+                button.onclick = () => processQuarterData(year, i);
+                buttonContainer.appendChild(button);
+            }
+        }
+
+        function processQuarterData(year, quarter) {
+            // 禁用所有季度按钮
+            const buttons = document.querySelectorAll('.quarter-button');
+            buttons.forEach(btn => btn.disabled = true);
+
+            updateProgress('standardProgress', 0);
+            document.getElementById('standardCliProgress').style.display = 'flex';
+            showStatus('standardStatus', `正在处理 ${year}年第${quarter}季度数据...`, 'success');
+
+            // 显示处理详情区域
+            document.getElementById('standardProcessingDetails').style.display = 'block';
+
+            // 更新按钮状态
+            document.querySelectorAll('.quarter-button').forEach((btn, index) => {
+                btn.classList.toggle('active', index === quarter);
+            });
+
+            // 开始轮询进度
+            startStandardProgressPolling();
+
+            // 调用后端处理季度数据的路由
+            fetch(`/RnnData/process_standard_data/${year}/${quarter}`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                }
+            })
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                return response.json();
+            })
+            .then(data => {
+                if (data.status === 'success') {
+                    showStatus('standardStatus', data.message, 'success');
+                    if (data.data && data.data.result) {
+                        document.getElementById('result').innerHTML = `
+                            <pre>${JSON.stringify(data.data.result, null, 2)}</pre>
+                        `;
+                    }
+                } else {
+                    showStatus('standardStatus', data.message, 'error');
+                    stopStandardProgressPolling();
+                }
+            })
+            .catch(error => {
+                showStatus('standardStatus', `处理失败: ${error.message}`, 'error');
+                stopStandardProgressPolling();
+            })
+            .finally(() => {
+                // 恢复按钮状态
+                buttons.forEach(btn => btn.disabled = false);
+            });
+        }
+
+        function processFullYearData(year) {
+            // 禁用所有季度按钮
+            const buttons = document.querySelectorAll('.quarter-button');
+            buttons.forEach(btn => btn.disabled = true);
+
+            updateProgress('standardProgress', 0);
+            document.getElementById('standardCliProgress').style.display = 'flex';
+            showStatus('standardStatus', `正在处理 ${year}年全年数据...`, 'success');
+
+            // 显示处理详情区域
+            document.getElementById('standardProcessingDetails').style.display = 'block';
+
+            // 更新按钮状态
+            document.querySelectorAll('.quarter-button').forEach(btn => {
+                btn.classList.remove('active');
+                if (btn.classList.contains('full-year')) {
+                    btn.classList.add('active');
+                }
+            });
+
+            // 开始轮询进度
+            startStandardProgressPolling();
+
+            // 调用后端处理全年数据的路由
+            fetch(`/RnnData/process_standard_data/${year}/full`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                }
+            })
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                return response.json();
+            })
+                .then(data => {
+                if (data.status === 'success') {
+                    showStatus('standardStatus', data.message, 'success');
+                    if (data.data && data.data.result) {
+                        document.getElementById('result').innerHTML = `
+                            <pre>${JSON.stringify(data.data.result, null, 2)}</pre>
+                        `;
+                    }
+                } else {
+                    showStatus('standardStatus', data.message, 'error');
+                    stopStandardProgressPolling();
+                }
+            })
+            .catch(error => {
+                showStatus('standardStatus', `处理失败: ${error.message}`, 'error');
+                stopStandardProgressPolling();
+            })
+            .finally(() => {
+                // 恢复按钮状态
+                buttons.forEach(btn => btn.disabled = false);
+            });
+        }
+
+        let standardProgressInterval = null;
+        let isStandardProcessing = false;
+
+        function stopStandardProgressPolling() {
+            if (standardProgressInterval) {
+                clearInterval(standardProgressInterval);
+                standardProgressInterval = null;
+            }
+            isStandardProcessing = false;
+        }
+
+        function startStandardProgressPolling() {
+            if (standardProgressInterval) {
+                clearInterval(standardProgressInterval);
+            }
+            
+            isStandardProcessing = true;
+            let lastPercentage = 0;
+            let stableCount = 0;
+
+            standardProgressInterval = setInterval(() => {
+                if (!isStandardProcessing) {
+                    stopStandardProgressPolling();
+                    return;
+                }
+
+                fetch('/RnnData/processing_progress')
+                    .then(response => response.json())
+                    .then(data => {
+                        const percentage = data.percentage;
+                        updateProgress('standardProgress', percentage);
+                        updateStandardProcessingDetails(data);
+
+                        // 更新命令行风格进度条
+                        const cliProgress = document.getElementById('standardCliProgress');
+                        const barWidth = 40;
+                        const filledWidth = Math.round((percentage * barWidth) / 100);
+                        const emptyWidth = barWidth - filledWidth;
+                        
+                        const bar = '█'.repeat(filledWidth) + '░'.repeat(emptyWidth);
+                        cliProgress.style.display = 'flex';
+                        cliProgress.className = 'cli-progress processing';
+                        cliProgress.querySelector('.bar').textContent = bar;
+                        cliProgress.querySelector('.percentage').textContent = `${percentage.toFixed(1)}%`;
+
+                        // 检查进度是否完成
+                        if (data.current >= data.total) {
+                            stopStandardProgressPolling();
+                            cliProgress.className = 'cli-progress success';
+                            // 隐藏处理详情区域
+                            setTimeout(() => {
+                                document.getElementById('standardProcessingDetails').style.display = 'none';
+                                document.getElementById('standardCliProgress').style.display = 'none';
+                            }, 3000);
+                        }
+                        // 检查进度是否停滞
+                        else if (percentage === lastPercentage) {
+                            stableCount++;
+                            if (stableCount > 10) {
+                                fetch('/RnnData/processing_progress')
+                                    .then(response => response.json())
+                                    .then(checkData => {
+                                        if (checkData.current >= checkData.total) {
+                                            stopStandardProgressPolling();
+                                        }
+                                    });
+                            }
+                        } else {
+                            stableCount = 0;
+                            lastPercentage = percentage;
+                        }
+                    })
+                    .catch(error => {
+                        console.error('获取进度信息失败:', error);
+                        stableCount++;
+                        if (stableCount > 5) {
+                            stopStandardProgressPolling();
+                        }
+                    });
+            }, 500);
+        }
+
+        function updateStandardProcessingDetails(data) {
+            const details = document.getElementById('standardProcessingDetails');
+            details.style.display = 'block';
+            
+            document.getElementById('standardProgressPercentage').textContent = 
+                `${data.percentage.toFixed(1)}%`;
+            
+            document.getElementById('standardProgressCount').textContent = 
+                `${data.current}/${data.total}`;
+            
+            document.getElementById('standardSuccessCount').textContent = 
+                data.success;
+            
+            document.getElementById('standardFailedCount').textContent = 
+                data.failed;
+            
+            const stockList = document.getElementById('standardProcessingStocks');
+            stockList.innerHTML = data.processing_stocks
+                .map(stock => `<span class="stock-item">${stock}</span>`)
+                .join('');
+        }
+    </script>
+</body>
+</html>

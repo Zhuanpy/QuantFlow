@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ title }}</title>
+    <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='quant.ico') }}">
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary-color: #2563eb;
+            --secondary-color: #1e40af;
+            --background-color: #f1f5f9;
+            --card-background: #ffffff;
+            --text-primary: #1e293b;
+            --text-secondary: #64748b;
+            --success-color: #10b981;
+            --warning-color: #f59e0b;
+            --shadow-sm: 0 1px 3px rgba(0,0,0,0.12);
+            --shadow-md: 0 4px 6px rgba(0,0,0,0.1);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Noto Sans SC', sans-serif;
+            background-color: var(--background-color);
+            color: var(--text-primary);
+            line-height: 1.6;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .navbar {
+            background-color: var(--card-background);
+            box-shadow: var(--shadow-md);
+            padding: 1rem 2rem;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .nav-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .nav-logo {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--primary-color);
+            text-decoration: none;
+        }
+
+        .nav-menu {
+            display: flex;
+            gap: 2rem;
+            list-style: none;
+        }
+
+        .nav-item a {
+            color: var(--text-primary);
+            text-decoration: none;
+            font-weight: 500;
+            padding: 0.5rem 1rem;
+            border-radius: 0.5rem;
+            transition: all 0.3s ease;
+        }
+
+        .nav-item a:hover {
+            background-color: var(--background-color);
+            color: var(--primary-color);
+        }
+
+        .nav-item a.active {
+            background-color: var(--primary-color);
+            color: white;
+        }
+
+        main {
+            flex: 1;
+            padding: 2rem;
+            width: 100%;
+        }
+
+        footer {
+            background-color: var(--card-background);
+            padding: 1.5rem;
+            text-align: center;
+            color: var(--text-secondary);
+            box-shadow: var(--shadow-md);
+        }
+
+        @media (max-width: 768px) {
+            .nav-menu {
+                gap: 1rem;
+            }
+
+            .nav-item a {
+                padding: 0.5rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-container">
+            <a href="{{ url_for('main_bp.index') }}" class="nav-logo">智能股票交易系统</a>
+            <ul class="nav-menu">
+                <li class="nav-item">
+                    <a href="{{ url_for('dl_bp.dl') }}" {% if request.endpoint == 'dl_bp.dl' %}class="active"{% endif %}>数据获取</a>
+                </li>
+                <li class="nav-item">
+                    <a href="{{ url_for('rnn_bp.rnn') }}" {% if request.endpoint == 'rnn_bp.rnn' %}class="active"{% endif %}>RNN模型</a>
+                </li>
+                <li class="nav-item">
+                    <a href="{{ url_for('issue_bp.issues') }}" {% if request.endpoint == 'issue_bp.issues' %}class="active"{% endif %}>问题管理</a>
+                </li>
+            </ul>
+        </div>
+    </nav>
+
+    <main>
+        {% block content %}
+        {% endblock %}
+    </main>
+
+    <footer>
+        <p>© {{ year }} 智能股票交易系统. All rights reserved.</p>
+    </footer>
+</body>
+</html>

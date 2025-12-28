@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>问题解决页面</title>
+    <style>
+        /* 重置样式 */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Arial', sans-serif;
+            line-height: 1.6;
+            background-color: #f4f4f4;
+            color: #333;
+            padding: 20px;
+        }
+
+        h1 {
+            text-align: center;
+            margin-bottom: 20px;
+            color: #2c3e50;
+        }
+
+        /* Container */
+        .container {
+            width: 100%;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 20px;
+            text-align: center; /* 让容器内的内容居中 */
+        }
+
+        /* 问题列表 */
+        section {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 20px;
+        }
+
+        .issue {
+            background-color: #ffffff;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            padding: 20px;
+            width: 100%;
+            max-width: 600px;
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+            margin: 0 auto; /* 让问题框居中 */
+        }
+
+        .issue:hover {
+            transform: translateY(-8px);
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+        }
+
+        .issue h5 {
+            font-size: 1.1rem;
+            font-weight: bold;
+            margin-bottom: 8px;
+            color: #2c3e50;
+        }
+
+        /* 问题内容 */
+        .question-content {
+            background-color: #ecf0f1; /* 浅蓝色背景 */
+            padding: 10px;
+            border-radius: 5px;
+            color: #2980b9; /* 问题文本蓝色 */
+            font-size: 1rem;
+            margin-bottom: 12px;
+        }
+
+        /* 解决方案 */
+        .solution-content {
+            background-color: #f9f8e8; /* 浅黄色背景 */
+            padding: 10px;
+            border-radius: 5px;
+            color: #f39c12; /* 解决方案文本橙色 */
+            font-size: 1rem;
+            margin-bottom: 12px;
+        }
+
+        /* 状态 */
+        .status {
+            font-weight: bold;
+            margin-bottom: 12px;
+            padding: 8px;
+            border-radius: 5px;
+            color: #fff;
+        }
+
+        .status-resolved {
+            background-color: #2ecc71; /* 绿色：已解决 */
+        }
+
+        .status-pending {
+            background-color: #f39c12; /* 橙色：待解决 */
+        }
+
+        .status-open {
+            background-color: #e74c3c; /* 红色：未解决 */
+        }
+
+        /* 修改状态链接 */
+        a {
+            color: #2980b9;
+            text-decoration: none;
+            font-weight: bold;
+        }
+
+        a:hover {
+            text-decoration: underline;
+        }
+
+        /* 删除按钮 */
+        .delete-btn {
+            background-color: #e74c3c;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 5px;
+            font-size: 0.9rem;
+            cursor: pointer;
+            transition: background-color 0.3s ease;
+        }
+
+        .delete-btn:hover {
+            background-color: #c0392b;
+        }
+
+        /* 添加新问题链接 */
+        .add-issue-link {
+            display: inline-block;
+            margin-top: 30px;
+            padding: 10px 20px;
+            background-color: #2ecc71;
+            color: white;
+            border-radius: 5px;
+            font-size: 1rem;
+            font-weight: bold;
+            width: 200px;
+            text-decoration: none;
+            transition: background-color 0.3s ease;
+        }
+
+        .add-issue-link:hover {
+            background-color: #27ae60;
+        }
+
+        /* 响应式设计 */
+        @media (max-width: 768px) {
+            .issue {
+                width: 90%;
+            }
+
+            .add-issue-link {
+                width: 100%;
+            }
+        }
+
+    </style>
+</head>
+
+<body>
+
+    <div class="container">
+        <h1>问题列表</h1>
+
+        <section>
+            {% for issue in issues %}
+            <div class="issue">
+                <h5 class="question">问题：</h5>
+                <p class="question-content">{{ issue.question }}</p>
+                
+                <h5 class="solution">解决方案：</h5>
+                <p class="solution-content">{{ issue.solution }}</p>
+                
+                <h5 class="status">状态：</h5>
+                <p class="status {% if issue.status == '已解决' %}status-resolved{% elif issue.status == '待解决' %}status-pending{% else %}status-open{% endif %}">
+                    {{ issue.status }}
+                </p>
+                
+                <a href="{{ url_for('stock_issue_bp.update_status', id=issue.id) }}">修改状态</a>
+                
+                <!-- 添加删除按钮 -->
+                <form action="{{ url_for('stock_issue_bp.delete_issue', id=issue.id) }}" method="POST" style="display:inline;">
+                    <button type="submit" class="delete-btn" onclick="return confirm('确定删除这个问题吗？');">删除</button>
+                </form>
+            </div>
+            {% endfor %}
+        </section>
+
+        <!-- 添加新问题按钮居中 -->
+        <a href="{{ url_for('stock_issue_bp.add_issue') }}" class="add-issue-link">添加新问题</a>
+    </div>
+
+</body>
+
+</html>

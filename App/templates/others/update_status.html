@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>修改问题状态</title>
+    <style>
+        /* 重置样式 */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Arial', sans-serif;
+            background-color: #f4f4f4;
+            color: #333;
+            padding: 20px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+
+        h1 {
+            text-align: center;
+            color: #2c3e50;
+            margin-bottom: 30px;
+        }
+
+        /* Form 样式 */
+        .form-container {
+            background-color: #ffffff;
+            border-radius: 8px;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
+            padding: 30px;
+            width: 100%;
+            max-width: 600px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            font-weight: bold;
+            display: block;
+            margin-bottom: 8px;
+            color: #333;
+        }
+
+        .form-group select {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            font-size: 1rem;
+            color: #333;
+            background-color: #f9f9f9;
+        }
+
+        .form-group select:focus {
+            border-color: #2980b9;
+            outline: none;
+            background-color: #ecf0f1;
+        }
+
+        button {
+            width: 100%;
+            padding: 12px;
+            background-color: #2ecc71;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            font-size: 1.1rem;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background-color 0.3s ease;
+        }
+
+        button:hover {
+            background-color: #27ae60;
+        }
+
+        /* 返回链接 */
+        .back-link {
+            display: block;
+            text-align: center;
+            margin-top: 20px;
+            font-size: 1rem;
+            color: #2980b9;
+            text-decoration: none;
+        }
+
+        .back-link:hover {
+            text-decoration: underline;
+        }
+
+    </style>
+</head>
+<body>
+
+    <div class="form-container">
+        <h1>修改问题状态</h1>
+        <form action="{{ url_for('stock_issue_bp.update_status', id=issue.id) }}" method="POST">
+            <div class="form-group">
+                <label for="status">选择状态：</label>
+                <select id="status" name="status">
+                    <option value="未解决" {% if issue.status == '未解决' %}selected{% endif %}>未解决</option>
+                    <option value="已解决" {% if issue.status == '已解决' %}selected{% endif %}>已解决</option>
+                </select>
+            </div>
+            <button type="submit">提交</button>
+        </form>
+
+        <a href="{{ url_for('stock_issue_bp.issues_index') }}" class="back-link">返回问题列表</a>
+    </div>
+
+</body>
+</html>

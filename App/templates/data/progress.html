@@ -1,0 +1,175 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container">
+    <div class="header">
+        <h1>股票数据下载</h1>
+        <a href="{{ url_for('dl_bp.dl') }}" class="back-link">返回下载中心</a>
+    </div>
+
+    <div class="control-panel">
+        <button id="start-download" class="button">开始下载</button>
+        <button id="stop-download" class="button warning">结束下载</button>
+        <p id="download-status" class="status-text">下载状态：未开始</p>
+    </div>
+
+    <div class="progress-container">
+        <div class="progress-bar">
+            <div class="progress-fill" id="progress-bar">
+                <div class="progress-text" id="progress-text">0%</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+    .container {
+        max-width: 800px;
+        margin: 0 auto;
+        padding: 20px;
+    }
+
+    .header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 30px;
+    }
+
+    .header h1 {
+        color: var(--text-primary);
+        margin: 0;
+    }
+
+    .back-link {
+        color: var(--primary-color);
+        text-decoration: none;
+        display: flex;
+        align-items: center;
+        gap: 5px;
+    }
+
+    .control-panel {
+        background: var(--card-background);
+        padding: 20px;
+        border-radius: 8px;
+        box-shadow: var(--shadow-md);
+        margin-bottom: 20px;
+        text-align: center;
+    }
+
+    .button {
+        background-color: var(--primary-color);
+        color: white;
+        border: none;
+        border-radius: 4px;
+        padding: 12px 24px;
+        font-size: 16px;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        margin: 0 10px;
+    }
+
+    .button:hover {
+        background-color: var(--secondary-color);
+        transform: translateY(-2px);
+    }
+
+    .button.warning {
+        background-color: var(--warning-color);
+    }
+
+    .button.warning:hover {
+        background-color: #e67e22;
+    }
+
+    .status-text {
+        margin-top: 20px;
+        font-size: 18px;
+        color: var(--text-primary);
+        font-weight: 500;
+    }
+
+    .progress-container {
+        background: var(--card-background);
+        padding: 20px;
+        border-radius: 8px;
+        box-shadow: var(--shadow-md);
+    }
+
+    .progress-bar {
+        width: 100%;
+        height: 30px;
+        background-color: var(--background-color);
+        border-radius: 15px;
+        overflow: hidden;
+    }
+
+    .progress-fill {
+        height: 100%;
+        width: 0;
+        background-color: var(--success-color);
+        transition: width 0.5s ease;
+        position: relative;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .progress-text {
+        color: white;
+        font-weight: bold;
+        text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.2);
+        z-index: 1;
+    }
+
+    @media (max-width: 768px) {
+        .container {
+            padding: 10px;
+        }
+
+        .button {
+            padding: 10px 20px;
+            font-size: 14px;
+        }
+    }
+</style>
+
+<script>
+    document.getElementById('start-download').onclick = function() {
+        fetch('/download/start-download', {
+            method: 'POST'
+        }).then(response => {
+            if (response.ok) {
+                updateDownloadStatus();
+            } else {
+                alert('下载正在进行中或已结束！');
+            }
+        });
+    };
+
+    document.getElementById('stop-download').onclick = function() {
+        fetch('/download/stop-download', {
+            method: 'POST'
+        }).then(response => {
+            if (response.ok) {
+                document.getElementById('download-status').innerText = "下载状态：已结束";
+                document.getElementById('progress-bar').style.width = "0%";
+                document.getElementById('progress-text').innerText = "0%";
+            }
+        });
+    };
+
+    function updateDownloadStatus() {
+        setInterval(() => {
+            fetch('/download/download-status')
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById('download-status').innerText = "下载状态：" + data.status;
+                    document.getElementById('progress-bar').style.width = data.progress + "%";
+                    document.getElementById('progress-text').innerText = data.progress + "%";
+                });
+        }, 1000);
+    }
+</script>
+{% endblock %}

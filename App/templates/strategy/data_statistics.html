@@ -1,0 +1,776 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container">
+    <div class="header">
+        <h1>数据统计表单</h1>
+        <div class="header-actions">
+            <button id="refreshBtn" class="btn btn-secondary">刷新数据</button>
+            <a href="{{ url_for('RnnData.rnn_data_page') }}" class="btn btn-outline">返回数据管理</a>
+            <a href="{{ url_for('main_bp.index') }}" class="btn btn-outline">返回首页</a>
+        </div>
+    </div>
+
+    <!-- 年份选择 -->
+    <div class="year-selector">
+        <div class="form-group">
+            <label for="yearSelect">选择年份</label>
+            <select id="yearSelect" class="form-control">
+                <option value="">请选择年份</option>
+                <option value="2025">2025年</option>
+                <option value="2024">2024年</option>
+                <option value="2023">2023年</option>
+                <option value="2022">2022年</option>
+                <option value="2021">2021年</option>
+                <option value="2020">2020年</option>
+            </select>
+        </div>
+    </div>
+
+    <!-- 总体统计 -->
+    <div class="overview-stats" id="overviewStats" style="display: none;">
+        <h2>总体统计</h2>
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-icon">📊</div>
+                <div class="stat-content">
+                    <h3>总季度数</h3>
+                    <div class="stat-number" id="totalQuarters">4</div>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon">✅</div>
+                <div class="stat-content">
+                    <h3>完成季度</h3>
+                    <div class="stat-number" id="completedQuarters">0</div>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon">⚠️</div>
+                <div class="stat-content">
+                    <h3>部分完成</h3>
+                    <div class="stat-number" id="partialQuarters">0</div>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon">❌</div>
+                <div class="stat-content">
+                    <h3>未开始</h3>
+                    <div class="stat-number" id="incompleteQuarters">0</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 季度详细统计表格 -->
+    <div class="quarter-table-panel" id="quarterTablePanel" style="display: none;">
+        <div class="panel-header">
+            <h2>季度数据详细统计</h2>
+            <div class="panel-actions">
+                <button id="exportBtn" class="btn btn-success">导出统计</button>
+                <button id="refreshTableBtn" class="btn btn-secondary">刷新表格</button>
+            </div>
+        </div>
+        <div class="table-container">
+            <table class="data-table" id="quarterTable">
+                <thead>
+                    <tr>
+                        <th>季度</th>
+                        <th>原始数据状态</th>
+                        <th>15分钟数据状态</th>
+                        <th>训练数据状态</th>
+                        <th>完成度</th>
+                        <th>文件数量</th>
+                        <th>数据大小</th>
+                        <th>最后更新</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody id="quarterTableBody">
+                    <!-- 数据将通过JavaScript动态加载 -->
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- 季度卡片视图 -->
+    <div class="quarter-cards" id="quarterCards" style="display: none;">
+        <h2>季度数据状态卡片</h2>
+        <div class="cards-grid" id="cardsGrid">
+            <!-- 季度卡片将通过JavaScript动态加载 -->
+        </div>
+    </div>
+
+    <!-- 视图切换 -->
+    <div class="view-controls">
+        <div class="view-toggle">
+            <button id="tableViewBtn" class="btn btn-primary active">表格视图</button>
+            <button id="cardViewBtn" class="btn btn-outline">卡片视图</button>
+        </div>
+    </div>
+</div>
+
+<style>
+.container {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 20px;
+}
+
+.header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 30px;
+    padding-bottom: 20px;
+    border-bottom: 2px solid var(--border-color);
+}
+
+.header h1 {
+    color: var(--text-primary);
+    margin: 0;
+    font-size: 2rem;
+}
+
+.header-actions {
+    display: flex;
+    gap: 10px;
+}
+
+.year-selector {
+    background: var(--card-background);
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 30px;
+    box-shadow: var(--shadow-sm);
+}
+
+.form-group {
+    display: flex;
+    flex-direction: column;
+    max-width: 300px;
+}
+
+.form-group label {
+    margin-bottom: 8px;
+    color: var(--text-primary);
+    font-weight: 500;
+}
+
+.form-control {
+    padding: 10px 12px;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    font-size: 14px;
+    transition: border-color 0.2s ease;
+}
+
+.form-control:focus {
+    outline: none;
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+.overview-stats {
+    margin-bottom: 30px;
+}
+
+.overview-stats h2 {
+    color: var(--text-primary);
+    margin-bottom: 20px;
+}
+
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 20px;
+}
+
+.stat-card {
+    background: var(--card-background);
+    border-radius: 12px;
+    padding: 20px;
+    box-shadow: var(--shadow-sm);
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    transition: transform 0.2s ease;
+}
+
+.stat-card:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-md);
+}
+
+.stat-icon {
+    font-size: 2rem;
+    opacity: 0.8;
+}
+
+.stat-content h3 {
+    margin: 0 0 8px 0;
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+    font-weight: 500;
+}
+
+.stat-number {
+    font-size: 2rem;
+    font-weight: bold;
+    color: var(--primary-color);
+}
+
+.quarter-table-panel {
+    background: var(--card-background);
+    border-radius: 12px;
+    padding: 25px;
+    margin-bottom: 30px;
+    box-shadow: var(--shadow-sm);
+}
+
+.panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+}
+
+.panel-header h2 {
+    margin: 0;
+    color: var(--text-primary);
+}
+
+.panel-actions {
+    display: flex;
+    gap: 10px;
+}
+
+.table-container {
+    overflow-x: auto;
+}
+
+.data-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+}
+
+.data-table th,
+.data-table td {
+    padding: 12px 8px;
+    text-align: left;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.data-table th {
+    background: var(--background-color);
+    font-weight: 600;
+    color: var(--text-primary);
+    position: sticky;
+    top: 0;
+}
+
+.data-table td {
+    color: var(--text-secondary);
+}
+
+.data-table tbody tr:hover {
+    background: var(--background-color);
+}
+
+.status-badge {
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 500;
+    text-transform: uppercase;
+}
+
+.status-success {
+    background: var(--success-light);
+    color: var(--success-dark);
+}
+
+.status-warning {
+    background: var(--warning-light);
+    color: var(--warning-dark);
+}
+
+.status-danger {
+    background: var(--danger-light);
+    color: var(--danger-dark);
+}
+
+.status-info {
+    background: var(--info-light);
+    color: var(--info-dark);
+}
+
+.progress-bar {
+    width: 100%;
+    height: 8px;
+    background: var(--border-color);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--primary-color), var(--success-color));
+    transition: width 0.3s ease;
+}
+
+.quarter-cards {
+    margin-bottom: 30px;
+}
+
+.quarter-cards h2 {
+    color: var(--text-primary);
+    margin-bottom: 20px;
+}
+
+.cards-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+    gap: 20px;
+}
+
+.quarter-card {
+    background: white;
+    border-radius: 12px;
+    padding: 20px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    transition: all 0.3s ease;
+    border-left: 4px solid var(--border-color);
+}
+
+.quarter-card:hover {
+    box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+    transform: translateY(-2px);
+}
+
+.quarter-card.success {
+    border-left-color: var(--success-color);
+}
+
+.quarter-card.warning {
+    border-left-color: var(--warning-color);
+}
+
+.quarter-card.danger {
+    border-left-color: var(--danger-color);
+}
+
+.quarter-card.info {
+    border-left-color: var(--info-color);
+}
+
+.quarter-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 15px;
+}
+
+.quarter-title {
+    font-size: 1.2rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0;
+}
+
+.quarter-status {
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.quarter-details {
+    margin-bottom: 15px;
+}
+
+.detail-row {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 8px;
+    font-size: 14px;
+}
+
+.detail-label {
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+
+.detail-value {
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.quarter-actions {
+    display: flex;
+    gap: 10px;
+    justify-content: flex-end;
+}
+
+.view-controls {
+    display: flex;
+    justify-content: center;
+    margin-bottom: 20px;
+}
+
+.view-toggle {
+    display: flex;
+    background: var(--background-color);
+    border-radius: 8px;
+    padding: 4px;
+}
+
+.view-toggle .btn {
+    margin: 0;
+    border-radius: 6px;
+}
+
+.view-toggle .btn.active {
+    background: var(--primary-color);
+    color: white;
+}
+
+.btn {
+    padding: 10px 20px;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+    transition: all 0.2s ease;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.btn-primary {
+    background: var(--primary-color);
+    color: white;
+}
+
+.btn-primary:hover {
+    background: var(--primary-dark);
+}
+
+.btn-success {
+    background: var(--success-color);
+    color: white;
+}
+
+.btn-success:hover {
+    background: var(--success-dark);
+}
+
+.btn-secondary {
+    background: var(--secondary-color);
+    color: white;
+}
+
+.btn-secondary:hover {
+    background: var(--secondary-dark);
+}
+
+.btn-outline {
+    background: transparent;
+    color: var(--primary-color);
+    border: 1px solid var(--primary-color);
+}
+
+.btn-outline:hover {
+    background: var(--primary-color);
+    color: white;
+}
+
+.btn-sm {
+    padding: 6px 12px;
+    font-size: 12px;
+}
+
+@media (max-width: 768px) {
+    .header {
+        flex-direction: column;
+        gap: 15px;
+        align-items: stretch;
+    }
+    
+    .panel-header {
+        flex-direction: column;
+        gap: 15px;
+        align-items: stretch;
+    }
+    
+    .cards-grid {
+        grid-template-columns: 1fr;
+    }
+}
+</style>
+
+<script>
+// 全局变量
+let currentYear = null;
+let currentView = 'table';
+
+// 页面加载完成后初始化
+document.addEventListener('DOMContentLoaded', function() {
+    // 设置默认年份为当前年份
+    const yearSelect = document.getElementById('yearSelect');
+    yearSelect.value = new Date().getFullYear();
+    
+    initializePage();
+    bindEvents();
+});
+
+// 初始化页面
+function initializePage() {
+    console.log('数据统计页面初始化完成');
+}
+
+// 绑定事件
+function bindEvents() {
+    // 年份选择
+    document.getElementById('yearSelect').addEventListener('change', function() {
+        currentYear = this.value;
+        if (currentYear) {
+            loadQuarterStats(currentYear);
+        } else {
+            hideAllPanels();
+        }
+    });
+    
+    // 刷新按钮
+    document.getElementById('refreshBtn').addEventListener('click', function() {
+        if (currentYear) {
+            loadQuarterStats(currentYear);
+        }
+    });
+    
+    // 视图切换
+    document.getElementById('tableViewBtn').addEventListener('click', function() {
+        switchView('table');
+    });
+    
+    document.getElementById('cardViewBtn').addEventListener('click', function() {
+        switchView('card');
+    });
+    
+    // 刷新表格
+    document.getElementById('refreshTableBtn').addEventListener('click', function() {
+        if (currentYear) {
+            loadQuarterStats(currentYear);
+        }
+    });
+    
+    // 导出统计
+    document.getElementById('exportBtn').addEventListener('click', function() {
+        exportStatistics();
+    });
+}
+
+// 加载季度统计
+async function loadQuarterStats(year) {
+    try {
+        const response = await fetch(`/RnnData/quarter_stats/${year}`);
+        const data = await response.json();
+        
+        if (data.success) {
+            displayOverviewStats(data.quarter_stats);
+            displayQuarterTable(data.quarter_stats);
+            displayQuarterCards(data.quarter_stats);
+            showAllPanels();
+        } else {
+            alert('加载季度统计失败: ' + data.message);
+        }
+    } catch (error) {
+        console.error('加载季度统计失败:', error);
+        alert('加载季度统计失败: ' + error.message);
+    }
+}
+
+// 显示总体统计
+function displayOverviewStats(quarterStats) {
+    const stats = Object.values(quarterStats);
+    
+    let completed = 0;
+    let partial = 0;
+    let incomplete = 0;
+    
+    stats.forEach(stat => {
+        if (stat.completion_rate === 100) {
+            completed++;
+        } else if (stat.completion_rate >= 50) {
+            partial++;
+        } else {
+            incomplete++;
+        }
+    });
+    
+    document.getElementById('completedQuarters').textContent = completed;
+    document.getElementById('partialQuarters').textContent = partial;
+    document.getElementById('incompleteQuarters').textContent = incomplete;
+}
+
+// 显示季度表格
+function displayQuarterTable(quarterStats) {
+    const tbody = document.getElementById('quarterTableBody');
+    tbody.innerHTML = '';
+    
+    Object.values(quarterStats).forEach(stat => {
+        const row = document.createElement('tr');
+        row.innerHTML = `
+            <td><strong>${stat.year}Q${stat.quarter}</strong></td>
+            <td><span class="status-badge status-${stat.has_raw_data ? 'success' : 'danger'}">${stat.raw_status}</span></td>
+            <td><span class="status-badge status-${stat.has_15m_data ? 'success' : 'danger'}">${stat.data_15m_status}</span></td>
+            <td><span class="status-badge status-${stat.has_training_data ? 'success' : 'danger'}">${stat.training_status}</span></td>
+            <td>
+                <div class="progress-bar">
+                    <div class="progress-fill" style="width: ${stat.completion_rate}%"></div>
+                </div>
+                <span style="font-size: 12px; color: var(--text-secondary);">${stat.completion_rate}%</span>
+            </td>
+            <td>
+                <div style="font-size: 12px;">
+                    <div>原始: ${stat.raw_data_files}</div>
+                    <div>15分钟: ${stat.data_15m_files}</div>
+                    <div>训练: ${stat.training_files}</div>
+                </div>
+            </td>
+            <td>
+                <div style="font-size: 12px;">
+                    <div>原始: ${stat.raw_data_size_mb}MB</div>
+                    <div>训练: ${stat.training_data_size_mb}MB</div>
+                </div>
+            </td>
+            <td>
+                <div style="font-size: 12px;">
+                    <div>原始: ${stat.last_raw_update || '无'}</div>
+                    <div>训练: ${stat.last_training_update || '无'}</div>
+                </div>
+            </td>
+            <td>
+                <button class="btn btn-sm btn-primary" onclick="processQuarter(${stat.year}, ${stat.quarter})">处理</button>
+            </td>
+        `;
+        tbody.appendChild(row);
+    });
+}
+
+// 显示季度卡片
+function displayQuarterCards(quarterStats) {
+    const grid = document.getElementById('cardsGrid');
+    grid.innerHTML = '';
+    
+    Object.values(quarterStats).forEach(stat => {
+        const card = document.createElement('div');
+        card.className = `quarter-card ${stat.status_color}`;
+        
+        card.innerHTML = `
+            <div class="quarter-header">
+                <h3 class="quarter-title">${stat.year}Q${stat.quarter}</h3>
+                <span class="quarter-status status-${stat.status_color}">${getStatusText(stat.completion_rate)}</span>
+            </div>
+            <div class="quarter-details">
+                <div class="detail-row">
+                    <span class="detail-label">原始数据:</span>
+                    <span class="detail-value">${stat.raw_status} (${stat.raw_data_files}个文件)</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">15分钟数据:</span>
+                    <span class="detail-value">${stat.data_15m_status} (${stat.data_15m_files}个文件)</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">训练数据:</span>
+                    <span class="detail-value">${stat.training_status} (${stat.training_files}个文件)</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">完成度:</span>
+                    <span class="detail-value">${stat.completion_rate}%</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">数据大小:</span>
+                    <span class="detail-value">${stat.raw_data_size_mb}MB / ${stat.training_data_size_mb}MB</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">最后更新:</span>
+                    <span class="detail-value">${stat.last_training_update || stat.last_raw_update || '无'}</span>
+                </div>
+            </div>
+            <div class="quarter-actions">
+                <button class="btn btn-sm btn-primary" onclick="processQuarter(${stat.year}, ${stat.quarter})">处理此季度</button>
+                <button class="btn btn-sm btn-outline" onclick="viewQuarterDetails(${stat.year}, ${stat.quarter})">查看详情</button>
+            </div>
+        `;
+        
+        grid.appendChild(card);
+    });
+}
+
+// 获取状态文本
+function getStatusText(completionRate) {
+    if (completionRate === 100) return '已完成';
+    if (completionRate >= 50) return '部分完成';
+    return '未开始';
+}
+
+// 切换视图
+function switchView(view) {
+    currentView = view;
+    
+    // 更新按钮状态
+    document.getElementById('tableViewBtn').classList.toggle('active', view === 'table');
+    document.getElementById('cardViewBtn').classList.toggle('active', view === 'card');
+    
+    // 显示/隐藏对应面板
+    document.getElementById('quarterTablePanel').style.display = view === 'table' ? 'block' : 'none';
+    document.getElementById('quarterCards').style.display = view === 'card' ? 'block' : 'none';
+}
+
+// 显示所有面板
+function showAllPanels() {
+    document.getElementById('overviewStats').style.display = 'block';
+    document.getElementById('quarterTablePanel').style.display = currentView === 'table' ? 'block' : 'none';
+    document.getElementById('quarterCards').style.display = currentView === 'card' ? 'block' : 'none';
+}
+
+// 隐藏所有面板
+function hideAllPanels() {
+    document.getElementById('overviewStats').style.display = 'none';
+    document.getElementById('quarterTablePanel').style.display = 'none';
+    document.getElementById('quarterCards').style.display = 'none';
+}
+
+// 处理季度数据
+function processQuarter(year, quarter) {
+    if (confirm(`确定要处理 ${year}年Q${quarter} 季度的数据吗？`)) {
+        // 这里可以调用处理API
+        alert(`开始处理 ${year}年Q${quarter} 季度数据...`);
+    }
+}
+
+// 查看季度详情
+function viewQuarterDetails(year, quarter) {
+    alert(`查看 ${year}年Q${quarter} 季度详细信息...`);
+}
+
+// 导出统计
+function exportStatistics() {
+    if (!currentYear) {
+        alert('请先选择年份');
+        return;
+    }
+    
+    // 这里可以实现导出功能
+    alert(`导出 ${currentYear} 年数据统计...`);
+}
+</script>
+{% endblock %}
+
+
+
