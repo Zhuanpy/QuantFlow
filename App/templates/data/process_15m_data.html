@@ -1,0 +1,802 @@
+{% extends "base.html" %}
+
+{% block content %}
+<!-- 加载Plotly.js库（使用本地文件） -->
+<script src="{{ url_for('static', filename='js/plotly.min.js') }}"></script>
+
+<div class="container">
+    <div class="header">
+        <h1>15分钟数据处理</h1>
+        <a href="{{ url_for('main_bp.index') }}" class="back-link">返回首页</a>
+    </div>
+
+    <div class="card">
+        <h2>📊 数据处理配置</h2>
+        <form id="dataProcessingForm" class="processing-form">
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="stock_code">股票代码</label>
+                    <input type="text" id="stock_code" name="stock_code" placeholder="如：002475" required>
+                </div>
+                
+                <div class="form-group">
+                    <label for="year">年份</label>
+                    <select id="year" name="year" required>
+                        <option value="">请选择年份</option>
+                        {% for year in range(2020, 2026) %}
+                        <option value="{{ year }}">{{ year }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label for="quarter">季度</label>
+                    <select id="quarter" name="quarter" required>
+                        <option value="">请选择季度</option>
+                        <option value="Q1">Q1 (1-3月)</option>
+                        <option value="Q2">Q2 (4-6月)</option>
+                        <option value="Q3">Q3 (7-9月)</option>
+                        <option value="Q4">Q4 (10-12月)</option>
+                    </select>
+                </div>
+            </div>
+            
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="processing_type">处理类型</label>
+                    <select id="processing_type" name="processing_type" required>
+                        <option value="resample">重采样为15分钟数据</option>
+                        <option value="signals">重采样 + 信号计算</option>
+                        <option value="standardized">重采样 + 信号计算 + 完整标准化</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label for="chart_type">图表类型</label>
+                    <select id="chart_type" name="chart_type">
+                        <option value="comprehensive">综合分析图</option>
+                        <option value="price">价格走势图</option>
+                        <option value="macd">MACD指标图</option>
+                        <option value="bollinger">布林带指标图</option>
+                    </select>
+                </div>
+            </div>
+            
+            <div class="data-mode-info">
+                <div class="info-card">
+                    <h3>📋 数据处理模式</h3>
+                    <p><strong>自动追加模式</strong>：新数据会自动追加到现有文件中</p>
+                    <p><strong>智能去重</strong>：相同日期的数据会保留最新的记录</p>
+                    <p><strong>数据安全</strong>：不会覆盖现有数据，确保数据完整性</p>
+                </div>
+            </div>
+            
+            <div class="form-actions">
+                <button type="submit" class="btn btn-primary" id="processBtn">
+                    <span class="btn-text">开始处理</span>
+                    <span class="btn-loading" style="display: none;">处理中...</span>
+                </button>
+                <button type="button" class="btn btn-secondary" id="checkDataBtn">检查数据</button>
+                <button type="button" class="btn btn-info" id="createChartBtn">生成图表</button>
+            </div>
+        </form>
+    </div>
+
+    <!-- 处理进度 -->
+    <div class="card" id="progressCard" style="display: none;">
+        <h2>📈 处理进度</h2>
+        <div class="progress-container">
+            <div class="progress-bar">
+                <div class="progress-fill" id="progressFill"></div>
+            </div>
+            <div class="progress-text" id="progressText">准备中...</div>
+        </div>
+        
+        <div class="progress-steps">
+            <div class="step" id="step1">
+                <span class="step-icon">1</span>
+                <span class="step-text">检查1分钟数据</span>
+            </div>
+            <div class="step" id="step2">
+                <span class="step-icon">2</span>
+                <span class="step-text">重采样为15分钟数据</span>
+            </div>
+            <div class="step" id="step3">
+                <span class="step-icon">3</span>
+                <span class="step-text">标准化处理</span>
+            </div>
+            <div class="step" id="step4">
+                <span class="step-icon">4</span>
+                <span class="step-text">信号计算</span>
+            </div>
+            <div class="step" id="step5">
+                <span class="step-icon">5</span>
+                <span class="step-text">保存数据</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- 处理结果 -->
+    <div class="card" id="resultCard" style="display: none;">
+        <h2>📋 处理结果</h2>
+        <div class="result-summary" id="resultSummary"></div>
+        
+        <div class="file-paths" id="filePaths"></div>
+        
+        <div class="data-statistics" id="dataStatistics"></div>
+    </div>
+
+    <!-- 错误信息 -->
+    <div class="card error-card" id="errorCard" style="display: none;">
+        <h2>❌ 处理错误</h2>
+        <div class="error-content" id="errorContent"></div>
+    </div>
+
+    <!-- 图表显示区域 -->
+    <div class="card" id="chartCard" style="display: none;">
+        <h2>📈 数据可视化</h2>
+        <div id="chartInfo"></div>
+        <div id="chartDisplay">
+            <img id="chartImage" style="max-width: 100%; height: auto; display: none;">
+        </div>
+        <div id="chartError" style="display: none;"></div>
+    </div>
+</div>
+
+<style>
+    .container {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 20px;
+    }
+
+    .header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 30px;
+    }
+
+    .header h1 {
+        color: var(--text-primary);
+        margin: 0;
+    }
+
+    .back-link {
+        color: var(--primary-color);
+        text-decoration: none;
+        display: flex;
+        align-items: center;
+        gap: 5px;
+    }
+
+    .card {
+        background: var(--card-background);
+        border-radius: 8px;
+        padding: 20px;
+        box-shadow: var(--shadow-md);
+        margin-bottom: 20px;
+    }
+
+    .card h2 {
+        color: var(--primary-color);
+        margin-top: 0;
+        margin-bottom: 20px;
+        padding-bottom: 10px;
+        border-bottom: 2px solid var(--background-color);
+    }
+
+    .processing-form {
+        margin-top: 20px;
+    }
+
+    .form-row {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+        gap: 20px;
+        margin-bottom: 20px;
+    }
+
+    .form-group {
+        display: flex;
+        flex-direction: column;
+    }
+
+    .form-group label {
+        margin-bottom: 8px;
+        color: var(--text-primary);
+        font-weight: 500;
+    }
+
+    .form-group input,
+    .form-group select {
+        padding: 10px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        font-size: 14px;
+        transition: border-color 0.3s ease;
+    }
+
+    .form-group input:focus,
+    .form-group select:focus {
+        outline: none;
+        border-color: var(--primary-color);
+    }
+
+    .form-actions {
+        display: flex;
+        gap: 15px;
+        margin-top: 20px;
+    }
+
+    .btn {
+        padding: 12px 24px;
+        border: none;
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 14px;
+        font-weight: 500;
+        transition: all 0.3s ease;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .btn-primary {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+    }
+
+    .btn-primary:hover {
+        background: linear-gradient(135deg, #5a6fd8 0%, #6a4190 100%);
+        transform: translateY(-2px);
+    }
+
+    .btn-primary:disabled {
+        background: #ccc;
+        cursor: not-allowed;
+        transform: none;
+    }
+
+    .btn-secondary {
+        background: var(--background-secondary);
+        color: var(--text-primary);
+        border: 1px solid var(--border-color);
+    }
+
+    .btn-secondary:hover {
+        background: var(--background-color);
+    }
+
+    /* 进度条样式 */
+    .progress-container {
+        margin-bottom: 30px;
+    }
+
+    .progress-bar {
+        width: 100%;
+        height: 8px;
+        background: var(--background-color);
+        border-radius: 4px;
+        overflow: hidden;
+        margin-bottom: 10px;
+    }
+
+    .progress-fill {
+        height: 100%;
+        background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+        width: 0%;
+        transition: width 0.3s ease;
+    }
+
+    .progress-text {
+        text-align: center;
+        color: var(--text-primary);
+        font-weight: 500;
+    }
+
+    .progress-steps {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 15px;
+    }
+
+    .step {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px;
+        border-radius: 6px;
+        background: var(--background-secondary);
+        transition: all 0.3s ease;
+    }
+
+    .step.active {
+        background: rgba(102, 126, 234, 0.1);
+        border: 1px solid rgba(102, 126, 234, 0.3);
+    }
+
+    .step.completed {
+        background: rgba(34, 197, 94, 0.1);
+        border: 1px solid rgba(34, 197, 94, 0.3);
+    }
+
+    .step-icon {
+        width: 24px;
+        height: 24px;
+        border-radius: 50%;
+        background: var(--background-color);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 12px;
+        font-weight: bold;
+        color: var(--text-secondary);
+    }
+
+    .step.active .step-icon {
+        background: var(--primary-color);
+        color: white;
+    }
+
+    .step.completed .step-icon {
+        background: var(--success-color);
+        color: white;
+    }
+
+    .step-text {
+        color: var(--text-primary);
+        font-size: 14px;
+    }
+
+    /* 结果样式 */
+    .result-summary {
+        background: rgba(34, 197, 94, 0.1);
+        border: 1px solid rgba(34, 197, 94, 0.3);
+        border-radius: 6px;
+        padding: 15px;
+        margin-bottom: 20px;
+    }
+
+    .file-paths {
+        margin-bottom: 20px;
+    }
+
+    .file-path-item {
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 6px;
+        padding: 15px;
+        margin-bottom: 15px;
+    }
+
+    .file-path-item:last-child {
+        margin-bottom: 0;
+    }
+
+    .file-path-label {
+        font-weight: 500;
+        color: var(--text-primary);
+        margin-bottom: 8px;
+    }
+
+    .file-path-text {
+        font-family: 'Courier New', monospace;
+        font-size: 13px;
+        color: var(--text-secondary);
+        background: var(--background-secondary);
+        padding: 8px;
+        border-radius: 4px;
+        word-break: break-all;
+    }
+
+    .data-statistics {
+        background: rgba(59, 130, 246, 0.05);
+        border: 1px solid rgba(59, 130, 246, 0.2);
+        border-radius: 6px;
+        padding: 15px;
+    }
+
+    .statistics-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 15px;
+    }
+
+    .stat-item {
+        text-align: center;
+    }
+
+    .stat-value {
+        font-size: 24px;
+        font-weight: bold;
+        color: var(--primary-color);
+    }
+
+    .stat-label {
+        font-size: 14px;
+        color: var(--text-secondary);
+        margin-top: 5px;
+    }
+
+    /* 错误样式 */
+    .error-card {
+        background: rgba(239, 68, 68, 0.1);
+        border: 1px solid rgba(239, 68, 68, 0.3);
+    }
+
+    .error-card h2 {
+        color: #dc2626;
+    }
+
+    .error-content {
+        color: var(--text-primary);
+        font-family: 'Courier New', monospace;
+        background: rgba(0, 0, 0, 0.05);
+        padding: 15px;
+        border-radius: 4px;
+        white-space: pre-wrap;
+    }
+
+    /* 数据处理模式信息卡片 */
+    .data-mode-info {
+        margin: 1.5rem 0;
+    }
+
+    .info-card {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        border-radius: 12px;
+        padding: 1.5rem;
+        color: white;
+        box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+    }
+
+    .info-card h3 {
+        margin: 0 0 1rem 0;
+        font-size: 1.2rem;
+        font-weight: 600;
+    }
+
+    .info-card p {
+        margin: 0.5rem 0;
+        font-size: 0.95rem;
+        line-height: 1.5;
+    }
+
+    .info-card strong {
+        font-weight: 600;
+    }
+
+    /* 响应式设计 */
+    @media (max-width: 768px) {
+        .form-row {
+            grid-template-columns: 1fr;
+        }
+        
+        .progress-steps {
+            grid-template-columns: 1fr;
+        }
+        
+        .form-actions {
+            flex-direction: column;
+        }
+    }
+</style>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const form = document.getElementById('dataProcessingForm');
+    const processBtn = document.getElementById('processBtn');
+    const checkDataBtn = document.getElementById('checkDataBtn');
+    const progressCard = document.getElementById('progressCard');
+    const resultCard = document.getElementById('resultCard');
+    const errorCard = document.getElementById('errorCard');
+
+    // 表单提交处理
+    form.addEventListener('submit', function(e) {
+        e.preventDefault();
+        startProcessing();
+    });
+
+    // 检查数据按钮
+    checkDataBtn.addEventListener('click', function() {
+        checkData();
+    });
+
+    function startProcessing() {
+        const formData = new FormData(form);
+        const data = Object.fromEntries(formData);
+        
+        // 显示进度卡片
+        progressCard.style.display = 'block';
+        resultCard.style.display = 'none';
+        errorCard.style.display = 'none';
+        
+        // 禁用按钮
+        processBtn.disabled = true;
+        processBtn.querySelector('.btn-text').style.display = 'none';
+        processBtn.querySelector('.btn-loading').style.display = 'inline';
+        
+        // 重置进度
+        resetProgress();
+        
+        // 发送请求
+        fetch('/process_data/api/process_15m_data', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(data)
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showResults(data);
+            } else {
+                showError(data.message);
+            }
+        })
+        .catch(error => {
+            showError('处理过程中发生错误: ' + error.message);
+        })
+        .finally(() => {
+            // 恢复按钮
+            processBtn.disabled = false;
+            processBtn.querySelector('.btn-text').style.display = 'inline';
+            processBtn.querySelector('.btn-loading').style.display = 'none';
+        });
+    }
+
+    function checkData() {
+        const formData = new FormData(form);
+        const data = Object.fromEntries(formData);
+        
+        if (!data.stock_code || !data.year || !data.quarter) {
+            alert('请填写完整的股票代码、年份和季度信息');
+            return;
+        }
+        
+        fetch('/process_data/api/check_15m_data', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(data)
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                alert(`数据检查完成:\n${data.message}`);
+            } else {
+                alert(`数据检查失败:\n${data.message}`);
+            }
+        })
+        .catch(error => {
+            alert('检查数据时发生错误: ' + error.message);
+        });
+    }
+
+    function resetProgress() {
+        const steps = document.querySelectorAll('.step');
+        steps.forEach(step => {
+            step.classList.remove('active', 'completed');
+        });
+        
+        document.getElementById('progressFill').style.width = '0%';
+        document.getElementById('progressText').textContent = '准备中...';
+    }
+
+    function updateProgress(step, percentage, text) {
+        // 更新进度条
+        document.getElementById('progressFill').style.width = percentage + '%';
+        document.getElementById('progressText').textContent = text;
+        
+        // 更新步骤状态
+        const stepElement = document.getElementById('step' + step);
+        if (stepElement) {
+            stepElement.classList.add('active');
+        }
+        
+        // 完成之前的步骤
+        for (let i = 1; i < step; i++) {
+            const prevStep = document.getElementById('step' + i);
+            if (prevStep) {
+                prevStep.classList.remove('active');
+                prevStep.classList.add('completed');
+            }
+        }
+    }
+
+    function showResults(data) {
+        progressCard.style.display = 'none';
+        resultCard.style.display = 'block';
+        
+        // 显示结果摘要
+        const summary = document.getElementById('resultSummary');
+        summary.innerHTML = `
+            <h3>✅ 处理完成</h3>
+            <p><strong>股票代码:</strong> ${data.stock_code}</p>
+            <p><strong>处理时间:</strong> ${data.year}-${data.quarter}</p>
+            <p><strong>处理类型:</strong> ${data.processing_type}</p>
+            <p><strong>处理结果:</strong> ${data.message}</p>
+        `;
+        
+        // 显示文件路径
+        const filePaths = document.getElementById('filePaths');
+        if (data.file_paths && data.file_paths.length > 0) {
+            filePaths.innerHTML = '<h3>📁 保存路径</h3>' + 
+                data.file_paths.map(path => `
+                    <div class="file-path-item">
+                        <div class="file-path-label">${path.type}</div>
+                        <div class="file-path-text">${path.path}</div>
+                    </div>
+                `).join('');
+        }
+        
+        // 显示数据统计
+        const statistics = document.getElementById('dataStatistics');
+        if (data.statistics) {
+            statistics.innerHTML = `
+                <h3>📊 数据统计</h3>
+                <div class="statistics-grid">
+                    <div class="stat-item">
+                        <div class="stat-value">${data.statistics.records_1m || 0}</div>
+                        <div class="stat-label">1分钟数据条数</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value">${data.statistics.records_15m || 0}</div>
+                        <div class="stat-label">15分钟数据条数</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value">${data.statistics.signals_up || 0}</div>
+                        <div class="stat-label">上涨信号</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value">${data.statistics.signals_down || 0}</div>
+                        <div class="stat-label">下跌信号</div>
+                    </div>
+                </div>
+            `;
+        }
+    }
+
+    function showError(message) {
+        progressCard.style.display = 'none';
+        resultCard.style.display = 'none';
+        errorCard.style.display = 'block';
+        
+        document.getElementById('errorContent').textContent = message;
+    }
+
+    // 图表生成功能 - 交互式Plotly图表
+    document.getElementById('createChartBtn').addEventListener('click', async function() {
+        const stockCode = document.getElementById('stock_code').value;
+        
+        if (!stockCode) {
+            alert('请先输入股票代码');
+            return;
+        }
+        
+        const chartCard = document.getElementById('chartCard');
+        const chartInfo = document.getElementById('chartInfo');
+        const chartImage = document.getElementById('chartImage');
+        const chartError = document.getElementById('chartError');
+        
+        // 显示加载状态
+        chartCard.style.display = 'block';
+        chartInfo.innerHTML = '<p>🔄 正在生成交互式图表...</p>';
+        chartImage.style.display = 'none';
+        chartError.style.display = 'none';
+        
+        try {
+            // 获取年份和季度
+            const year = document.getElementById('year').value;
+            const quarter = document.getElementById('quarter').value;
+            
+            const response = await fetch('/process_data/api/create_visualization', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    stock_code: stockCode,
+                    data_type: '15m_normal',  // 使用普通数据而不是标准化数据
+                    year: year,
+                    quarter: quarter
+                })
+            });
+            
+            const result = await response.json();
+            
+            if (result.success) {
+                chartInfo.innerHTML = `
+                    <h3>✅ 交互式图表生成成功</h3>
+                    <p><strong>股票代码:</strong> ${stockCode}</p>
+                    <p><strong>时间范围:</strong> ${year}-${quarter}</p>
+                    <p><strong>图表数量:</strong> ${Object.keys(result.charts).length} 个</p>
+                    <p><strong>生成时间:</strong> ${new Date().toLocaleString()}</p>
+                    <p class="info-text">💡 图表支持缩放、平移、悬停查看详情等交互操作</p>
+                `;
+                
+                // 隐藏旧的图片显示
+                chartImage.style.display = 'none';
+                chartError.style.display = 'none';
+                
+                // 获取图表显示容器
+                const chartDisplay = document.getElementById('chartDisplay');
+                
+                // 创建图表容器
+                chartDisplay.innerHTML = '<div class="interactive-charts" style="margin-top: 20px;"></div>';
+                const chartsContainer = chartDisplay.querySelector('.interactive-charts');
+                
+                // 按顺序显示各个图表
+                const chartOrder = ['price', 'macd', 'volume', 'ema'];
+                const chartTitles = {
+                    'price': '📈 价格走势与交易信号',
+                    'macd': '📊 MACD指标分析',
+                    'volume': '📦 成交量分析',
+                    'ema': '📐 EMA均线分析'
+                };
+                
+                for (const chartKey of chartOrder) {
+                    if (result.charts[chartKey]) {
+                        console.log(`处理图表: ${chartKey}, HTML长度: ${result.charts[chartKey].length}`);
+                        
+                        // 创建图表区域容器
+                        const chartSection = document.createElement('div');
+                        chartSection.className = 'chart-section';
+                        chartSection.style.cssText = 'margin-bottom: 30px; border: 1px solid #e0e0e0; padding: 15px; border-radius: 8px; background: white;';
+                        
+                        // 添加标题
+                        const title = document.createElement('h4');
+                        title.style.cssText = 'color: #2196F3; margin-bottom: 10px;';
+                        title.textContent = chartTitles[chartKey];
+                        chartSection.appendChild(title);
+                        
+                        // 创建图表容器并插入HTML
+                        const chartDiv = document.createElement('div');
+                        chartDiv.innerHTML = result.charts[chartKey];
+                        
+                        // 查找并执行内联的script标签（Plotly图表的关键）
+                        const scripts = chartDiv.querySelectorAll('script');
+                        scripts.forEach(oldScript => {
+                            const newScript = document.createElement('script');
+                            newScript.textContent = oldScript.textContent;
+                            // 复制所有属性
+                            Array.from(oldScript.attributes).forEach(attr => {
+                                newScript.setAttribute(attr.name, attr.value);
+                            });
+                            oldScript.parentNode.replaceChild(newScript, oldScript);
+                        });
+                        
+                        chartSection.appendChild(chartDiv);
+                        
+                        // 调试：检查插入后的内容
+                        console.log(`${chartKey} 图表插入后，chartDiv子元素数量:`, chartDiv.children.length);
+                        if (chartDiv.children.length > 0) {
+                            console.log(`${chartKey} 第一个子元素:`, chartDiv.children[0].tagName, chartDiv.children[0].id);
+                        }
+                        
+                        chartsContainer.appendChild(chartSection);
+                    }
+                }
+                
+                // 添加调试信息
+                console.log('图表已插入，图表数量:', Object.keys(result.charts).length);
+                console.log('Plotly对象是否存在:', typeof Plotly !== 'undefined');
+                
+            } else {
+                chartError.style.display = 'block';
+                chartError.innerHTML = `<p>❌ 图表生成失败: ${result.message}</p>`;
+                if (result.message.includes('Plotly')) {
+                    chartError.innerHTML += '<p class="info-text">💡 提示：需要安装Plotly库，请运行: pip install plotly</p>';
+                }
+            }
+        } catch (error) {
+            chartError.style.display = 'block';
+            chartError.innerHTML = `<p>❌ 请求失败: ${error.message}</p>`;
+        }
+    });
+});
+</script>
+{% endblock %}

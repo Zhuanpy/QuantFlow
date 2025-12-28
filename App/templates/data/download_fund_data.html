@@ -1,0 +1,491 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="download-container">
+    <div class="download-card">
+        <div class="download-header">
+            <h2>基金重仓数据下载</h2>
+        </div>
+        
+        <div class="download-content">
+            <!-- 控制按钮区域 -->
+            <div class="button-group">
+                <button id="startBtn" class="btn btn-primary">
+                    开始下载
+                </button>
+                <button id="stopBtn" class="btn btn-danger" disabled>
+                    暂停下载
+                </button>
+                <button id="resetBtn" class="btn btn-warning">
+                    重置状态
+                </button>
+                <button id="openFolderBtn" class="btn btn-info">
+                    打开数据文件夹
+                </button>
+            </div>
+            
+            <!-- 下载统计区域 -->
+            <div class="stats-section">
+                <h3>下载统计</h3>
+                <div class="stats-grid">
+                    <div class="stat-item">
+                        <div class="stat-number stat-total" id="totalFunds">-</div>
+                        <div class="stat-label">总基金数</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-number stat-waiting" id="waitingFunds">-</div>
+                        <div class="stat-label">等待下载</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-number stat-success" id="successFunds">-</div>
+                        <div class="stat-label">下载成功</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-number stat-failure" id="failureFunds">-</div>
+                        <div class="stat-label">下载失败</div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 进度显示区域 -->
+            <div class="progress-section">
+                <h3>下载进度</h3>
+                <div class="progress-info">
+                    <div class="progress-item">
+                        <strong>任务状态：</strong>
+                        <span id="statusText">未开始</span>
+                    </div>
+                    <div class="progress-item">
+                        <strong>进度：</strong>
+                        <span id="progressText">0%</span>
+                    </div>
+                    <div class="progress-item">
+                        <strong>当前批次：</strong>
+                        <span id="currentBatch">-</span>
+                    </div>
+                </div>
+                <div class="progress-bar-container">
+                    <div id="progressBar" class="progress-bar-fill"></div>
+                </div>
+            </div>
+            
+            <!-- 数据保存信息 -->
+            <div class="info-section">
+                <h3>数据保存信息</h3>
+                <div class="info-content">
+                    <div class="info-item">
+                        <strong>保存位置：</strong>
+                        <span>本地CSV文件</span>
+                    </div>
+                    <div class="info-item">
+                        <strong>文件格式：</strong>
+                        <span>funds_holdings_YYYYMMDD.csv</span>
+                    </div>
+                    <div class="info-item">
+                        <strong>保存路径：</strong>
+                        <span>data/funds_holdings/</span>
+                    </div>
+                    <div class="info-item">
+                        <strong>数据来源：</strong>
+                        <span>东方财富网</span>
+                    </div>
+                    <div class="info-item">
+                        <strong>下载间隔：</strong>
+                        <span>15天</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.download-container {
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 0 1rem;
+}
+
+.download-card {
+    background-color: var(--card-background);
+    border-radius: 1rem;
+    box-shadow: var(--shadow-md);
+    overflow: hidden;
+}
+
+.download-header {
+    background-color: var(--primary-color);
+    color: white;
+    padding: 1.5rem;
+    text-align: center;
+}
+
+.download-header h2 {
+    margin: 0;
+    font-size: 1.5rem;
+    font-weight: 600;
+}
+
+.download-content {
+    padding: 2rem;
+}
+
+.button-group {
+    display: flex;
+    gap: 1rem;
+    justify-content: center;
+    margin-bottom: 2rem;
+    flex-wrap: wrap;
+}
+
+.btn {
+    padding: 0.75rem 1.5rem;
+    border: none;
+    border-radius: 0.5rem;
+    font-weight: 500;
+    font-size: 1rem;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    min-width: 120px;
+}
+
+.btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.btn-primary {
+    background-color: var(--primary-color);
+    color: white;
+}
+
+.btn-primary:hover:not(:disabled) {
+    background-color: var(--secondary-color);
+}
+
+.btn-danger {
+    background-color: #dc2626;
+    color: white;
+}
+
+.btn-danger:hover:not(:disabled) {
+    background-color: #b91c1c;
+}
+
+.btn-warning {
+    background-color: #f59e0b;
+    color: white;
+}
+
+.btn-warning:hover:not(:disabled) {
+    background-color: #d97706;
+}
+
+.btn-info {
+    background-color: #0891b2;
+    color: white;
+}
+
+.btn-info:hover:not(:disabled) {
+    background-color: #0e7490;
+}
+
+.stats-section {
+    margin-bottom: 2rem;
+}
+
+.stats-section h3 {
+    margin-bottom: 1rem;
+    color: var(--text-primary);
+    font-size: 1.25rem;
+    font-weight: 600;
+}
+
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 1rem;
+    background-color: var(--background-color);
+    padding: 1.5rem;
+    border-radius: 0.75rem;
+}
+
+.stat-item {
+    text-align: center;
+    padding: 1rem 0.5rem;
+}
+
+.stat-number {
+    font-size: 2rem;
+    font-weight: 700;
+    display: block;
+    margin-bottom: 0.5rem;
+}
+
+.stat-label {
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+
+.stat-total { color: var(--primary-color); }
+.stat-waiting { color: #f59e0b; }
+.stat-success { color: #10b981; }
+.stat-failure { color: #ef4444; }
+
+.progress-section {
+    margin-bottom: 2rem;
+}
+
+.progress-section h3 {
+    margin-bottom: 1rem;
+    color: var(--text-primary);
+    font-size: 1.25rem;
+    font-weight: 600;
+}
+
+.progress-info {
+    margin-bottom: 1rem;
+}
+
+.progress-item {
+    margin-bottom: 0.5rem;
+    color: var(--text-primary);
+}
+
+.progress-item strong {
+    color: var(--text-secondary);
+}
+
+.progress-bar-container {
+    width: 100%;
+    height: 1.5rem;
+    background-color: var(--background-color);
+    border-radius: 0.75rem;
+    overflow: hidden;
+    position: relative;
+}
+
+.progress-bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--primary-color), var(--secondary-color));
+    border-radius: 0.75rem;
+    transition: width 0.3s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-weight: 600;
+    font-size: 0.875rem;
+    min-width: 2rem;
+}
+
+.info-section {
+    background-color: var(--background-color);
+    padding: 1.5rem;
+    border-radius: 0.75rem;
+}
+
+.info-section h3 {
+    margin-bottom: 1rem;
+    color: var(--text-primary);
+    font-size: 1.25rem;
+    font-weight: 600;
+}
+
+.info-content {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.info-item {
+    color: var(--text-primary);
+    font-size: 0.875rem;
+}
+
+.info-item strong {
+    color: var(--text-secondary);
+    margin-right: 0.5rem;
+}
+
+@media (max-width: 768px) {
+    .download-content {
+        padding: 1rem;
+    }
+    
+    .button-group {
+        flex-direction: column;
+        align-items: center;
+    }
+    
+    .btn {
+        width: 100%;
+        max-width: 200px;
+    }
+    
+    .stats-grid {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 0.75rem;
+        padding: 1rem;
+    }
+    
+    .stat-number {
+        font-size: 1.5rem;
+    }
+    
+    .info-content {
+        font-size: 0.8rem;
+    }
+}
+</style>
+
+<script>
+let polling = null;
+let statsPolling = null;
+
+function updateStatistics() {
+    fetch('{{ url_for("dl_funds_awkward_bp.get_statistics") }}')
+        .then(res => res.json())
+        .then(data => {
+            document.getElementById('totalFunds').innerText = data.total || 0;
+            document.getElementById('waitingFunds').innerText = data.waiting || 0;
+            document.getElementById('successFunds').innerText = data.success || 0;
+            document.getElementById('failureFunds').innerText = data.failure || 0;
+        })
+        .catch(error => {
+            console.error('获取统计数据失败:', error);
+        });
+}
+
+function updateStatus() {
+    fetch('{{ url_for("dl_funds_awkward_bp.status") }}')
+        .then(res => res.json())
+        .then(data => {
+            document.getElementById('statusText').innerText = data.status;
+            document.getElementById('progressText').innerText = data.progress + '%';
+            
+            // 更新进度条
+            const progressBar = document.getElementById('progressBar');
+            progressBar.style.width = data.progress + '%';
+            progressBar.innerText = data.progress + '%';
+            
+            // 更新当前批次信息
+            const currentBatch = document.getElementById('currentBatch');
+            if (data.total_funds > 0) {
+                const processed = data.success_count + data.failure_count;
+                currentBatch.innerText = `${processed}/${data.total_funds}`;
+            } else {
+                currentBatch.innerText = '-';
+            }
+            
+            if (data.status === '已完成' || data.status === '已停止' || data.status === '无数据下载') {
+                document.getElementById('startBtn').disabled = false;
+                document.getElementById('stopBtn').disabled = true;
+                clearInterval(polling);
+                // 清除统计轮询
+                if (statsPolling) {
+                    clearInterval(statsPolling);
+                    statsPolling = null;
+                }
+            }
+        })
+        .catch(error => {
+            console.error('获取状态失败:', error);
+        });
+}
+
+// 页面加载时只获取一次初始数据
+document.addEventListener('DOMContentLoaded', function() {
+    updateStatistics();
+    updateStatus();
+    // 不启动统计轮询，只在下载开始时启动
+});
+
+document.getElementById('startBtn').onclick = function() {
+    console.log('[DEBUG] 开始下载按钮被点击');
+    console.log('[DEBUG] 请求URL:', '{{ url_for("dl_funds_awkward_bp.start_download") }}');
+    
+    // 立即禁用按钮，防止重复点击
+    document.getElementById('startBtn').disabled = true;
+    document.getElementById('startBtn').innerText = '正在启动...';
+    
+    fetch('{{ url_for("dl_funds_awkward_bp.start_download") }}', {method: 'POST'})
+        .then(res => {
+            console.log('[DEBUG] 响应状态:', res.status);
+            return res.json();
+        })
+        .then(data => {
+            console.log('[DEBUG] 响应数据:', data);
+            document.getElementById('startBtn').innerText = '开始下载';
+            document.getElementById('stopBtn').disabled = false;
+            updateStatus();
+            updateStatistics(); // 立即更新统计数据
+            // 开始轮询状态和统计数据
+            polling = setInterval(updateStatus, 2000);
+            statsPolling = setInterval(updateStatistics, 2000);
+            console.log('[DEBUG] 下载任务已启动');
+        })
+        .catch(error => {
+            console.error('[ERROR] 开始下载失败:', error);
+            alert('开始下载失败: ' + error.message);
+            // 恢复按钮状态
+            document.getElementById('startBtn').disabled = false;
+            document.getElementById('startBtn').innerText = '开始下载';
+        });
+};
+
+document.getElementById('stopBtn').onclick = function() {
+    fetch('{{ url_for("dl_funds_awkward_bp.stop_download_route") }}', {method: 'POST'})
+        .then(res => res.json())
+        .then(data => {
+            document.getElementById('stopBtn').disabled = true;
+            // 立即更新状态
+            updateStatus();
+            updateStatistics();
+            // 清除轮询
+            if (polling) {
+                clearInterval(polling);
+                polling = null;
+            }
+            if (statsPolling) {
+                clearInterval(statsPolling);
+                statsPolling = null;
+            }
+        })
+        .catch(error => {
+            console.error('停止下载失败:', error);
+        });
+};
+
+document.getElementById('resetBtn').onclick = function() {
+    if (confirm('确定要重置所有基金的下载状态吗？这将允许重新下载所有基金数据。')) {
+        fetch('{{ url_for("dl_funds_awkward_bp.reset_fund_status") }}', {method: 'POST'})
+            .then(res => res.json())
+            .then(data => {
+                alert(data.message || '重置成功');
+                updateStatistics(); // 立即更新统计数据
+            })
+            .catch(error => {
+                console.error('重置状态失败:', error);
+                alert('重置失败: ' + error.message);
+            });
+    }
+};
+
+document.getElementById('openFolderBtn').onclick = function() {
+    fetch('{{ url_for("dl_funds_awkward_bp.open_funds_data_folder") }}', {method: 'POST'})
+        .then(res => res.json())
+        .then(data => {
+            if (data.success) {
+                console.log('基金数据文件夹已打开');
+            } else {
+                alert('打开文件夹失败: ' + (data.message || '未知错误'));
+            }
+        })
+        .catch(error => {
+            console.error('打开文件夹失败:', error);
+            alert('打开文件夹失败: ' + error.message);
+        });
+};
+</script>
+{% endblock %} 

@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container">
+    <div class="header">
+        <h1>问题管理</h1>
+        <div class="nav-links">
+            <a href="{{ url_for('main_bp.index') }}" class="nav-link">返回首页</a>
+            <a href="{{ url_for('others_issue_bp.create_issue') }}" class="button">创建问题</a>
+        </div>
+    </div>
+
+    <div class="card">
+        <ul class="issue-list">
+            <li class="issue-item">
+                <a href="#" class="issue-title">1分钟数据下载失败</a>
+                <span class="status-badge status-open">开放</span>
+                <div class="issue-meta">
+                    创建于：2024-01-01 10:00:00
+                </div>
+            </li>
+            <li class="issue-item">
+                <a href="#" class="issue-title">数据库连接超时</a>
+                <span class="status-badge status-closed">已解决</span>
+                <div class="issue-meta">
+                    创建于：2024-01-02 14:30:00
+                </div>
+            </li>
+        </ul>
+    </div>
+</div>
+
+<style>
+    .container {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 20px;
+    }
+
+    .header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 30px;
+    }
+
+    .header h1 {
+        color: var(--text-primary);
+        margin: 0;
+    }
+
+    .nav-links {
+        display: flex;
+        gap: 20px;
+    }
+
+    .nav-link {
+        color: var(--primary-color);
+        text-decoration: none;
+    }
+
+    .card {
+        background: var(--card-background);
+        border-radius: 8px;
+        padding: 20px;
+        margin-bottom: 20px;
+        box-shadow: var(--shadow-md);
+    }
+
+    .issue-list {
+        list-style: none;
+        padding: 0;
+    }
+
+    .issue-item {
+        padding: 15px;
+        border-bottom: 1px solid var(--background-color);
+    }
+
+    .issue-item:last-child {
+        border-bottom: none;
+    }
+
+    .issue-title {
+        font-size: 1.1em;
+        color: var(--primary-color);
+        text-decoration: none;
+    }
+
+    .issue-meta {
+        font-size: 0.9em;
+        color: var(--text-secondary);
+        margin-top: 5px;
+    }
+
+    .status-badge {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 12px;
+        font-size: 0.8em;
+        margin-left: 10px;
+    }
+
+    .status-open {
+        background-color: var(--success-color);
+        color: white;
+    }
+
+    .status-closed {
+        background-color: var(--text-secondary);
+        color: white;
+    }
+</style>
+{% endblock %} 

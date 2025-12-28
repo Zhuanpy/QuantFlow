@@ -1,0 +1,1045 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="download-container">
+    <div class="download-card">
+        <div class="download-header">
+            <h2>批量下载1分钟数据</h2>
+        </div>
+        
+        <div class="download-content">
+            <!-- 控制按钮区域 -->
+            <div class="button-group">
+                <button id="startBtn" class="btn btn-primary">
+                    开始下载
+                </button>
+                <button id="stopBtn" class="btn btn-danger" disabled>
+                    暂停下载
+                </button>
+                <button id="resampleBtn" class="btn btn-success">
+                    重新采样为日线数据
+                </button>
+                <button id="openFolderBtn" class="btn btn-info">
+                    打开数据文件夹
+                </button>
+            </div>
+            
+            <!-- 统计数据区域 -->
+            <div class="stats-section">
+                <h3>下载统计</h3>
+                <div class="stats-grid">
+                    <div class="stat-item">
+                        <div class="stat-number stat-total" id="totalCount">-</div>
+                        <div class="stat-label">总股票数</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-number stat-pending" id="pendingCount">-</div>
+                        <div class="stat-label">等待下载</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-number stat-success" id="successCount">-</div>
+                        <div class="stat-label">下载成功</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-number stat-failed" id="failedCount">-</div>
+                        <div class="stat-label">下载失败</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-number stat-processing" id="processingCount">-</div>
+                        <div class="stat-label">正在下载</div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 进度显示区域 -->
+            <div class="progress-section">
+                <h3>下载进度</h3>
+                <div class="progress-info">
+                    <div class="progress-item">
+                        <strong>任务状态：</strong>
+                        <span id="statusText">未开始</span>
+                    </div>
+                    <div class="progress-item">
+                        <strong>进度：</strong>
+                        <span id="progressText">0%</span>
+                    </div>
+                    <div class="progress-item">
+                        <strong>当前股票：</strong>
+                        <span id="currentStock">-</span>
+                    </div>
+                </div>
+                <div class="progress-bar-container">
+                    <div id="progressBar" class="progress-bar-fill"></div>
+                </div>
+            </div>
+            
+            <!-- 下载详情区域 -->
+            <div class="details-section">
+                <h3>下载详情</h3>
+                <div class="details-tabs">
+                    <button class="tab-button active" onclick="showTab('success')">成功列表</button>
+                    <button class="tab-button" onclick="showTab('failed')">失败列表</button>
+                    <button class="tab-button" onclick="showTab('logs')">实时日志</button>
+                </div>
+                
+                <div id="successTab" class="tab-content active">
+                    <div class="stock-list" id="successList">
+                        <div class="empty-message">暂无成功下载的股票</div>
+                    </div>
+                </div>
+                
+                <div id="failedTab" class="tab-content">
+                    <div class="stock-list" id="failedList">
+                        <div class="empty-message">暂无下载失败的股票</div>
+                    </div>
+                </div>
+                
+                <div id="logsTab" class="tab-content">
+                    <div class="log-container" id="logContainer">
+                        <div class="empty-message">暂无日志信息</div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 数据保存信息 -->
+            <div class="info-section">
+                <h3>数据保存信息</h3>
+                <div class="info-content">
+                    <div class="info-item">
+                        <strong>保存位置：</strong>
+                        <span>本地CSV文件</span>
+                    </div>
+                    <div class="info-item">
+                        <strong>文件格式：</strong>
+                        <span>按季度保存，股票代码.csv</span>
+                    </div>
+                    <div class="info-item">
+                        <strong>保存路径：</strong>
+                        <span>data/data/quarters/年份/季度/</span>
+                    </div>
+                    <div class="info-item">
+                        <strong>数据来源：</strong>
+                        <span>东方财富网</span>
+                    </div>
+                    <div class="info-item">
+                        <strong>数据频率：</strong>
+                        <span>1分钟</span>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 当前状态 -->
+            <div class="warning-section">
+                <h3>📊 当前状态</h3>
+                <div class="warning-content">
+                    <div class="warning-item">
+                        <strong>网络状态：</strong>
+                        <span id="networkStatus">检测中...</span>
+                    </div>
+                    <div class="warning-item">
+                        <strong>数据源：</strong>
+                        <span id="dataSourceStatus">东方财富网（检测中...）</span>
+                    </div>
+                    <div class="warning-item">
+                        <strong>下载状态：</strong>
+                        <span id="downloadStatusText">准备就绪</span>
+                    </div>
+                    <div class="warning-item">
+                        <strong>说明：</strong>
+                        <span>系统已优化，支持Brotli压缩数据解析</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.download-container {
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 0 1rem;
+}
+
+.download-card {
+    background-color: var(--card-background);
+    border-radius: 1rem;
+    box-shadow: var(--shadow-md);
+    overflow: hidden;
+}
+
+.download-header {
+    background-color: var(--primary-color);
+    color: white;
+    padding: 1.5rem;
+    text-align: center;
+}
+
+.download-header h2 {
+    margin: 0;
+    font-size: 1.5rem;
+    font-weight: 600;
+}
+
+.download-content {
+    padding: 2rem;
+}
+
+.button-group {
+    display: flex;
+    gap: 1rem;
+    justify-content: center;
+    margin-bottom: 2rem;
+}
+
+.btn {
+    padding: 0.75rem 1.5rem;
+    border: none;
+    border-radius: 0.5rem;
+    font-weight: 500;
+    font-size: 1rem;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    min-width: 120px;
+}
+
+.btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.btn-primary {
+    background-color: var(--primary-color);
+    color: white;
+}
+
+.btn-primary:hover:not(:disabled) {
+    background-color: var(--secondary-color);
+}
+
+.btn-danger {
+    background-color: #dc2626;
+    color: white;
+}
+
+.btn-danger:hover:not(:disabled) {
+    background-color: #b91c1c;
+}
+
+.btn-info {
+    background-color: #0891b2;
+    color: white;
+}
+
+.btn-info:hover:not(:disabled) {
+    background-color: #0e7490;
+}
+
+.stats-section {
+    margin-bottom: 2rem;
+}
+
+.stats-section h3 {
+    margin-bottom: 1rem;
+    color: var(--text-primary);
+    font-size: 1.25rem;
+    font-weight: 600;
+}
+
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 1rem;
+    background-color: var(--background-color);
+    padding: 1.5rem;
+    border-radius: 0.75rem;
+}
+
+.stat-item {
+    text-align: center;
+    padding: 1rem 0.5rem;
+}
+
+.stat-number {
+    font-size: 2rem;
+    font-weight: 700;
+    display: block;
+    margin-bottom: 0.5rem;
+}
+
+.stat-label {
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+
+.stat-total { color: var(--primary-color); }
+.stat-pending { color: var(--warning-color); }
+.stat-success { color: var(--success-color); }
+.stat-failed { color: #dc2626; }
+.stat-processing { color: #0891b2; }
+
+.progress-section h3 {
+    margin-bottom: 1rem;
+    color: var(--text-primary);
+    font-size: 1.25rem;
+    font-weight: 600;
+}
+
+.progress-info {
+    margin-bottom: 1rem;
+}
+
+.progress-item {
+    margin-bottom: 0.5rem;
+    color: var(--text-primary);
+}
+
+.progress-item strong {
+    color: var(--text-secondary);
+}
+
+.progress-bar-container {
+    width: 100%;
+    height: 1.5rem;
+    background-color: var(--background-color);
+    border-radius: 0.75rem;
+    overflow: hidden;
+    position: relative;
+}
+
+.progress-bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--primary-color), var(--secondary-color));
+    border-radius: 0.75rem;
+    transition: width 0.3s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-weight: 600;
+    font-size: 0.875rem;
+    min-width: 2rem;
+}
+
+.info-section {
+    background-color: var(--background-color);
+    padding: 1.5rem;
+    border-radius: 0.75rem;
+}
+
+.info-section h3 {
+    margin-bottom: 1rem;
+    color: var(--text-primary);
+    font-size: 1.25rem;
+    font-weight: 600;
+}
+
+.info-content {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.info-item {
+    color: var(--text-primary);
+    font-size: 0.875rem;
+}
+
+.info-item strong {
+    color: var(--text-secondary);
+    margin-right: 0.5rem;
+}
+
+.warning-section {
+    background-color: #fef3cd;
+    border: 1px solid #fecba1;
+    padding: 1.5rem;
+    border-radius: 0.75rem;
+    margin-top: 1rem;
+}
+
+.warning-section h3 {
+    margin-bottom: 1rem;
+    color: #856404;
+    font-size: 1.25rem;
+    font-weight: 600;
+}
+
+.warning-content {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.warning-item {
+    color: #856404;
+    font-size: 0.875rem;
+}
+
+.warning-item strong {
+    color: #856404;
+    margin-right: 0.5rem;
+}
+
+.details-section {
+    margin-bottom: 2rem;
+}
+
+.details-section h3 {
+    margin-bottom: 1rem;
+    color: var(--text-primary);
+    font-size: 1.25rem;
+    font-weight: 600;
+}
+
+.details-tabs {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+    border-bottom: 2px solid var(--background-color);
+}
+
+.tab-button {
+    padding: 0.75rem 1.5rem;
+    border: none;
+    background-color: transparent;
+    color: var(--text-secondary);
+    font-weight: 500;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: all 0.3s ease;
+}
+
+.tab-button.active {
+    color: var(--primary-color);
+    border-bottom-color: var(--primary-color);
+}
+
+.tab-button:hover:not(.active) {
+    color: var(--text-primary);
+}
+
+.tab-content {
+    display: none;
+    min-height: 200px;
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.tab-content.active {
+    display: block;
+}
+
+.stock-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.stock-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.75rem;
+    background-color: var(--background-color);
+    border-radius: 0.5rem;
+    border-left: 4px solid var(--success-color);
+}
+
+.stock-item.failed {
+    border-left-color: #dc2626;
+}
+
+.stock-code {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.stock-status {
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+}
+
+.stock-time {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+}
+
+.log-container {
+    background-color: #1a1a1a;
+    color: #00ff00;
+    padding: 1rem;
+    border-radius: 0.5rem;
+    font-family: 'Courier New', monospace;
+    font-size: 0.875rem;
+    line-height: 1.4;
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.log-entry {
+    margin-bottom: 0.25rem;
+}
+
+.log-entry.success {
+    color: #00ff00;
+}
+
+.log-entry.error {
+    color: #ff4444;
+}
+
+.log-entry.warning {
+    color: #ffaa00;
+}
+
+.log-entry.info {
+    color: #00aaff;
+}
+
+.empty-message {
+    text-align: center;
+    color: var(--text-secondary);
+    font-style: italic;
+    padding: 2rem;
+}
+
+@media (max-width: 768px) {
+    .download-content {
+        padding: 1rem;
+    }
+    
+    .button-group {
+        flex-direction: column;
+        align-items: center;
+    }
+    
+    .btn {
+        width: 100%;
+        max-width: 200px;
+    }
+    
+    .stats-grid {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 0.75rem;
+        padding: 1rem;
+    }
+    
+    .stat-number {
+        font-size: 1.5rem;
+    }
+    
+    .info-content {
+        font-size: 0.8rem;
+    }
+}
+</style>
+<script>
+let polling = null;
+let statsPolling = null;
+let detailsPolling = null;
+let networkPolling = null;
+let dataSourcePolling = null;
+let statusDisplayPolling = null;
+let successStocks = [];
+let failedStocks = [];
+let downloadLogs = [];
+let lastDownloadStatus = {status: '未开始', progress: 0}; // 缓存最后的下载状态
+
+// 标签页切换功能
+function showTab(tabName) {
+    // 隐藏所有标签页内容
+    document.querySelectorAll('.tab-content').forEach(tab => {
+        tab.classList.remove('active');
+    });
+    
+    // 移除所有按钮的active状态
+    document.querySelectorAll('.tab-button').forEach(btn => {
+        btn.classList.remove('active');
+    });
+    
+    // 显示选中的标签页
+    document.getElementById(tabName + 'Tab').classList.add('active');
+    
+    // 激活对应的按钮
+    event.target.classList.add('active');
+}
+
+// 更新成功股票列表
+function updateSuccessList() {
+    const container = document.getElementById('successList');
+    if (successStocks.length === 0) {
+        container.innerHTML = '<div class="empty-message">暂无成功下载的股票</div>';
+        return;
+    }
+    
+    container.innerHTML = successStocks.map(stock => `
+        <div class="stock-item">
+            <div>
+                <div class="stock-code">${stock.code}</div>
+                <div class="stock-status">${stock.records} 条记录</div>
+            </div>
+            <div class="stock-time">${stock.time}</div>
+        </div>
+    `).join('');
+}
+
+// 更新失败股票列表
+function updateFailedList() {
+    const container = document.getElementById('failedList');
+    if (failedStocks.length === 0) {
+        container.innerHTML = '<div class="empty-message">暂无下载失败的股票</div>';
+        return;
+    }
+    
+    container.innerHTML = failedStocks.map(stock => `
+        <div class="stock-item failed">
+            <div>
+                <div class="stock-code">${stock.code}</div>
+                <div class="stock-status">${stock.error}</div>
+            </div>
+            <div class="stock-time">${stock.time}</div>
+        </div>
+    `).join('');
+}
+
+// 更新日志显示
+function updateLogs() {
+    const container = document.getElementById('logContainer');
+    if (downloadLogs.length === 0) {
+        container.innerHTML = '<div class="empty-message">暂无日志信息</div>';
+        return;
+    }
+    
+    container.innerHTML = downloadLogs.map(log => `
+        <div class="log-entry ${log.type}">[${log.time}] ${log.message}</div>
+    `).join('');
+    
+    // 自动滚动到底部
+    container.scrollTop = container.scrollHeight;
+}
+
+// 添加日志
+function addLog(message, type = 'info') {
+    const now = new Date();
+    const timeStr = now.toLocaleTimeString();
+    downloadLogs.push({
+        time: timeStr,
+        message: message,
+        type: type
+    });
+    
+    // 保持最多100条日志
+    if (downloadLogs.length > 100) {
+        downloadLogs.shift();
+    }
+    
+    updateLogs();
+}
+
+function updateStatistics() {
+    console.log('[DEBUG] 开始更新统计数据...');
+    fetch('{{ url_for("download_data_bp.get_download_statistics") }}')
+        .then(res => {
+            console.log('[DEBUG] 响应状态:', res.status);
+            return res.json();
+        })
+        .then(data => {
+            console.log('[DEBUG] 获取到统计数据:', data);
+            document.getElementById('totalCount').innerText = data.total || 0;
+            document.getElementById('pendingCount').innerText = data.pending || 0;
+            document.getElementById('successCount').innerText = data.success || 0;
+            document.getElementById('failedCount').innerText = data.failed || 0;
+            document.getElementById('processingCount').innerText = data.processing || 0;
+            console.log('[DEBUG] 统计数据更新完成');
+        })
+        .catch(error => {
+            console.error('获取统计数据失败:', error);
+        });
+}
+
+// 更新详细下载信息
+function updateDownloadDetails() {
+    fetch('{{ url_for("download_data_bp.get_download_details") }}')
+        .then(res => res.json())
+        .then(data => {
+            // 更新成功列表
+            if (data.success && data.success.length > 0) {
+                successStocks = data.success;
+                updateSuccessList();
+            }
+            
+            // 更新失败列表
+            if (data.failed && data.failed.length > 0) {
+                failedStocks = data.failed;
+                updateFailedList();
+            }
+        })
+        .catch(error => {
+            console.error('获取下载详情失败:', error);
+        });
+}
+
+function updateStatus() {
+    console.log('[DEBUG] updateStatus() 被调用');
+    fetch('{{ url_for("download_data_bp.get_download_status") }}')
+        .then(res => res.json())
+        .then(data => {
+            // 更新缓存的状态
+            lastDownloadStatus = {status: data.status, progress: data.progress};
+            
+            document.getElementById('statusText').innerText = data.status;
+            document.getElementById('progressText').innerText = data.progress + '%';
+            
+            // 更新进度条
+            const progressBar = document.getElementById('progressBar');
+            progressBar.style.width = data.progress + '%';
+            progressBar.innerText = data.progress + '%';
+            
+            // 同时更新下载状态显示（避免重复调用API）
+            updateDownloadStatusDisplayFromCache();
+            
+            if (data.status === '已完成' || data.status === '已停止' || data.status === '无数据下载') {
+                console.log('[DEBUG] 下载已完成/停止，清理polling定时器');
+                document.getElementById('startBtn').disabled = false;
+                document.getElementById('stopBtn').disabled = true;
+                if (polling) {
+                    clearInterval(polling);
+                    polling = null;
+                    console.log('[DEBUG] polling定时器已清理');
+                }
+            }
+        })
+        .catch(error => {
+            console.error('获取状态失败:', error);
+        });
+}
+
+// 检测网络状态
+function checkNetworkStatus() {
+    const statusElement = document.getElementById('networkStatus');
+    
+    // 使用轻量级的统计API来检测网络
+    fetch('{{ url_for("download_data_bp.get_download_statistics") }}')
+        .then(response => {
+            if (response.ok) {
+                statusElement.textContent = '本地服务器连接正常';
+                statusElement.style.color = '#10b981';
+            } else {
+                statusElement.textContent = '本地服务器连接异常';
+                statusElement.style.color = '#dc2626';
+            }
+        })
+        .catch(error => {
+            statusElement.textContent = '网络连接失败';
+            statusElement.style.color = '#dc2626';
+        });
+}
+
+// 检测数据源状态
+function checkDataSourceStatus() {
+    const statusElement = document.getElementById('dataSourceStatus');
+    
+    // 尝试访问东方财富API来检测数据源状态
+    const testUrl = 'https://push2his.eastmoney.com/api/qt/stock/trends2/get?fields1=f1&fields2=f51,f52,f53,f54,f55,f56,f57&ut=fa5fd1943c7b386f172d6893dbfba10b&ndays=1&iscr=0&secid=0.000001&cb=jQuery112406290464117319126_1645838221914&_=1645838221952';
+    
+    fetch(testUrl, {
+        method: 'GET',
+        mode: 'no-cors', // 避免CORS问题
+        cache: 'no-cache'
+    })
+    .then(() => {
+        statusElement.textContent = '东方财富网（可访问）';
+        statusElement.style.color = '#10b981';
+    })
+    .catch(error => {
+        statusElement.textContent = '东方财富网（检测中...）';
+        statusElement.style.color = '#f59e0b';
+    });
+}
+
+// 从缓存更新下载状态显示（不调用API）
+function updateDownloadStatusDisplayFromCache() {
+    const statusElement = document.getElementById('downloadStatusText');
+    const status = lastDownloadStatus.status;
+    const progress = lastDownloadStatus.progress;
+    
+    if (status === '未开始') {
+        statusElement.textContent = '准备就绪';
+        statusElement.style.color = '#6b7280';
+    } else if (status === '进行中') {
+        statusElement.textContent = `下载中 (${progress}%)`;
+        statusElement.style.color = '#3b82f6';
+    } else if (status === '已完成') {
+        statusElement.textContent = '下载完成';
+        statusElement.style.color = '#10b981';
+    } else if (status === '已停止') {
+        statusElement.textContent = '已停止';
+        statusElement.style.color = '#ef4444';
+    } else {
+        statusElement.textContent = status;
+        statusElement.style.color = '#6b7280';
+    }
+}
+
+// 更新下载状态显示（已废弃，保留用于兼容性）
+function updateDownloadStatusDisplay() {
+    // 现在直接从缓存更新，不再调用API
+    updateDownloadStatusDisplayFromCache();
+}
+
+// 清理所有定时器
+function clearAllPolling() {
+    if (polling) {
+        clearInterval(polling);
+        polling = null;
+        console.log('[DEBUG] 清理下载状态轮询');
+    }
+    if (statsPolling) {
+        clearInterval(statsPolling);
+        statsPolling = null;
+        console.log('[DEBUG] 清理统计数据轮询');
+    }
+    if (detailsPolling) {
+        clearInterval(detailsPolling);
+        detailsPolling = null;
+        console.log('[DEBUG] 清理详细信息轮询');
+    }
+    if (networkPolling) {
+        clearInterval(networkPolling);
+        networkPolling = null;
+        console.log('[DEBUG] 清理网络状态轮询');
+    }
+    if (dataSourcePolling) {
+        clearInterval(dataSourcePolling);
+        dataSourcePolling = null;
+        console.log('[DEBUG] 清理数据源状态轮询');
+    }
+    // statusDisplayPolling 已废弃，不再需要清理
+}
+
+// 启动基础轮询（低频）
+function startBasicPolling() {
+    console.log('[DEBUG] 准备启动基础轮询...');
+    
+    // 每5秒更新一次统计数据（低频）
+    if (statsPolling) {
+        clearInterval(statsPolling);
+        console.log('[DEBUG] 清理现有的统计数据轮询');
+    }
+    statsPolling = setInterval(updateStatistics, 5000);
+    console.log('[DEBUG] 启动低频统计数据轮询，间隔5秒');
+    
+    // 每10秒检测一次网络状态
+    if (networkPolling) {
+        clearInterval(networkPolling);
+        console.log('[DEBUG] 清理现有的网络状态轮询');
+    }
+    networkPolling = setInterval(checkNetworkStatus, 10000);
+    console.log('[DEBUG] 网络状态检测已启动，间隔10秒');
+    
+    // 每15秒检测一次数据源状态
+    if (dataSourcePolling) {
+        clearInterval(dataSourcePolling);
+        console.log('[DEBUG] 清理现有的数据源状态轮询');
+    }
+    dataSourcePolling = setInterval(checkDataSourceStatus, 15000);
+    console.log('[DEBUG] 数据源状态检测已启动，间隔15秒');
+}
+
+// 启动高频轮询（下载时使用）
+function startHighFrequencyPolling() {
+    console.log('[DEBUG] 准备启动高频轮询，先清理现有定时器...');
+    
+    // 先清理所有现有的定时器，避免重复
+    if (polling) {
+        clearInterval(polling);
+        console.log('[DEBUG] 清理现有的下载状态轮询');
+    }
+    if (detailsPolling) {
+        clearInterval(detailsPolling);
+        console.log('[DEBUG] 清理现有的详细信息轮询');
+    }
+    // statusDisplayPolling 已废弃，不再需要清理
+    if (statsPolling) {
+        clearInterval(statsPolling);
+        console.log('[DEBUG] 清理现有的统计数据轮询');
+    }
+    
+    // 启动高频轮询
+    polling = setInterval(updateStatus, 1000);
+    console.log('[DEBUG] 启动下载状态轮询，间隔1秒');
+    
+    detailsPolling = setInterval(updateDownloadDetails, 1000);
+    console.log('[DEBUG] 启动高频详细信息轮询，间隔1秒');
+    
+    statsPolling = setInterval(updateStatistics, 1000);
+    console.log('[DEBUG] 启动高频统计数据轮询，间隔1秒');
+    
+    // statusDisplayPolling 不再需要，因为状态显示已合并到updateStatus中
+    console.log('[DEBUG] 状态显示已合并到updateStatus，不再需要单独轮询');
+}
+
+// 重置失败的股票为待下载状态
+function resetFailedStocks() {
+    console.log('[DEBUG] 开始重置失败的股票...');
+    addLog('正在重置失败的股票为待下载状态...', 'info');
+    
+    fetch('{{ url_for("download_data_bp.reset_failed_stocks") }}', {method: 'POST'})
+        .then(res => res.json())
+        .then(data => {
+            console.log('[DEBUG] 重置失败股票结果:', data);
+            if (data.reset_count > 0) {
+                addLog(`成功重置 ${data.reset_count} 条失败记录为待下载状态`, 'success');
+                updateStatistics(); // 立即更新统计数据
+            } else {
+                addLog('没有需要重置的失败记录', 'info');
+            }
+        })
+        .catch(error => {
+            console.error('重置失败股票失败:', error);
+            addLog('重置失败股票失败: ' + error.message, 'error');
+        });
+}
+
+// 页面加载时获取统计数据
+document.addEventListener('DOMContentLoaded', function() {
+    console.log('[DEBUG] 页面加载完成，开始初始化...');
+    
+    // 页面加载时重置失败的股票
+    resetFailedStocks();
+    
+    // 立即执行一次更新
+    updateStatistics();
+    updateDownloadDetails();
+    checkNetworkStatus();
+    checkDataSourceStatus();
+    updateDownloadStatusDisplay();
+    
+    console.log('[DEBUG] 启动基础轮询（低频）...');
+    
+    // 启动基础轮询（低频，减少服务器压力）
+    startBasicPolling();
+    
+    console.log('[DEBUG] 基础轮询已启动完成');
+});
+
+// 页面卸载时清理所有定时器
+window.addEventListener('beforeunload', function() {
+    console.log('[DEBUG] 页面即将卸载，清理所有定时器...');
+    clearAllPolling();
+});
+
+document.getElementById('startBtn').onclick = function() {
+    // 清空之前的数据
+    successStocks = [];
+    failedStocks = [];
+    downloadLogs = [];
+    updateSuccessList();
+    updateFailedList();
+    updateLogs();
+    
+    addLog('开始下载任务...', 'info');
+    
+    // 开始下载前先重置失败的股票
+    resetFailedStocks();
+    
+    fetch('{{ url_for("download_data_bp.start_download") }}', {method: 'POST'})
+        .then(res => res.json())
+        .then(data => {
+            document.getElementById('startBtn').disabled = true;
+            document.getElementById('stopBtn').disabled = false;
+            addLog('下载任务已启动', 'success');
+            
+            // 立即更新一次状态
+            updateStatus();
+            updateStatistics();
+            updateDownloadDetails();
+            
+            // 启动高频轮询（下载时使用）
+            console.log('[DEBUG] 启动高频轮询...');
+            startHighFrequencyPolling();
+        })
+        .catch(error => {
+            console.error('开始下载失败:', error);
+            addLog('启动下载失败: ' + error.message, 'error');
+        });
+};
+
+document.getElementById('stopBtn').onclick = function() {
+    addLog('请求停止下载...', 'warning');
+    
+    fetch('{{ url_for("download_data_bp.stop_download_request") }}', {method: 'POST'})
+        .then(res => res.json())
+        .then(data => {
+            document.getElementById('stopBtn').disabled = true;
+            addLog('停止请求已发送', 'warning');
+            
+            // 立即更新一次状态
+            updateStatistics();
+            updateDownloadDetails();
+            
+            // 清理高频轮询，回到基础轮询
+            console.log('[DEBUG] 清理高频轮询，回到基础轮询...');
+            clearInterval(polling);
+            clearInterval(detailsPolling);
+            polling = null;
+            detailsPolling = null;
+            // statusDisplayPolling 已废弃，不再需要清理
+            
+            // 恢复基础轮询
+            startBasicPolling();
+        })
+        .catch(error => {
+            console.error('停止下载失败:', error);
+            addLog('停止下载失败: ' + error.message, 'error');
+        });
+};
+
+document.getElementById('resampleBtn').onclick = function() {
+    const btn = document.getElementById('resampleBtn');
+    const originalText = btn.textContent;
+    
+    // 禁用按钮并显示加载状态
+    btn.disabled = true;
+    btn.textContent = '重新采样中...';
+    addLog('开始重新采样1分钟数据为日线数据...', 'info');
+    
+    fetch('{{ url_for("download_data_bp.resample_to_daily") }}', {method: 'POST'})
+        .then(res => res.json())
+        .then(data => {
+            if (data.success) {
+                addLog(data.message, 'success');
+                console.log('重新采样结果:', data);
+            } else {
+                addLog('重新采样失败: ' + data.message, 'error');
+            }
+        })
+        .catch(error => {
+            console.error('重新采样失败:', error);
+            addLog('重新采样失败: ' + error.message, 'error');
+        })
+        .finally(() => {
+            // 恢复按钮状态
+            btn.disabled = false;
+            btn.textContent = originalText;
+        });
+};
+
+document.getElementById('openFolderBtn').onclick = function() {
+    fetch('{{ url_for("download_data_bp.open_data_folder") }}', {method: 'POST'})
+        .then(res => res.json())
+        .then(data => {
+            if (data.success) {
+                console.log('数据文件夹已打开');
+            } else {
+                alert('打开文件夹失败: ' + (data.message || '未知错误'));
+            }
+        })
+        .catch(error => {
+            console.error('打开文件夹失败:', error);
+            alert('打开文件夹失败: ' + error.message);
+        });
+};
+</script>
+{% endblock %} 

@@ -1,0 +1,297 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container">
+    <div class="header">
+        <h1>路径测试页面</h1>
+        <p>测试文件路径生成和API功能</p>
+    </div>
+
+    <div class="test-section">
+        <h2>路径生成测试</h2>
+        <div class="form-group">
+            <label for="testStockCode">股票代码:</label>
+            <input type="text" id="testStockCode" placeholder="如：000001" value="000001">
+            <button id="testPathBtn" class="btn btn-primary">测试路径生成</button>
+        </div>
+        
+        <div id="pathResult" class="result-section" style="display: none;">
+            <h3>路径生成结果:</h3>
+            <div id="pathResultContent"></div>
+        </div>
+    </div>
+
+    <div class="test-section">
+        <h2>API测试</h2>
+        <div class="form-group">
+            <label for="testApiPath">测试路径:</label>
+            <input type="text" id="testApiPath" placeholder="输入要测试的路径">
+            <button id="testFolderBtn" class="btn btn-secondary">测试打开文件夹</button>
+            <button id="testFileBtn" class="btn btn-secondary">测试打开文件</button>
+            <button id="checkPermBtn" class="btn btn-warning">检查权限</button>
+        </div>
+        
+        <div id="apiResult" class="result-section" style="display: none;">
+            <h3>API测试结果:</h3>
+            <div id="apiResultContent"></div>
+        </div>
+    </div>
+</div>
+
+<style>
+.container {
+    max-width: 1200px;
+    margin: 2rem auto;
+    padding: 0 1rem;
+}
+
+.header {
+    text-align: center;
+    margin-bottom: 3rem;
+    padding: 2rem;
+    background: var(--card-background);
+    border-radius: 1rem;
+    box-shadow: var(--shadow-md);
+}
+
+.test-section {
+    background: var(--card-background);
+    border-radius: 1rem;
+    padding: 2rem;
+    margin-bottom: 2rem;
+    box-shadow: var(--shadow-md);
+}
+
+.form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    margin-bottom: 2rem;
+}
+
+.form-group label {
+    font-weight: bold;
+    color: var(--text-primary);
+}
+
+.form-group input {
+    padding: 0.75rem;
+    border: 1px solid var(--border-color);
+    border-radius: 0.5rem;
+    font-size: 1rem;
+}
+
+.btn {
+    padding: 0.75rem 1.5rem;
+    border: none;
+    border-radius: 0.5rem;
+    cursor: pointer;
+    font-size: 1rem;
+    font-weight: 500;
+    transition: all 0.3s ease;
+}
+
+.btn-primary {
+    background: var(--primary-color);
+    color: white;
+}
+
+.btn-secondary {
+    background: var(--background-secondary);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+}
+
+.btn-warning {
+    background: #ffc107;
+    color: #212529;
+    border: 1px solid #ffc107;
+}
+
+.btn-warning:hover {
+    background: #e0a800;
+    border-color: #d39e00;
+}
+
+.btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.result-section {
+    background: var(--background-secondary);
+    border-radius: 0.5rem;
+    padding: 1.5rem;
+    margin-top: 1rem;
+}
+
+.path-display {
+    background: var(--background-color);
+    padding: 1rem;
+    border-radius: 0.5rem;
+    font-family: 'Courier New', monospace;
+    font-size: 0.9rem;
+    word-break: break-all;
+    border: 1px solid var(--border-color);
+}
+
+.success {
+    color: #28a745;
+    font-weight: bold;
+}
+
+.error {
+    color: #dc3545;
+    font-weight: bold;
+}
+</style>
+
+<script>
+document.getElementById('testPathBtn').onclick = function() {
+    const stockCode = document.getElementById('testStockCode').value.trim();
+    
+    if (!stockCode) {
+        alert('请输入股票代码');
+        return;
+    }
+    
+    // 模拟路径生成（这里应该调用后端API）
+    const now = new Date();
+    const year = now.getFullYear();
+    const quarter = Math.floor(now.getMonth() / 3) + 1;
+    const quarterStr = `Q${quarter}`;
+    
+    // 模拟项目根路径
+    const projectRoot = 'E:\\MyProject\\MyStock\\MyStock\\Stock_RNN';
+    const baseDir = `${projectRoot}\\data\\data\\quarters\\${year}\\${quarterStr}`;
+    const filePath = `${baseDir}\\${stockCode}.csv`;
+    
+    const resultDiv = document.getElementById('pathResult');
+    const contentDiv = document.getElementById('pathResultContent');
+    
+    let html = `
+        <div class="path-display">
+            <strong>生成的路径:</strong><br>
+            ${filePath}
+        </div>
+        <div style="margin-top: 1rem;">
+            <button onclick="testOpenFolder('${baseDir}')" class="btn btn-primary">测试打开文件夹</button>
+            <button onclick="testOpenFile('${filePath}')" class="btn btn-secondary">测试打开文件</button>
+        </div>
+    `;
+    
+    contentDiv.innerHTML = html;
+    resultDiv.style.display = 'block';
+};
+
+document.getElementById('testFolderBtn').onclick = function() {
+    const path = document.getElementById('testApiPath').value.trim();
+    if (!path) {
+        alert('请输入测试路径');
+        return;
+    }
+    testOpenFolder(path);
+};
+
+document.getElementById('checkPermBtn').onclick = function() {
+    const path = document.getElementById('testApiPath').value.trim();
+    if (!path) {
+        alert('请输入测试路径');
+        return;
+    }
+    checkPermissions(path);
+};
+
+function checkPermissions(filePath) {
+    console.log('检查权限:', filePath);
+    
+    fetch('/api/check-permissions', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ path: filePath })
+    }).then(response => {
+        console.log('API响应状态:', response.status);
+        return response.json();
+    }).then(data => {
+        console.log('API响应数据:', data);
+        showApiResult(data, '权限检查');
+    }).catch(error => {
+        console.error('API调用失败:', error);
+        showApiResult({success: false, message: error.message}, '权限检查');
+    });
+}
+
+function testOpenFolder(folderPath) {
+    console.log('测试打开文件夹:', folderPath);
+    
+    fetch('/api/open-folder', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ path: folderPath })
+    }).then(response => {
+        console.log('API响应状态:', response.status);
+        return response.json();
+    }).then(data => {
+        console.log('API响应数据:', data);
+        showApiResult(data, '打开文件夹');
+    }).catch(error => {
+        console.error('API调用失败:', error);
+        showApiResult({success: false, message: error.message}, '打开文件夹');
+    });
+}
+
+function testOpenFile(filePath) {
+    console.log('测试打开文件:', filePath);
+    
+    fetch('/api/open-file', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ path: filePath })
+    }).then(response => {
+        console.log('API响应状态:', response.status);
+        return response.json();
+    }).then(data => {
+        console.log('API响应数据:', data);
+        showApiResult(data, '打开文件');
+    }).catch(error => {
+        console.error('API调用失败:', error);
+        showApiResult({success: false, message: error.message}, '打开文件');
+    });
+}
+
+function showApiResult(data, operation) {
+    const resultDiv = document.getElementById('apiResult');
+    const contentDiv = document.getElementById('apiResultContent');
+    
+    const statusClass = data.success ? 'success' : 'error';
+    const statusText = data.success ? '成功' : '失败';
+    
+    let html = `
+        <div class="${statusClass}">
+            ${operation} ${statusText}: ${data.message}
+        </div>
+    `;
+    
+    contentDiv.innerHTML = html;
+    resultDiv.style.display = 'block';
+}
+
+// 页面加载时设置默认测试路径
+document.addEventListener('DOMContentLoaded', function() {
+    const now = new Date();
+    const year = now.getFullYear();
+    const quarter = Math.floor(now.getMonth() / 3) + 1;
+    const quarterStr = `Q${quarter}`;
+    const projectRoot = 'E:\\MyProject\\MyStock\\MyStock\\Stock_RNN';
+    const defaultPath = `${projectRoot}\\data\\data\\quarters\\${year}\\${quarterStr}`;
+    
+    document.getElementById('testApiPath').value = defaultPath;
+});
+</script>
+{% endblock %}

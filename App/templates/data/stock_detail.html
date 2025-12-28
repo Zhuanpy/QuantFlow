@@ -1,0 +1,571 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container">
+    <div class="header">
+        <div class="breadcrumb">
+            <a href="{{ url_for('data_bp.data_management') }}">数据管理</a>
+            <span class="separator">/</span>
+            <a href="{{ url_for('data_bp.stock_market_data') }}">股票市场数据</a>
+            <span class="separator">/</span>
+            <span class="current">详情</span>
+        </div>
+        <div class="header-actions">
+            <button class="btn btn-secondary" onclick="history.back()">
+                <i class="fas fa-arrow-left"></i> 返回
+            </button>
+            <button class="btn btn-warning" onclick="editStock()">
+                <i class="fas fa-edit"></i> 编辑
+            </button>
+            <button class="btn btn-danger" onclick="deleteStock()">
+                <i class="fas fa-trash"></i> 删除
+            </button>
+        </div>
+    </div>
+
+    <div class="detail-content">
+        <!-- 基本信息卡片 -->
+        <div class="detail-card">
+            <div class="card-header">
+                <h2>基本信息</h2>
+            </div>
+            <div class="card-body">
+                <div class="info-grid">
+                    <div class="info-item">
+                        <label>股票名称</label>
+                        <span>{{ stock.name }}</span>
+                    </div>
+                    <div class="info-item">
+                        <label>股票代码</label>
+                        <span class="code">{{ stock.code }}</span>
+                    </div>
+                    <div class="info-item">
+                        <label>记录ID</label>
+                        <span>{{ stock.id }}</span>
+                    </div>
+                    <div class="info-item">
+                        <label>创建时间</label>
+                        <span>{{ stock.created_at.strftime('%Y-%m-%d %H:%M:%S') if stock.created_at else '未知' }}</span>
+                    </div>
+                    <div class="info-item">
+                        <label>更新时间</label>
+                        <span>{{ stock.updated_at.strftime('%Y-%m-%d %H:%M:%S') if stock.updated_at else '未知' }}</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 市场代码信息 -->
+        <div class="detail-card">
+            <div class="card-header">
+                <h2>市场代码信息</h2>
+            </div>
+            <div class="card-body">
+                <div class="info-grid">
+                    <div class="info-item">
+                        <label>东方财富代码</label>
+                        <span>{{ stock.es_code or '未设置' }}</span>
+                    </div>
+                    <div class="info-item">
+                        <label>市场代码</label>
+                        <span>{{ stock.market_code or '未设置' }}</span>
+                    </div>
+                    <div class="info-item">
+                        <label>通达信市场</label>
+                        <span>{{ stock.txd_market or '未设置' }}</span>
+                    </div>
+                    <div class="info-item">
+                        <label>恒生市场</label>
+                        <span>{{ stock.hs_market or '未设置' }}</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 关联数据 -->
+        <div class="detail-card">
+            <div class="card-header">
+                <h2>关联数据</h2>
+            </div>
+            <div class="card-body">
+                <div class="related-data">
+                    <div class="data-section">
+                        <h3>分类信息</h3>
+                        {% if classification %}
+                        <div class="info-item">
+                            <label>分类</label>
+                            <span>{{ classification.classification }}</span>
+                        </div>
+                        {% else %}
+                        <p class="no-data">暂无分类信息</p>
+                        {% endif %}
+                    </div>
+                    
+                    <div class="data-section">
+                        <h3>下载记录</h3>
+                        {% if download_records %}
+                        <div class="record-list">
+                            {% for record in download_records %}
+                            <div class="record-item">
+                                <span class="status {{ record.download_status }}">{{ record.download_status }}</span>
+                                <span class="date">{{ record.record_date.strftime('%Y-%m-%d') if record.record_date else '未知' }}</span>
+                                <span class="progress">{{ record.download_progress }}%</span>
+                            </div>
+                            {% endfor %}
+                        </div>
+                        {% else %}
+                        <p class="no-data">暂无下载记录</p>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 操作历史 -->
+        <div class="detail-card">
+            <div class="card-header">
+                <h2>操作历史</h2>
+            </div>
+            <div class="card-body">
+                <div class="history-list">
+                    <div class="history-item">
+                        <div class="history-icon">
+                            <i class="fas fa-plus"></i>
+                        </div>
+                        <div class="history-content">
+                            <div class="history-title">记录创建</div>
+                            <div class="history-time">{{ stock.created_at.strftime('%Y-%m-%d %H:%M:%S') if stock.created_at else '未知' }}</div>
+                        </div>
+                    </div>
+                    {% if stock.updated_at and stock.updated_at != stock.created_at %}
+                    <div class="history-item">
+                        <div class="history-icon">
+                            <i class="fas fa-edit"></i>
+                        </div>
+                        <div class="history-content">
+                            <div class="history-title">记录更新</div>
+                            <div class="history-time">{{ stock.updated_at.strftime('%Y-%m-%d %H:%M:%S') }}</div>
+                        </div>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 删除确认模态框 -->
+<div id="deleteModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2>确认删除</h2>
+            <span class="close" onclick="closeDeleteModal()">&times;</span>
+        </div>
+        <div class="modal-body">
+            <p>确定要删除股票 <strong>{{ stock.name }} ({{ stock.code }})</strong> 吗？</p>
+            <p class="warning">此操作不可撤销，将同时删除所有关联数据！</p>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeDeleteModal()">取消</button>
+            <button class="btn btn-danger" onclick="confirmDelete()">确认删除</button>
+        </div>
+    </div>
+</div>
+
+<style>
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 20px;
+}
+
+.header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 30px;
+    padding-bottom: 20px;
+    border-bottom: 2px solid #e5e7eb;
+}
+
+.breadcrumb {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 14px;
+}
+
+.breadcrumb a {
+    color: #3b82f6;
+    text-decoration: none;
+}
+
+.breadcrumb a:hover {
+    text-decoration: underline;
+}
+
+.breadcrumb .separator {
+    color: #6b7280;
+}
+
+.breadcrumb .current {
+    color: #374151;
+    font-weight: 500;
+}
+
+.header-actions {
+    display: flex;
+    gap: 10px;
+}
+
+.detail-content {
+    display: grid;
+    gap: 20px;
+}
+
+.detail-card {
+    background: white;
+    border-radius: 12px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    overflow: hidden;
+    border: 1px solid #e5e7eb;
+}
+
+.card-header {
+    background: #f9fafb;
+    padding: 20px;
+    border-bottom: 1px solid #e5e7eb;
+}
+
+.card-header h2 {
+    margin: 0;
+    color: #1f2937;
+    font-size: 1.25rem;
+}
+
+.card-body {
+    padding: 20px;
+}
+
+.info-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 20px;
+}
+
+.info-item {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.info-item label {
+    font-weight: 500;
+    color: #6b7280;
+    font-size: 14px;
+}
+
+.info-item span {
+    color: #1f2937;
+    font-size: 16px;
+}
+
+.info-item .code {
+    font-family: 'Courier New', monospace;
+    background: #f3f4f6;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-weight: 600;
+}
+
+.related-data {
+    display: grid;
+    gap: 20px;
+}
+
+.data-section h3 {
+    margin: 0 0 15px 0;
+    color: #374151;
+    font-size: 1.1rem;
+}
+
+.no-data {
+    color: #6b7280;
+    font-style: italic;
+    margin: 0;
+}
+
+.record-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.record-item {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    padding: 10px;
+    background: #f9fafb;
+    border-radius: 6px;
+}
+
+.record-item .status {
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+.record-item .status.pending {
+    background: #fef3c7;
+    color: #92400e;
+}
+
+.record-item .status.processing {
+    background: #dbeafe;
+    color: #1e40af;
+}
+
+.record-item .status.success {
+    background: #d1fae5;
+    color: #065f46;
+}
+
+.record-item .status.failed {
+    background: #fee2e2;
+    color: #991b1b;
+}
+
+.record-item .date {
+    color: #6b7280;
+    font-size: 14px;
+}
+
+.record-item .progress {
+    color: #3b82f6;
+    font-weight: 500;
+}
+
+.history-list {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+}
+
+.history-item {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    padding: 15px;
+    background: #f9fafb;
+    border-radius: 8px;
+}
+
+.history-icon {
+    width: 40px;
+    height: 40px;
+    background: #3b82f6;
+    color: white;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+}
+
+.history-content {
+    flex: 1;
+}
+
+.history-title {
+    font-weight: 500;
+    color: #1f2937;
+    margin-bottom: 2px;
+}
+
+.history-time {
+    color: #6b7280;
+    font-size: 14px;
+}
+
+.btn {
+    padding: 10px 20px;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    transition: all 0.2s;
+    font-weight: 500;
+}
+
+.btn-primary {
+    background-color: #3b82f6;
+    color: white;
+}
+
+.btn-primary:hover {
+    background-color: #2563eb;
+}
+
+.btn-secondary {
+    background-color: #6b7280;
+    color: white;
+}
+
+.btn-secondary:hover {
+    background-color: #4b5563;
+}
+
+.btn-warning {
+    background-color: #f59e0b;
+    color: white;
+}
+
+.btn-warning:hover {
+    background-color: #d97706;
+}
+
+.btn-danger {
+    background-color: #ef4444;
+    color: white;
+}
+
+.btn-danger:hover {
+    background-color: #dc2626;
+}
+
+/* 模态框样式 */
+.modal {
+    display: none;
+    position: fixed;
+    z-index: 1000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.5);
+}
+
+.modal-content {
+    background-color: white;
+    margin: 10% auto;
+    padding: 0;
+    border-radius: 8px;
+    width: 90%;
+    max-width: 500px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.modal-header {
+    padding: 20px;
+    border-bottom: 1px solid #e5e7eb;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.modal-header h2 {
+    margin: 0;
+    color: #1f2937;
+}
+
+.close {
+    color: #aaa;
+    font-size: 28px;
+    font-weight: bold;
+    cursor: pointer;
+}
+
+.close:hover {
+    color: #000;
+}
+
+.modal-body {
+    padding: 20px;
+}
+
+.modal-body .warning {
+    color: #dc2626;
+    font-weight: 500;
+    margin-top: 10px;
+}
+
+.modal-footer {
+    padding: 20px;
+    border-top: 1px solid #e5e7eb;
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+}
+
+@media (max-width: 768px) {
+    .header {
+        flex-direction: column;
+        gap: 15px;
+        align-items: flex-start;
+    }
+    
+    .header-actions {
+        width: 100%;
+        justify-content: flex-end;
+    }
+    
+    .info-grid {
+        grid-template-columns: 1fr;
+    }
+}
+</style>
+
+<script>
+function editStock() {
+    // 跳转到编辑页面
+    window.location.href = `/data/stock/${stock.id}/edit`;
+}
+
+function deleteStock() {
+    document.getElementById('deleteModal').style.display = 'block';
+}
+
+function closeDeleteModal() {
+    document.getElementById('deleteModal').style.display = 'none';
+}
+
+function confirmDelete() {
+    fetch(`/data/stock/${stock.id}`, {
+        method: 'DELETE',
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            alert('删除成功！');
+            window.location.href = '/data/stock_market_data';
+        } else {
+            alert('删除失败：' + data.message);
+        }
+    })
+    .catch(error => {
+        alert('删除失败：' + error.message);
+    });
+    
+    closeDeleteModal();
+}
+
+// 点击模态框外部关闭
+window.onclick = function(event) {
+    const modal = document.getElementById('deleteModal');
+    if (event.target === modal) {
+        closeDeleteModal();
+    }
+}
+
+// 页面加载完成后的初始化
+document.addEventListener('DOMContentLoaded', function() {
+    console.log('股票详情页面加载完成');
+});
+</script>
+{% endblock %} 

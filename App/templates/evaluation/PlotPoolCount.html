@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta charset="utf-8">
+		<title>股票趋势统计</title>
+		<style>
+			.box1 {
+				width: 1080px;
+				height: 300px;
+				background-color: white;
+				}
+				
+			.box2 {
+				width: 1080px;
+				height: 300px;
+				background-color: white;
+				}
+			
+			.box3 {
+				width: 1080px;
+				height: 300px;
+				background-color: white;
+				}
+			
+			.box4 {
+				width: 1080px;
+				height: 300px;
+				background-color: white;
+				}
+			
+			.box5 {
+				width: 1080px;
+				height: 300px;
+				background-color: white;
+				}
+				
+		</style>
+		<script src="../static/js/echarts.common.min.js"></script>
+	</head>
+	
+	<body>
+
+		<div class="box1">chart Up Down</div>
+		
+		<script>
+			
+			var chartUpDown = echarts.init(document.querySelector('.box1'));	
+			var trendDate = {{stocktrends1|safe}};
+			var trendUp = {{stocktrends2|safe}};
+			var trendDown = {{stocktrends3|safe}};
+				
+			var option = {
+					  title: {text: '趋势涨跌统计'},
+					  tooltip: {trigger: 'axis'},
+					  legend: {data: ['上涨', '下跌']},
+					  
+					  grid: {left: '3%', right: '4%', bottom: '5%', containLabel: true},
+
+					  xAxis: {
+						  type: 'category',
+						  boundaryGap: false,
+						  data: trendDate,
+						  },
+					  
+					  yAxis: {type: 'value'},
+					  
+					  series: [
+						{name: '上涨',
+						type: 'line',
+						color: 'red',
+						data: trendUp},
+						
+						{name: '下跌',
+						type: 'line',
+						color: 'green',
+						data: trendDown},]
+					};
+			
+			chartUpDown.setOption(option);
+			
+
+		</script>
+		
+		<br><br><br><br>
+		<div class="box2">chart Re Up Down</div>
+		<script>
+			var chartReUpDown = echarts.init(document.querySelector('.box2'));
+			var box2date = {{box2date|safe}};
+			var box2Up = {{box2Up|safe}};
+			var box2ReUp = {{box2ReUp|safe}};
+			var box2Down = {{box2Down|safe}};
+			var box2ReDown = {{box2ReDown|safe}};
+			
+			var option = {
+					  title: {
+						text: '股票涨跌与反转统计'
+					  },
+					  tooltip: {
+						trigger: 'axis'
+					  },
+					  legend: {
+						data: ['Up', 'Re-up', 'Down', 'Re-down']
+					  },
+					  grid: {
+						left: '3%',
+						right: '4%',
+						bottom: '3%',
+						containLabel: true
+					  },
+					 
+					  xAxis: {
+						type: 'category',
+						boundaryGap: false,
+						data: box2date
+					  },
+					  yAxis: {
+						type: 'value'
+					  },
+					  series: [
+						{
+						  name: 'Up',
+						  type: 'line',
+						  // stack: 'Total',
+						  data: box2Up
+						},
+						{
+						  name: 'Re-up',
+						  type: 'line',
+						  // stack: 'Total',
+						  data: box2ReUp
+						},
+						{
+						  name: 'Down',
+						  type: 'line',
+						  // stack: 'Total',
+						  data: box2Down
+						},
+						{
+						  name: 'Re-down',
+						  type: 'line',
+						  // stack: 'Total',
+						  data: box2ReDown
+						},
+					  ]
+					};
+			chartReUpDown.setOption(option);
+		
+		
+		</script>
+		
+		<br><br><br><br>
+		<div class="box3"></div>
+		
+		<script>
+			var chartTrendsCount = echarts.init(document.querySelector('.box3'));
+
+			var box3date = {{box3date|safe}};
+			var box3up1= {{box3up1|safe}};
+			var box3up2= {{box3up2|safe}};
+			var box3down1= {{box3down1|safe}};
+			var box3down2= {{box3down2|safe}};
+			console.log(box3down2)
+			var option = {
+					  title: {
+						text: '股票趋势阶段统计'
+					  },
+					  tooltip: {
+						trigger: 'axis'
+					  },
+					  legend: {
+						data: ['-Up', 'Up-', '-Down', 'Down-']
+					  },
+					  grid: {
+						left: '3%',
+						right: '4%',
+						bottom: '3%',
+						containLabel: true
+					  },
+	
+					  xAxis: {
+						type: 'category',
+						boundaryGap: false,
+						data: box3date
+					  },
+					  yAxis: {
+						type: 'value'
+					  },
+					  series: [
+						{
+						  name: '-Up',
+						  type: 'line',
+	
+						  data: box3up1
+						},
+						{
+						  name: 'Up-',
+						  type: 'line',
+						  data: box3up2
+						},
+						{
+						  name: '-Down',
+						  type: 'line',
+						  data: box3down1
+						},
+						{
+						  name: 'Down-',
+						  type: 'line',
+						  data: box3down2
+						},
+						
+					  ]
+					};
+			chartTrendsCount.setOption(option);
+		</script>
+		
+		<br><br><br><br>
+		<div class="box4"></div>
+		<script>
+			var chartScoreCount = echarts.init(document.querySelector('.box4'));
+
+			var box4date= {{box4date|safe}};
+            var box4up1= {{box4up1|safe}};
+            var box4up2= {{box4up2|safe}};
+            var box4up3= {{box4up3|safe}};
+            var box4down1= {{box4down1|safe}};
+            var box4down2= {{box4down2|safe}};
+           	var box4down3= {{box4down3|safe}};
+
+			var option = {
+					  title: {
+						text: '股票趋势得分统计'
+					  },
+					  tooltip: {
+						trigger: 'axis'
+					  },
+					  legend: {
+						data: ['Up-01', 'Up-02', 'Up-03', 'Down-01', 'Down-02', 'Down-03']
+					  },
+					  grid: {
+						left: '3%',
+						right: '4%',
+						bottom: '3%',
+						containLabel: true
+					  },
+	
+					  xAxis: {
+						type: 'category',
+						boundaryGap: false,
+						data: box4date
+					  },
+					  yAxis: {
+						type: 'value'
+					  },
+					  series: [
+						{
+						  name: 'Up-01',
+						  type: 'line',
+						  data: box4up1
+						},
+
+						{name: 'Up-02',
+						 type: 'line',
+						 data: box4up2
+						},
+
+						{name: 'Up-03',
+						 type: 'line',
+						 data: box4up3
+						},
+
+						{name: 'Down-01',
+						 type: 'line',
+						 data: box4down1
+						},
+
+						{name: 'Down-02',
+						 type: 'line',
+						 data: box4down2
+						},
+						
+						{name: 'Down-03',
+						 type: 'line',
+						 data: box4down3},
+					  ]
+					};
+			chartScoreCount.setOption(option);
+		
+		</script>
+		
+		<br><br><br><br>
+		<div class="box5"></div>
+		<script>
+			var chartBoardUpDown = echarts.init(document.querySelector('.box5'));
+
+			var box5date= {{box5date|safe}};
+            var box5up1= {{box5up1|safe}};
+            var box5up2= {{box5up2|safe}};
+            var box5down1= {{box5down1|safe}};
+            var box5down2= {{box5down2|safe}};
+
+			var option = {
+					  title: {
+						text: '板块趋势统计'
+					  },
+					  tooltip: {
+						trigger: 'axis'
+					  },
+					  legend: {
+						data: ['Board _Up', 'Board Up_', 'Board _Down', 'Board Down_']
+					  },
+					  grid: {
+						left: '3%',
+						right: '4%',
+						bottom: '3%',
+						containLabel: true
+					  },
+
+					  xAxis: {
+						type: 'category',
+						boundaryGap: false,
+						data: box5date
+					  },
+					  yAxis: {
+						type: 'value'
+					  },
+					  series: [
+						{
+						  name: 'Board _Up',
+						  type: 'line',
+						  data: box5up1
+						},
+						{
+						  name: 'Board Up_',
+						  type: 'line',
+						  data: box5up2
+						},
+						{
+						  name: 'Board _Down',
+						  type: 'line',
+						  data: box5down1
+						},
+						{
+						  name: 'Board Down_',
+						  type: 'line',
+						  data: box5down2
+						},
+					  ]
+					};
+			chartBoardUpDown.setOption(option);
+		</script>
+		
+	</body>
+</html>

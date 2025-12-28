@@ -1,0 +1,995 @@
+{% extends "base.html" %}
+
+{% block title %}基金数据分析{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="header">
+        <h1>📊 基金持仓数据分析</h1>
+        <p>基于前500只基金重仓数据的深度分析工具</p>
+    </div>
+
+    <!-- 日期选择器 -->
+    <div class="date-selector">
+        <div class="form-group">
+            <label for="dateSelect">选择分析日期：</label>
+            <select id="dateSelect" class="form-control">
+                <option value="">加载中...</option>
+            </select>
+            <button id="refreshBtn" class="btn btn-primary">刷新数据</button>
+            <button id="saveToDailyBtn" class="btn btn-success">保存到日线数据</button>
+        </div>
+    </div>
+
+    <!-- 概览统计 -->
+    <div class="overview-section">
+        <h2>📈 数据概览</h2>
+        <p class="analysis-note">💡 分析基于前500只基金的重仓数据</p>
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-number" id="totalFunds">-</div>
+                <div class="stat-label">基金总数</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="totalStocks">-</div>
+                <div class="stat-label">股票总数</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="totalRecords">-</div>
+                <div class="stat-label">持仓记录</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="avgHoldings">-</div>
+                <div class="stat-label">平均持仓数</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 分析标签页 -->
+    <div class="analysis-tabs">
+        <div class="tab-nav">
+            <button class="tab-btn active" data-tab="hot-stocks">🔥 热门股票</button>
+            <button class="tab-btn" data-tab="fund-distribution">📊 基金分布</button>
+            <button class="tab-btn" data-tab="industry-analysis">🏭 行业分析</button>
+            <button class="tab-btn" data-tab="trend-analysis">📈 趋势分析</button>
+        </div>
+
+        <!-- 热门股票分析 -->
+        <div class="tab-content active" id="hot-stocks">
+            <h3>🔥 热门股票分析</h3>
+            <p class="description">被最多基金持有的股票排行</p>
+            <div class="loading" id="hotStocksLoading">加载中...</div>
+            <div class="data-table" id="hotStocksTable" style="display: none;">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>排名</th>
+                            <th>股票代码</th>
+                            <th>股票名称</th>
+                            <th>持有基金数</th>
+                            <th>平均持仓比例</th>
+                            <th>总持仓比例</th>
+                            <th>最大持仓比例</th>
+                        </tr>
+                    </thead>
+                    <tbody id="hotStocksBody">
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- 基金分布分析 -->
+        <div class="tab-content" id="fund-distribution">
+            <h3>📊 基金分布分析</h3>
+            <p class="description">基金持仓股票数量的分布情况</p>
+            <div class="loading" id="fundDistLoading">加载中...</div>
+            <div class="data-content" id="fundDistContent" style="display: none;">
+                <div class="distribution-chart">
+                    <h4>持仓股票数量分布</h4>
+                    <div class="chart-container" id="distributionChart">
+                        <!-- 分布图表将在这里渲染 -->
+                    </div>
+                </div>
+                <div class="top-funds">
+                    <h4>持仓股票最多的基金</h4>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>基金代码</th>
+                                <th>基金名称</th>
+                                <th>持仓股票数</th>
+                            </tr>
+                        </thead>
+                        <tbody id="topFundsBody">
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- 行业分析 -->
+        <div class="tab-content" id="industry-analysis">
+            <h3>🏭 行业分析</h3>
+            <p class="description">基于股票市场的行业分布分析</p>
+            <div class="loading" id="industryLoading">加载中...</div>
+            <div class="data-content" id="industryContent" style="display: none;">
+                <div class="market-stats">
+                    <h4>市场分布统计</h4>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>市场</th>
+                                <th>股票数量</th>
+                                <th>基金数量</th>
+                                <th>平均持仓比例</th>
+                                <th>总持仓比例</th>
+                            </tr>
+                        </thead>
+                        <tbody id="marketStatsBody">
+                        </tbody>
+                    </table>
+                </div>
+                <div class="market-hot-stocks">
+                    <h4>各市场热门股票</h4>
+                    <div id="marketHotStocks">
+                        <!-- 各市场热门股票将在这里显示 -->
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 趋势分析 -->
+        <div class="tab-content" id="trend-analysis">
+            <h3>📈 趋势分析</h3>
+            <p class="description">多日期数据对比分析</p>
+            <div class="loading" id="trendLoading">加载中...</div>
+            <div class="data-content" id="trendContent" style="display: none;">
+                <div class="trend-chart">
+                    <h4>趋势图表</h4>
+                    <div class="chart-container" id="trendChart">
+                        <!-- 趋势图表将在这里渲染 -->
+                    </div>
+                </div>
+                <div class="trend-table">
+                    <h4>趋势数据</h4>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>日期</th>
+                                <th>基金总数</th>
+                                <th>股票总数</th>
+                                <th>持仓记录</th>
+                                <th>平均持仓数</th>
+                                <th>热门股票</th>
+                            </tr>
+                        </thead>
+                        <tbody id="trendDataBody">
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 详情弹窗 -->
+    <div class="modal" id="detailModal">
+        <div class="modal-content">
+            <span class="close">&times;</span>
+            <div id="modalBody">
+                <!-- 详情内容将在这里显示 -->
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.container {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 20px;
+}
+
+.header {
+    text-align: center;
+    margin-bottom: 30px;
+    padding: 20px;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    border-radius: 10px;
+}
+
+.header h1 {
+    margin: 0 0 10px 0;
+    font-size: 2.5rem;
+}
+
+.header p {
+    margin: 0;
+    opacity: 0.9;
+}
+
+.analysis-note {
+    background: #e3f2fd;
+    border: 1px solid #2196f3;
+    border-radius: 5px;
+    padding: 10px 15px;
+    margin: 10px 0 20px 0;
+    color: #1976d2;
+    font-size: 14px;
+    text-align: center;
+}
+
+.date-selector {
+    background: white;
+    padding: 20px;
+    border-radius: 10px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    margin-bottom: 30px;
+}
+
+.form-group {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+}
+
+.form-group label {
+    font-weight: 600;
+    color: #333;
+}
+
+.form-control {
+    padding: 8px 12px;
+    border: 2px solid #ddd;
+    border-radius: 5px;
+    font-size: 14px;
+    min-width: 150px;
+}
+
+.btn {
+    padding: 8px 16px;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    font-weight: 600;
+    transition: all 0.3s ease;
+}
+
+.btn-primary {
+    background: #007bff;
+    color: white;
+}
+
+.btn-primary:hover {
+    background: #0056b3;
+}
+
+.overview-section {
+    background: white;
+    padding: 25px;
+    border-radius: 10px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    margin-bottom: 30px;
+}
+
+.overview-section h2 {
+    margin: 0 0 20px 0;
+    color: #333;
+}
+
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 20px;
+}
+
+.stat-card {
+    background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+    color: white;
+    padding: 20px;
+    border-radius: 10px;
+    text-align: center;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+}
+
+.stat-number {
+    font-size: 2.5rem;
+    font-weight: bold;
+    margin-bottom: 5px;
+}
+
+.stat-label {
+    font-size: 0.9rem;
+    opacity: 0.9;
+}
+
+.analysis-tabs {
+    background: white;
+    border-radius: 10px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    overflow: hidden;
+}
+
+.tab-nav {
+    display: flex;
+    background: #f8f9fa;
+    border-bottom: 1px solid #dee2e6;
+}
+
+.tab-btn {
+    flex: 1;
+    padding: 15px 20px;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    font-weight: 600;
+    color: #666;
+    transition: all 0.3s ease;
+}
+
+.tab-btn.active {
+    background: white;
+    color: #007bff;
+    border-bottom: 3px solid #007bff;
+}
+
+.tab-btn:hover {
+    background: #e9ecef;
+}
+
+.tab-content {
+    display: none;
+    padding: 30px;
+}
+
+.tab-content.active {
+    display: block;
+}
+
+.tab-content h3 {
+    margin: 0 0 10px 0;
+    color: #333;
+}
+
+.description {
+    color: #666;
+    margin-bottom: 25px;
+}
+
+.loading {
+    text-align: center;
+    padding: 40px;
+    color: #666;
+    font-size: 16px;
+}
+
+.data-table, .data-content {
+    margin-top: 20px;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    background: white;
+    border-radius: 8px;
+    overflow: hidden;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+
+th, td {
+    padding: 12px 15px;
+    text-align: left;
+    border-bottom: 1px solid #eee;
+}
+
+th {
+    background: #f8f9fa;
+    font-weight: 600;
+    color: #333;
+}
+
+tr:hover {
+    background: #f8f9fa;
+}
+
+.distribution-chart, .trend-chart {
+    margin-bottom: 30px;
+}
+
+.chart-container {
+    height: 300px;
+    background: #f8f9fa;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #666;
+}
+
+.modal {
+    display: none;
+    position: fixed;
+    z-index: 1000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0,0,0,0.5);
+}
+
+.modal-content {
+    background-color: white;
+    margin: 5% auto;
+    padding: 20px;
+    border-radius: 10px;
+    width: 80%;
+    max-width: 800px;
+    max-height: 80vh;
+    overflow-y: auto;
+    position: relative;
+}
+
+.close {
+    color: #aaa;
+    float: right;
+    font-size: 28px;
+    font-weight: bold;
+    cursor: pointer;
+    position: absolute;
+    top: 10px;
+    right: 15px;
+}
+
+.close:hover {
+    color: #000;
+}
+
+@media (max-width: 768px) {
+    .container {
+        padding: 10px;
+    }
+    
+    .header h1 {
+        font-size: 2rem;
+    }
+    
+    .stats-grid {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 15px;
+    }
+    
+    .tab-nav {
+        flex-direction: column;
+    }
+    
+    .tab-btn {
+        border-bottom: 1px solid #dee2e6;
+    }
+    
+    .form-group {
+        flex-direction: column;
+        align-items: stretch;
+    }
+    
+    table {
+        font-size: 14px;
+    }
+    
+    th, td {
+        padding: 8px 10px;
+    }
+}
+</style>
+
+<script>
+let currentDate = '';
+let availableDates = [];
+
+// 页面加载完成后初始化
+document.addEventListener('DOMContentLoaded', function() {
+    console.log('[DEBUG] 页面加载完成，开始初始化');
+    loadAvailableDates();
+    setupEventListeners();
+});
+
+// 设置事件监听器
+function setupEventListeners() {
+    // 日期选择器
+    document.getElementById('dateSelect').addEventListener('change', function() {
+        currentDate = this.value;
+        if (currentDate) {
+            loadOverviewData();
+            loadActiveTabData();
+        }
+    });
+    
+    // 刷新按钮
+    document.getElementById('refreshBtn').addEventListener('click', function() {
+        loadAvailableDates();
+    });
+    
+    // 保存到日线数据按钮
+    document.getElementById('saveToDailyBtn').addEventListener('click', function() {
+        saveFundHoldingsToDaily();
+    });
+    
+    // 标签页切换
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            switchTab(this.dataset.tab);
+        });
+    });
+    
+    // 模态框关闭
+    document.querySelector('.close').addEventListener('click', function() {
+        document.getElementById('detailModal').style.display = 'none';
+    });
+    
+    window.addEventListener('click', function(event) {
+        const modal = document.getElementById('detailModal');
+        if (event.target === modal) {
+            modal.style.display = 'none';
+        }
+    });
+}
+
+// 加载可用日期
+async function loadAvailableDates() {
+    console.log('[DEBUG] 开始加载可用日期');
+    try {
+        const response = await fetch('/funds/analysis/api/get_available_dates');
+        console.log('[DEBUG] 日期API响应状态:', response.status);
+        const data = await response.json();
+        console.log('[DEBUG] 日期API响应数据:', data);
+        
+        if (data.success) {
+            availableDates = data.dates;
+            console.log('[DEBUG] 可用日期:', availableDates);
+            updateDateSelector();
+            
+            // 默认选择最新日期
+            if (availableDates.length > 0) {
+                currentDate = availableDates[0];
+                console.log('[DEBUG] 选择默认日期:', currentDate);
+                document.getElementById('dateSelect').value = currentDate;
+                loadOverviewData();
+                loadActiveTabData();
+            }
+        } else {
+            console.error('加载可用日期失败:', data.error);
+        }
+    } catch (error) {
+        console.error('加载可用日期出错:', error);
+    }
+}
+
+// 更新日期选择器
+function updateDateSelector() {
+    const select = document.getElementById('dateSelect');
+    select.innerHTML = '';
+    
+    availableDates.forEach(date => {
+        const option = document.createElement('option');
+        option.value = date;
+        option.textContent = formatDate(date);
+        select.appendChild(option);
+    });
+}
+
+// 格式化日期显示
+function formatDate(dateStr) {
+    const year = dateStr.substring(0, 4);
+    const month = dateStr.substring(4, 6);
+    const day = dateStr.substring(6, 8);
+    return `${year}-${month}-${day}`;
+}
+
+// 加载概览数据
+async function loadOverviewData() {
+    if (!currentDate) return;
+    
+    try {
+        // 通过热门股票API获取概览数据
+        const response = await fetch(`/funds/analysis/api/hot_stocks?date=${currentDate}`);
+        const data = await response.json();
+        
+        if (data.success) {
+            document.getElementById('totalFunds').textContent = data.total_funds;
+            document.getElementById('totalStocks').textContent = data.total_stocks;
+            document.getElementById('totalRecords').textContent = data.total_stocks; // 这里需要从API返回
+            document.getElementById('avgHoldings').textContent = Math.round(data.total_stocks / data.total_funds * 10) / 10;
+        } else {
+            console.error('获取概览数据失败:', data.error);
+            // 显示错误信息
+            document.getElementById('totalFunds').textContent = 'N/A';
+            document.getElementById('totalStocks').textContent = 'N/A';
+            document.getElementById('totalRecords').textContent = 'N/A';
+            document.getElementById('avgHoldings').textContent = 'N/A';
+        }
+    } catch (error) {
+        console.error('加载概览数据出错:', error);
+        // 显示错误信息
+        document.getElementById('totalFunds').textContent = 'Error';
+        document.getElementById('totalStocks').textContent = 'Error';
+        document.getElementById('totalRecords').textContent = 'Error';
+        document.getElementById('avgHoldings').textContent = 'Error';
+    }
+}
+
+// 加载当前活跃标签页的数据
+function loadActiveTabData() {
+    const activeTab = document.querySelector('.tab-btn.active').dataset.tab;
+    loadTabData(activeTab);
+}
+
+// 加载标签页数据
+async function loadTabData(tabName) {
+    let loadingElement, contentElement;
+    
+    // 根据标签页名称获取对应的元素ID
+    switch (tabName) {
+        case 'hot-stocks':
+            loadingElement = document.getElementById('hotStocksLoading');
+            contentElement = document.getElementById('hotStocksTable');
+            break;
+        case 'fund-distribution':
+            loadingElement = document.getElementById('fundDistLoading');
+            contentElement = document.getElementById('fundDistContent');
+            break;
+        case 'industry-analysis':
+            loadingElement = document.getElementById('industryLoading');
+            contentElement = document.getElementById('industryContent');
+            break;
+        case 'trend-analysis':
+            loadingElement = document.getElementById('trendLoading');
+            contentElement = document.getElementById('trendContent');
+            break;
+    }
+    
+    if (loadingElement) loadingElement.style.display = 'block';
+    if (contentElement) contentElement.style.display = 'none';
+    
+    try {
+        let response;
+        switch (tabName) {
+            case 'hot-stocks':
+                response = await fetch(`/funds/analysis/api/hot_stocks?date=${currentDate}`);
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data.success) {
+                        renderHotStocks(data.top_stocks);
+                    } else {
+                        console.error('API返回失败:', data.error);
+                    }
+                } else {
+                    console.error('HTTP请求失败:', response.status);
+                }
+                break;
+            case 'fund-distribution':
+                response = await fetch(`/funds/analysis/api/fund_distribution?date=${currentDate}`);
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data.success) {
+                        renderFundDistribution(data);
+                    } else {
+                        console.error('API返回失败:', data.error);
+                    }
+                } else {
+                    console.error('HTTP请求失败:', response.status);
+                }
+                break;
+            case 'industry-analysis':
+                response = await fetch(`/funds/analysis/api/industry_analysis?date=${currentDate}`);
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data.success) {
+                        renderIndustryAnalysis(data);
+                    } else {
+                        console.error('API返回失败:', data.error);
+                    }
+                } else {
+                    console.error('HTTP请求失败:', response.status);
+                }
+                break;
+            case 'trend-analysis':
+                response = await fetch(`/funds/analysis/api/trend_analysis?days=7`);
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data.success) {
+                        renderTrendAnalysis(data);
+                    } else {
+                        console.error('API返回失败:', data.error);
+                    }
+                } else {
+                    console.error('HTTP请求失败:', response.status);
+                }
+                break;
+        }
+    } catch (error) {
+        console.error(`加载${tabName}数据出错:`, error);
+        if (loadingElement) {
+            loadingElement.innerHTML = `加载失败: ${error.message}`;
+        }
+    } finally {
+        if (loadingElement) loadingElement.style.display = 'none';
+        if (contentElement) contentElement.style.display = 'block';
+    }
+}
+
+// 渲染热门股票数据
+function renderHotStocks(topStocks) {
+    console.log('[DEBUG] 开始渲染热门股票数据:', topStocks);
+    const tbody = document.getElementById('hotStocksBody');
+    if (!tbody) {
+        console.error('[DEBUG] 找不到hotStocksBody元素');
+        return;
+    }
+    tbody.innerHTML = '';
+    
+    if (!topStocks || topStocks.length === 0) {
+        console.warn('[DEBUG] 热门股票数据为空');
+        return;
+    }
+    
+    topStocks.forEach((stock, index) => {
+        const row = document.createElement('tr');
+        row.innerHTML = `
+            <td>${index + 1}</td>
+            <td><a href="#" onclick="showStockDetail('${stock.stock_code}')">${stock.stock_code}</a></td>
+            <td>${stock.stock_name}</td>
+            <td>${stock.fund_count}</td>
+            <td>${stock.avg_ratio}%</td>
+            <td>${stock.total_ratio}%</td>
+            <td>${stock.max_ratio}%</td>
+        `;
+        tbody.appendChild(row);
+    });
+    console.log('[DEBUG] 热门股票数据渲染完成，共', topStocks.length, '条记录');
+}
+
+// 渲染基金分布数据
+function renderFundDistribution(data) {
+    // 渲染持仓最多的基金
+    const topFundsBody = document.getElementById('topFundsBody');
+    topFundsBody.innerHTML = '';
+    
+    data.top_funds.forEach(fund => {
+        const row = document.createElement('tr');
+        row.innerHTML = `
+            <td><a href="#" onclick="showFundDetail('${fund.fund_code}')">${fund.fund_code}</a></td>
+            <td>${fund.fund_name}</td>
+            <td>${fund.stock_count}</td>
+        `;
+        topFundsBody.appendChild(row);
+    });
+    
+    // 渲染分布统计（简化版）
+    const distributionChart = document.getElementById('distributionChart');
+    distributionChart.innerHTML = `
+        <div style="padding: 20px; text-align: center;">
+            <h4>分布统计</h4>
+            <p>平均持仓股票数: ${data.distribution_stats.mean?.toFixed(1) || 'N/A'}</p>
+            <p>最多持仓股票数: ${data.distribution_stats.max || 'N/A'}</p>
+            <p>最少持仓股票数: ${data.distribution_stats.min || 'N/A'}</p>
+        </div>
+    `;
+}
+
+// 渲染行业分析数据
+function renderIndustryAnalysis(data) {
+    // 渲染市场统计
+    const marketStatsBody = document.getElementById('marketStatsBody');
+    marketStatsBody.innerHTML = '';
+    
+    data.market_stats.forEach(market => {
+        const row = document.createElement('tr');
+        row.innerHTML = `
+            <td>${market.market}</td>
+            <td>${market.stock_count}</td>
+            <td>${market.fund_count}</td>
+            <td>${market.avg_ratio}%</td>
+            <td>${market.total_ratio}%</td>
+        `;
+        marketStatsBody.appendChild(row);
+    });
+    
+    // 渲染各市场热门股票
+    const marketHotStocks = document.getElementById('marketHotStocks');
+    marketHotStocks.innerHTML = '';
+    
+    Object.keys(data.market_hot_stocks).forEach(market => {
+        const marketDiv = document.createElement('div');
+        marketDiv.innerHTML = `
+            <h5>${market}</h5>
+            <ul>
+                ${data.market_hot_stocks[market].map(stock => 
+                    `<li><a href="#" onclick="showStockDetail('${stock.stock_code}')">${stock.stock_name} (${stock.stock_code})</a> - ${stock.fund_count}个基金持有</li>`
+                ).join('')}
+            </ul>
+        `;
+        marketHotStocks.appendChild(marketDiv);
+    });
+}
+
+// 渲染趋势分析数据
+function renderTrendAnalysis(data) {
+    // 渲染趋势数据表格
+    const trendDataBody = document.getElementById('trendDataBody');
+    trendDataBody.innerHTML = '';
+    
+    data.trend_data.forEach(trend => {
+        const row = document.createElement('tr');
+        row.innerHTML = `
+            <td>${formatDate(trend.date)}</td>
+            <td>${trend.total_funds}</td>
+            <td>${trend.total_stocks}</td>
+            <td>${trend.total_records}</td>
+            <td>${trend.avg_holdings_per_fund}</td>
+            <td>${Object.keys(trend.top_stocks).slice(0, 3).join(', ')}</td>
+        `;
+        trendDataBody.appendChild(row);
+    });
+    
+    // 简化的趋势图表
+    const trendChart = document.getElementById('trendChart');
+    trendChart.innerHTML = `
+        <div style="padding: 20px; text-align: center;">
+            <h4>趋势概览</h4>
+            <p>分析期间: ${data.days} 天</p>
+            <p>数据点数: ${data.trend_data.length}</p>
+        </div>
+    `;
+}
+
+// 切换标签页
+function switchTab(tabName) {
+    // 更新标签按钮状态
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.classList.remove('active');
+    });
+    document.querySelector(`[data-tab="${tabName}"]`).classList.add('active');
+    
+    // 更新标签内容显示
+    document.querySelectorAll('.tab-content').forEach(content => {
+        content.classList.remove('active');
+    });
+    document.getElementById(tabName).classList.add('active');
+    
+    // 加载对应标签页数据
+    loadTabData(tabName);
+}
+
+// 显示股票详情
+async function showStockDetail(stockCode) {
+    try {
+        const response = await fetch(`/funds/analysis/api/stock_detail/${stockCode}?date=${currentDate}`);
+        const data = await response.json();
+        
+        if (data.success) {
+            const modalBody = document.getElementById('modalBody');
+            modalBody.innerHTML = `
+                <h3>股票详情: ${data.stock_info.stock_name} (${data.stock_info.stock_code})</h3>
+                <div class="stock-info">
+                    <p><strong>持有基金数:</strong> ${data.stock_info.fund_count}</p>
+                    <p><strong>总持仓比例:</strong> ${data.stock_info.total_ratio}%</p>
+                    <p><strong>平均持仓比例:</strong> ${data.stock_info.avg_ratio}%</p>
+                    <p><strong>最大持仓比例:</strong> ${data.stock_info.max_ratio}%</p>
+                    <p><strong>最小持仓比例:</strong> ${data.stock_info.min_ratio}%</p>
+                </div>
+                <h4>持有基金列表:</h4>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>基金代码</th>
+                            <th>基金名称</th>
+                            <th>持仓比例</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${data.holdings.map(holding => `
+                            <tr>
+                                <td>${holding.fund_code}</td>
+                                <td>${holding.fund_name}</td>
+                                <td>${holding.holdings_ratio}%</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            `;
+            document.getElementById('detailModal').style.display = 'block';
+        }
+    } catch (error) {
+        console.error('获取股票详情失败:', error);
+        alert('获取股票详情失败: ' + error.message);
+    }
+}
+
+// 显示基金详情
+async function showFundDetail(fundCode) {
+    try {
+        const response = await fetch(`/funds/analysis/api/fund_detail/${fundCode}?date=${currentDate}`);
+        const data = await response.json();
+        
+        if (data.success) {
+            const modalBody = document.getElementById('modalBody');
+            modalBody.innerHTML = `
+                <h3>基金详情: ${data.fund_info.fund_name} (${data.fund_info.fund_code})</h3>
+                <div class="fund-info">
+                    <p><strong>持仓股票数:</strong> ${data.fund_info.stock_count}</p>
+                    <p><strong>总持仓比例:</strong> ${data.fund_info.total_ratio}%</p>
+                    <p><strong>平均持仓比例:</strong> ${data.fund_info.avg_ratio}%</p>
+                    <p><strong>最大持仓比例:</strong> ${data.fund_info.max_ratio}%</p>
+                    <p><strong>前10大持仓占比:</strong> ${data.top10_ratio}%</p>
+                </div>
+                <h4>持仓明细:</h4>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>股票代码</th>
+                            <th>股票名称</th>
+                            <th>持仓比例</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${data.holdings.map(holding => `
+                            <tr>
+                                <td><a href="#" onclick="showStockDetail('${holding.stock_code}')">${holding.stock_code}</a></td>
+                                <td>${holding.stock_name}</td>
+                                <td>${holding.holdings_ratio}%</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            `;
+            document.getElementById('detailModal').style.display = 'block';
+        }
+    } catch (error) {
+        console.error('获取基金详情失败:', error);
+        alert('获取基金详情失败: ' + error.message);
+    }
+}
+
+// 保存基金持仓数据到日线数据表
+async function saveFundHoldingsToDaily() {
+    if (!currentDate) {
+        alert('请先选择分析日期');
+        return;
+    }
+    
+    const saveBtn = document.getElementById('saveToDailyBtn');
+    const originalText = saveBtn.textContent;
+    
+    try {
+        // 显示加载状态
+        saveBtn.textContent = '保存中...';
+        saveBtn.disabled = true;
+        
+        const response = await fetch('/funds/analysis/api/save_fund_holdings_to_daily', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                date: currentDate
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            alert('基金持仓数据已成功保存到daily_stock_data表！');
+        } else {
+            alert('保存失败: ' + data.error);
+        }
+        
+    } catch (error) {
+        console.error('保存基金持仓数据失败:', error);
+        alert('保存失败: ' + error.message);
+    } finally {
+        // 恢复按钮状态
+        saveBtn.textContent = originalText;
+        saveBtn.disabled = false;
+    }
+}
+</script>
+{% endblock %}

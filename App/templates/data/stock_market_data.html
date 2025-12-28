@@ -1,0 +1,502 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container">
+    <div class="header">
+        <h1>股票市场数据管理</h1>
+        <p class="subtitle">管理全部个股和板块数据</p>
+        <button class="btn btn-primary" onclick="showAddModal()">
+            <i class="fas fa-plus"></i> 添加新记录
+        </button>
+    </div>
+
+    <!-- 搜索和筛选 -->
+    <div class="search-section">
+        <div class="search-box">
+            <input type="text" id="searchInput" placeholder="搜索股票代码或名称..." onkeyup="filterTable()">
+            <button class="btn btn-secondary" onclick="clearSearch()">清除</button>
+        </div>
+        <div class="filter-box">
+            <select id="marketFilter" onchange="filterTable()">
+                <option value="">所有市场</option>
+                <option value="SH">上海</option>
+                <option value="SZ">深圳</option>
+                <option value="BJ">北京</option>
+            </select>
+        </div>
+    </div>
+
+    <!-- 数据表格 -->
+    <div class="table-container">
+        <table id="stockTable" class="data-table">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>股票名称</th>
+                    <th>股票代码</th>
+                    <th>东方财富代码</th>
+                    <th>市场代码</th>
+                    <th>通达信市场</th>
+                    <th>恒生市场</th>
+                    <th>创建时间</th>
+                    <th>操作</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for stock in stocks %}
+                <tr data-id="{{ stock.id }}">
+                    <td>{{ stock.id }}</td>
+                    <td>{{ stock.name }}</td>
+                    <td>{{ stock.code }}</td>
+                    <td>{{ stock.es_code or '-' }}</td>
+                    <td>{{ stock.market_code or '-' }}</td>
+                    <td>{{ stock.txd_market or '-' }}</td>
+                    <td>{{ stock.hs_market or '-' }}</td>
+                    <td>{{ stock.created_at.strftime('%Y-%m-%d %H:%M') if stock.created_at else '-' }}</td>
+                    <td class="actions">
+                        <button class="btn btn-sm btn-info" onclick="viewStock({{ stock.id }})">查看</button>
+                        <button class="btn btn-sm btn-warning" onclick="editStock({{ stock.id }})">编辑</button>
+                        <button class="btn btn-sm btn-danger" onclick="deleteStock({{ stock.id }})">删除</button>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- 分页 -->
+    <div class="pagination">
+        {% if pagination.has_prev %}
+            <a href="{{ url_for('data_bp.stock_market_data', page=pagination.prev_num) }}" class="btn btn-secondary">上一页</a>
+        {% endif %}
+        
+        <span class="page-info">第 {{ pagination.page }} 页，共 {{ pagination.pages }} 页</span>
+        
+        {% if pagination.has_next %}
+            <a href="{{ url_for('data_bp.stock_market_data', page=pagination.next_num) }}" class="btn btn-secondary">下一页</a>
+        {% endif %}
+    </div>
+</div>
+
+<!-- 添加/编辑模态框 -->
+<div id="stockModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2 id="modalTitle">添加股票市场数据</h2>
+            <span class="close" onclick="closeModal()">&times;</span>
+        </div>
+        <form id="stockForm" method="POST">
+            <div class="form-group">
+                <label for="name">股票名称 *</label>
+                <input type="text" id="name" name="name" required>
+            </div>
+            <div class="form-group">
+                <label for="code">股票代码 *</label>
+                <input type="text" id="code" name="code" required>
+            </div>
+            <div class="form-group">
+                <label for="es_code">东方财富代码</label>
+                <input type="text" id="es_code" name="es_code">
+            </div>
+            <div class="form-group">
+                <label for="market_code">市场代码</label>
+                <input type="text" id="market_code" name="market_code">
+            </div>
+            <div class="form-group">
+                <label for="txd_market">通达信市场</label>
+                <input type="text" id="txd_market" name="txd_market">
+            </div>
+            <div class="form-group">
+                <label for="hs_market">恒生市场</label>
+                <input type="text" id="hs_market" name="hs_market">
+            </div>
+            <div class="form-actions">
+                <button type="button" class="btn btn-secondary" onclick="closeModal()">取消</button>
+                <button type="submit" class="btn btn-primary">保存</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- 删除确认模态框 -->
+<div id="deleteModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2>确认删除</h2>
+            <span class="close" onclick="closeDeleteModal()">&times;</span>
+        </div>
+        <div class="modal-body">
+            <p>确定要删除这条记录吗？此操作不可撤销。</p>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeDeleteModal()">取消</button>
+            <button class="btn btn-danger" onclick="confirmDelete()">确认删除</button>
+        </div>
+    </div>
+</div>
+
+<style>
+.container {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 20px;
+}
+
+.header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 30px;
+    padding-bottom: 20px;
+    border-bottom: 2px solid #e5e7eb;
+}
+
+.header h1 {
+    color: #1f2937;
+    margin: 0;
+}
+
+.subtitle {
+    color: #6b7280;
+    margin: 5px 0 0 0;
+}
+
+.search-section {
+    display: flex;
+    gap: 20px;
+    margin-bottom: 20px;
+    align-items: center;
+}
+
+.search-box {
+    display: flex;
+    gap: 10px;
+    flex: 1;
+}
+
+.search-box input {
+    flex: 1;
+    padding: 10px;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    font-size: 14px;
+}
+
+.filter-box select {
+    padding: 10px;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    font-size: 14px;
+    min-width: 120px;
+}
+
+.table-container {
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    overflow: hidden;
+    margin-bottom: 20px;
+}
+
+.data-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.data-table th,
+.data-table td {
+    padding: 12px;
+    text-align: left;
+    border-bottom: 1px solid #e5e7eb;
+}
+
+.data-table th {
+    background-color: #f9fafb;
+    font-weight: 600;
+    color: #374151;
+}
+
+.data-table tr:hover {
+    background-color: #f9fafb;
+}
+
+.actions {
+    display: flex;
+    gap: 5px;
+}
+
+.btn {
+    padding: 8px 16px;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+    text-decoration: none;
+    display: inline-block;
+    transition: all 0.2s;
+}
+
+.btn-primary {
+    background-color: #3b82f6;
+    color: white;
+}
+
+.btn-primary:hover {
+    background-color: #2563eb;
+}
+
+.btn-secondary {
+    background-color: #6b7280;
+    color: white;
+}
+
+.btn-secondary:hover {
+    background-color: #4b5563;
+}
+
+.btn-info {
+    background-color: #06b6d4;
+    color: white;
+}
+
+.btn-warning {
+    background-color: #f59e0b;
+    color: white;
+}
+
+.btn-danger {
+    background-color: #ef4444;
+    color: white;
+}
+
+.btn-sm {
+    padding: 4px 8px;
+    font-size: 12px;
+}
+
+.pagination {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 20px;
+    margin-top: 20px;
+}
+
+.page-info {
+    color: #6b7280;
+    font-size: 14px;
+}
+
+/* 模态框样式 */
+.modal {
+    display: none;
+    position: fixed;
+    z-index: 1000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.5);
+}
+
+.modal-content {
+    background-color: white;
+    margin: 5% auto;
+    padding: 0;
+    border-radius: 8px;
+    width: 90%;
+    max-width: 600px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.modal-header {
+    padding: 20px;
+    border-bottom: 1px solid #e5e7eb;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.modal-header h2 {
+    margin: 0;
+    color: #1f2937;
+}
+
+.close {
+    color: #aaa;
+    font-size: 28px;
+    font-weight: bold;
+    cursor: pointer;
+}
+
+.close:hover {
+    color: #000;
+}
+
+.modal-body {
+    padding: 20px;
+}
+
+.modal-footer {
+    padding: 20px;
+    border-top: 1px solid #e5e7eb;
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+}
+
+.form-group {
+    margin-bottom: 20px;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 5px;
+    font-weight: 500;
+    color: #374151;
+}
+
+.form-group input {
+    width: 100%;
+    padding: 10px;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    font-size: 14px;
+}
+
+.form-group input:focus {
+    outline: none;
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+.form-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    padding-top: 20px;
+    border-top: 1px solid #e5e7eb;
+}
+</style>
+
+<script>
+let currentStockId = null;
+
+function showAddModal() {
+    document.getElementById('modalTitle').textContent = '添加股票市场数据';
+    document.getElementById('stockForm').reset();
+    currentStockId = null;
+    document.getElementById('stockModal').style.display = 'block';
+}
+
+function editStock(id) {
+    // 这里应该通过AJAX获取股票数据
+    fetch(`/data/stock/${id}`)
+        .then(response => response.json())
+        .then(data => {
+            document.getElementById('modalTitle').textContent = '编辑股票市场数据';
+            document.getElementById('name').value = data.name;
+            document.getElementById('code').value = data.code;
+            document.getElementById('es_code').value = data.es_code || '';
+            document.getElementById('market_code').value = data.market_code || '';
+            document.getElementById('txd_market').value = data.txd_market || '';
+            document.getElementById('hs_market').value = data.hs_market || '';
+            currentStockId = id;
+            document.getElementById('stockModal').style.display = 'block';
+        });
+}
+
+function viewStock(id) {
+    // 跳转到详情页面
+    window.location.href = `/data/stock/${id}`;
+}
+
+function deleteStock(id) {
+    currentStockId = id;
+    document.getElementById('deleteModal').style.display = 'block';
+}
+
+function closeModal() {
+    document.getElementById('stockModal').style.display = 'none';
+}
+
+function closeDeleteModal() {
+    document.getElementById('deleteModal').style.display = 'none';
+}
+
+function confirmDelete() {
+    if (currentStockId) {
+        fetch(`/data/stock/${currentStockId}`, {
+            method: 'DELETE',
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                location.reload();
+            } else {
+                alert('删除失败：' + data.message);
+            }
+        });
+    }
+    closeDeleteModal();
+}
+
+function filterTable() {
+    const searchTerm = document.getElementById('searchInput').value.toLowerCase();
+    const marketFilter = document.getElementById('marketFilter').value;
+    const table = document.getElementById('stockTable');
+    const rows = table.getElementsByTagName('tbody')[0].getElementsByTagName('tr');
+
+    for (let row of rows) {
+        const name = row.cells[1].textContent.toLowerCase();
+        const code = row.cells[2].textContent.toLowerCase();
+        const marketCode = row.cells[4].textContent;
+        
+        const matchesSearch = name.includes(searchTerm) || code.includes(searchTerm);
+        const matchesMarket = !marketFilter || marketCode.includes(marketFilter);
+        
+        row.style.display = matchesSearch && matchesMarket ? '' : 'none';
+    }
+}
+
+function clearSearch() {
+    document.getElementById('searchInput').value = '';
+    document.getElementById('marketFilter').value = '';
+    filterTable();
+}
+
+// 表单提交处理
+document.getElementById('stockForm').addEventListener('submit', function(e) {
+    e.preventDefault();
+    
+    const formData = new FormData(this);
+    const url = currentStockId ? `/data/stock/${currentStockId}` : '/data/stock';
+    const method = currentStockId ? 'PUT' : 'POST';
+    
+    fetch(url, {
+        method: method,
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            location.reload();
+        } else {
+            alert('操作失败：' + data.message);
+        }
+    });
+});
+
+// 点击模态框外部关闭
+window.onclick = function(event) {
+    const modal = document.getElementById('stockModal');
+    const deleteModal = document.getElementById('deleteModal');
+    if (event.target === modal) {
+        closeModal();
+    }
+    if (event.target === deleteModal) {
+        closeDeleteModal();
+    }
+}
+</script>
+{% endblock %} 
