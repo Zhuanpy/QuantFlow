@@ -5,8 +5,8 @@
 """
 import pandas as pd
 import logging
+import re
 from pathlib import Path
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +25,15 @@ class StockData1m:
     股票1分钟数据访问类
     提供从数据库或CSV文件加载数据的功能
     """
-    
+
+    # 股票代码格式：6位数字（如 000001, 600000）
+    STOCK_CODE_PATTERN = re.compile(r'^\d{6}$')
+
+    @classmethod
+    def _validate_stock_code(cls, stock_code: str) -> bool:
+        """验证股票代码格式"""
+        return bool(cls.STOCK_CODE_PATTERN.match(stock_code))
+
     @staticmethod
     def load_1m(stock_code: str, year: str) -> pd.DataFrame:
         """
@@ -38,21 +46,24 @@ class StockData1m:
         Returns:
             pd.DataFrame: 包含1分钟数据的DataFrame，包含列：date, open, close, high, low, volume, money
         """
+        # 验证股票代码格式
+        if not StockData1m._validate_stock_code(stock_code):
+            logger.error(f"无效的股票代码格式: {stock_code}")
+            return pd.DataFrame()
+
         try:
             year_int = int(year)
         except ValueError:
             logger.error(f"无效的年份格式: {year}")
             return pd.DataFrame()
-        
+
         # 优先尝试从数据库加载
         if FLASK_AVAILABLE:
             try:
-                from App.exts import db
-                with db.session.begin():
-                    data = get_1m_stock_data(stock_code, year_int)
-                    if not data.empty:
-                        logger.info(f"成功从数据库加载股票 {stock_code} {year}年1分钟数据，共 {len(data)} 条记录")
-                        return data
+                data = get_1m_stock_data(stock_code, year_int)
+                if not data.empty:
+                    logger.info(f"成功从数据库加载股票 {stock_code} {year}年1分钟数据，共 {len(data)} 条记录")
+                    return data
             except Exception as e:
                 logger.warning(f"从数据库加载失败，尝试从文件加载: {e}")
         
