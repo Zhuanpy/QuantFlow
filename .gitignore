@@ -34,5 +34,14 @@ Thumbs.db
 *.sqlite
 *.sqlite3
 
-# 配置文件（可能包含敏感信息如数据库密码）
-config.py
+# 环境变量文件（包含敏感信息）
+.env
+.env.local
+.env.*.local
+
+# Claude Code 元数据
+.claude/
+
+# Windows 特殊文件
+nul
+NUL
