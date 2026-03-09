@@ -53,7 +53,7 @@ class PathManager:
                 self._project_root = Path(__file__).parent.parent.parent
 
         # 基础路径
-        self._data_base = self._project_root / 'data' / 'data'
+        self._data_base = self._project_root / 'data'
         self._models_base = self._project_root / 'data' / 'models'
         self._temp_base = self._project_root / 'data' / 'temp'
         self._processed_base = self._project_root / 'data' / 'processed'
@@ -125,23 +125,28 @@ class PathManager:
         year = year or self.get_current_year()
         quarter = quarter or self.get_current_quarter()
 
-        # 根据数据类型确定基础目录
+        # 根据数据类型确定基础目录和文件扩展名
         if data_type == self.DATA_1M:
             base_dir = self._data_base / 'quarters' / year / quarter
+            ext = '.parquet'
         elif data_type in (self.DATA_15M, '15m_normal'):
             base_dir = self._data_base / '15m'
+            ext = '.parquet'
         elif data_type == self.DATA_15M_STANDARDIZED:
             base_dir = self._data_base / '15m_standardized'
+            ext = '.parquet'
         elif data_type == self.DATA_DAILY:
             base_dir = self._data_base / 'daily' / year / quarter
+            ext = '.csv'
         else:
             base_dir = self._data_base / 'quarters' / year / quarter
+            ext = '.parquet'
 
         if create and not base_dir.exists():
             base_dir.mkdir(parents=True, exist_ok=True)
             logger.info(f"创建目录: {base_dir}")
 
-        return str(base_dir / f"{stock_code}.csv")
+        return str(base_dir / f"{stock_code}{ext}")
 
     def get_stock_1m_path(self, stock_code: str, year: str = None,
                            quarter: str = None, create: bool = True) -> str:

@@ -15,7 +15,7 @@ class Top500FundRecord(db.Model):
     
     用于记录和管理Top500基金的持仓信息
     """
-    __tablename__ = "recordtopfunds500"
+    __tablename__ = "strategy_fund_holdings"
     __bind_key__ = 'quanttradingsystem'  # 绑定到主数据库
 
     # 主键

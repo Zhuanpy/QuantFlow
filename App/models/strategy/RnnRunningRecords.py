@@ -37,7 +37,7 @@ class RnnRunningRecord(db.Model):
         time_15m (datetime): 15分钟时间
         renew_date (datetime): 更新日期
     """
-    __tablename__ = 'rnn_running_records'
+    __tablename__ = 'strategy_rnn_runs'
     __bind_key__ = 'quanttradingsystem'  # 绑定到主数据库
 
     # 主键

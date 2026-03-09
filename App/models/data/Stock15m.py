@@ -37,7 +37,7 @@ def create_15m_stock_model(stock_code: str):
         class_name,
         (db.Model,),
         {
-            '__tablename__': f"{stock_code}",
+            '__tablename__': f"data_15m_{stock_code}",
             '__bind_key__': "datadaily",  # 使用datadaily数据库
             'date': db.Column(db.DateTime, primary_key=True, nullable=False, comment='交易时间'),
             'open': db.Column(db.Float, nullable=False, comment='开盘价'),

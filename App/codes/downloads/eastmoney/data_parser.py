@@ -129,6 +129,33 @@ def process_data(df: pd.DataFrame, multiple: bool) -> pd.DataFrame:
     df['volume'] = (df['volume'] * 100).astype('int64')
     df[['volume', 'money']] = df[['volume', 'money']].astype('int64')
 
+    # 修复 open=0 的问题：trends2 API 不提供开盘价，设置 open = close
+    # 对于1分钟数据，开盘价和收盘价通常非常接近
+    if (df['open'] == 0).any() or df['open'].isna().any():
+        logger.warning("检测到 open=0 或 NaN，使用 close 值填充")
+        df.loc[(df['open'] == 0) | df['open'].isna(), 'open'] = df.loc[(df['open'] == 0) | df['open'].isna(), 'close']
+
+    # 过滤掉非交易时间的数据（9:15-9:29 集合竞价数据）
+    # A股交易时间：上午 9:30-11:30，下午 13:00-15:00
+    original_len = len(df)
+    df_time = df['date'].dt.time
+
+    # 保留交易时间内的数据：(9:30-11:30) 或 (13:00-15:00)
+    morning_start = dt_time(9, 30)
+    morning_end = dt_time(11, 30)
+    afternoon_start = dt_time(13, 0)
+    afternoon_end = dt_time(15, 0)
+
+    valid_time_mask = (
+        ((df_time >= morning_start) & (df_time <= morning_end)) |
+        ((df_time >= afternoon_start) & (df_time <= afternoon_end))
+    )
+    df = df[valid_time_mask].reset_index(drop=True)
+
+    filtered_count = original_len - len(df)
+    if filtered_count > 0:
+        logger.info(f"过滤掉 {filtered_count} 条非交易时间数据（集合竞价等）")
+
     if multiple:
         df['day'] = df['date'].dt.date
         df['time'] = df['date'].dt.time
@@ -192,6 +219,10 @@ def get_1m_data(source: str, match: bool = False, multiple: bool = False) -> pd.
                     columns = ['date', 'open', 'close', 'high', 'low', 'volume', 'money']
                 elif first_row_cols == 8:
                     columns = ['date', 'open', 'close', 'high', 'low', 'volume', 'money', 'avg_price']
+                elif first_row_cols == 11:
+                    # kline API 返回11列数据
+                    columns = ['date', 'open', 'close', 'high', 'low', 'volume', 'money',
+                               'amplitude', 'change_percent', 'change_amount', 'turnover']
                 else:
                     logger.warning(f"意外的列数: {first_row_cols}，使用默认列名")
                     columns = [f'col_{i + 1}' for i in range(first_row_cols)]

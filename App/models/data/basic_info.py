@@ -6,11 +6,11 @@ from App.exts import db
 from datetime import datetime
 
 
-class StockCodes(db.Model):
-    """股票市场数据表 - 包含全部个股和板块数据"""
-    __tablename__ = 'stock_market_data'
-    __bind_key__ = 'quanttradingsystem'  # 绑定到 quanttradingsystem 数据库
-    
+class StockInfo(db.Model):
+    """股票基础信息表 - 包含全部个股和板块数据"""
+    __tablename__ = 'data_stock_info'
+    __bind_key__ = 'quanttradingsystem'
+
     id = db.Column(db.BigInteger, primary_key=True, autoincrement=True)
     name = db.Column(db.Text, comment='股票名称')
     code = db.Column(db.Text, comment='股票代码')
@@ -22,13 +22,18 @@ class StockCodes(db.Model):
     updated_at = db.Column(db.TIMESTAMP, default=datetime.utcnow, onupdate=datetime.utcnow, comment='更新时间')
 
     def __repr__(self):
-        return f'<StockMarketData {self.code}:{self.name}>'
+        return f'<StockInfo {self.code}:{self.name}>'
+
+
+# 保持向后兼容的别名
+StockCodes = StockInfo
 
 
 class StockClassification(db.Model):
-    """股票基本信息表"""
-    __tablename__ = 'stock_classification'
-    
+    """股票分类信息表"""
+    __tablename__ = 'data_stock_classification'
+    __bind_key__ = 'quanttradingsystem'
+
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(20), comment='股票名称')
     code = db.Column(db.String(20), comment='股票代码')
@@ -37,4 +42,4 @@ class StockClassification(db.Model):
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, comment='更新时间')
 
     def __repr__(self):
-        return f'<StockBasicInformationStock {self.code}:{self.name}>'
+        return f'<StockClassification {self.code}:{self.name}>'

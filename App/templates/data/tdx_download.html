@@ -1,0 +1,787 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="tdx-container">
+    <!-- 页面标题 -->
+    <div class="page-header">
+        <div class="header-content">
+            <div class="title-section">
+                <h1>通达信数据管理</h1>
+                <p class="subtitle">使用 pytdx 下载或读取本地通达信数据</p>
+            </div>
+            <a href="{{ url_for('dl_bp.dl') }}" class="back-btn">
+                <span class="icon">←</span>
+                返回下载中心
+            </a>
+        </div>
+    </div>
+
+    <!-- 状态信息 -->
+    <div class="status-bar">
+        <div class="status-item">
+            <span class="status-label">通达信路径：</span>
+            <span id="tdxPathStatus" class="status-value">{{ tdx_path or '未检测到' }}</span>
+            <button class="btn-small" onclick="checkTdxPath()">检测</button>
+        </div>
+        <div class="status-item">
+            <span class="status-label">pytdx状态：</span>
+            <span id="pytdxStatus" class="status-value ready">就绪</span>
+        </div>
+    </div>
+
+    <!-- 主内容区：双栏布局 -->
+    <div class="main-content">
+        <!-- 左侧：操作面板 -->
+        <div class="left-panel">
+            <!-- pytdx 网络下载 -->
+            <div class="panel-card">
+                <div class="panel-header">
+                    <h3>pytdx 网络下载</h3>
+                    <span class="badge primary">推荐</span>
+                </div>
+                <div class="panel-body">
+                    <div class="form-group">
+                        <label>代码类型</label>
+                        <div class="radio-group">
+                            <label class="radio-label">
+                                <input type="radio" name="codeType" value="stock" checked> 股票
+                            </label>
+                            <label class="radio-label">
+                                <input type="radio" name="codeType" value="board"> 板块
+                            </label>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="stockCode">代码</label>
+                        <input type="text" id="stockCode" placeholder="如：000001 或 BK0420">
+                    </div>
+                    <div class="form-group">
+                        <label for="downloadDays">天数</label>
+                        <select id="downloadDays">
+                            <option value="1">1天</option>
+                            <option value="2">2天</option>
+                            <option value="3">3天</option>
+                            <option value="5" selected>5天</option>
+                            <option value="10">10天</option>
+                            <option value="20">20天</option>
+                            <option value="30">30天</option>
+                        </select>
+                    </div>
+                    <div class="button-row">
+                        <button class="btn primary" onclick="previewData()">预览数据</button>
+                        <button class="btn success" onclick="downloadAndSave()">下载并保存</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 批量下载 -->
+            <div class="panel-card">
+                <div class="panel-header">
+                    <h3>批量下载</h3>
+                    <span class="badge info">多只股票</span>
+                </div>
+                <div class="panel-body">
+                    <div class="form-group">
+                        <label for="batchCodes">股票代码（每行一个或逗号分隔）</label>
+                        <textarea id="batchCodes" rows="4" placeholder="000001&#10;000002&#10;600000"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label for="batchDays">天数</label>
+                        <select id="batchDays">
+                            <option value="1">1天</option>
+                            <option value="3">3天</option>
+                            <option value="5" selected>5天</option>
+                        </select>
+                    </div>
+                    <button class="btn warning full-width" onclick="batchDownload()">批量下载</button>
+                </div>
+            </div>
+
+            <!-- 本地数据读取 -->
+            <div class="panel-card">
+                <div class="panel-header">
+                    <h3>本地数据读取</h3>
+                    <span class="badge secondary">通达信目录</span>
+                </div>
+                <div class="panel-body">
+                    <div class="form-group">
+                        <label for="tdxPath">通达信路径</label>
+                        <input type="text" id="tdxPath" value="{{ tdx_path or '' }}" placeholder="C:\new_tdx">
+                    </div>
+                    <div class="form-group">
+                        <label for="localCode">股票代码</label>
+                        <input type="text" id="localCode" placeholder="如：000001">
+                    </div>
+                    <div class="form-group">
+                        <label for="dataType">数据类型</label>
+                        <select id="dataType">
+                            <option value="day">日线 (.day)</option>
+                            <option value="lc1">1分钟 (.lc1)</option>
+                            <option value="lc5">5分钟 (.lc5)</option>
+                        </select>
+                    </div>
+                    <button class="btn secondary full-width" onclick="readLocalData()">读取本地数据</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 右侧：数据预览 -->
+        <div class="right-panel">
+            <div class="panel-card preview-card">
+                <div class="panel-header">
+                    <h3>数据预览</h3>
+                    <div class="preview-info">
+                        <span id="previewInfo">暂无数据</span>
+                    </div>
+                </div>
+                <div class="panel-body">
+                    <div id="loadingOverlay" class="loading-overlay" style="display: none;">
+                        <div class="loading-spinner"></div>
+                        <span>加载中...</span>
+                    </div>
+                    <div id="dataPreview" class="data-preview">
+                        <div class="empty-message">
+                            <div class="empty-icon">📊</div>
+                            <p>点击"预览数据"或"读取本地数据"查看数据</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 批量下载结果 -->
+            <div class="panel-card result-card" id="batchResultCard" style="display: none;">
+                <div class="panel-header">
+                    <h3>批量下载结果</h3>
+                </div>
+                <div class="panel-body">
+                    <div id="batchResult" class="batch-result"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.tdx-container {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 20px 30px;
+}
+
+/* 页面标题 */
+.page-header {
+    margin-bottom: 20px;
+}
+
+.header-content {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 20px 25px;
+    background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+    border-radius: 12px;
+    color: white;
+}
+
+.title-section h1 {
+    margin: 0;
+    font-size: 1.6rem;
+    font-weight: 700;
+}
+
+.subtitle {
+    margin: 5px 0 0;
+    opacity: 0.9;
+    font-size: 0.9rem;
+}
+
+.back-btn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 20px;
+    background: rgba(255, 255, 255, 0.2);
+    color: white;
+    text-decoration: none;
+    border-radius: 8px;
+    font-weight: 500;
+    transition: all 0.3s ease;
+}
+
+.back-btn:hover {
+    background: rgba(255, 255, 255, 0.3);
+}
+
+/* 状态栏 */
+.status-bar {
+    display: flex;
+    gap: 30px;
+    padding: 15px 20px;
+    background: var(--card-background);
+    border-radius: 10px;
+    margin-bottom: 20px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+}
+
+.status-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.status-label {
+    font-weight: 500;
+    color: var(--text-secondary);
+}
+
+.status-value {
+    font-family: monospace;
+    padding: 4px 10px;
+    background: var(--background-color);
+    border-radius: 4px;
+}
+
+.status-value.ready {
+    color: #10b981;
+}
+
+.btn-small {
+    padding: 4px 12px;
+    font-size: 0.8rem;
+    border: none;
+    border-radius: 4px;
+    background: var(--primary-color);
+    color: white;
+    cursor: pointer;
+}
+
+/* 主内容区 */
+.main-content {
+    display: grid;
+    grid-template-columns: 350px 1fr;
+    gap: 20px;
+    align-items: start;
+}
+
+.left-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+}
+
+/* 面板卡片 */
+.panel-card {
+    background: var(--card-background);
+    border-radius: 10px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    overflow: hidden;
+}
+
+.panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 15px;
+    background: var(--background-color);
+    border-bottom: 1px solid var(--border-color);
+}
+
+.panel-header h3 {
+    margin: 0;
+    font-size: 1rem;
+    font-weight: 600;
+}
+
+.badge {
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-size: 0.7rem;
+    font-weight: 600;
+}
+
+.badge.primary { background: rgba(102, 126, 234, 0.15); color: #667eea; }
+.badge.info { background: rgba(59, 130, 246, 0.15); color: #3b82f6; }
+.badge.secondary { background: rgba(107, 114, 128, 0.15); color: #6b7280; }
+.badge.warning { background: rgba(245, 158, 11, 0.15); color: #d97706; }
+
+.panel-body {
+    padding: 15px;
+}
+
+/* 表单 */
+.form-group {
+    margin-bottom: 12px;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 5px;
+    font-size: 0.85rem;
+    font-weight: 500;
+    color: var(--text-secondary);
+}
+
+.form-group input,
+.form-group select,
+.form-group textarea {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    font-size: 0.9rem;
+    background: var(--background-color);
+    transition: all 0.2s;
+}
+
+.form-group input:focus,
+.form-group select:focus,
+.form-group textarea:focus {
+    outline: none;
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+}
+
+.radio-group {
+    display: flex;
+    gap: 20px;
+}
+
+.radio-label {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    cursor: pointer;
+    font-size: 0.9rem;
+}
+
+/* 按钮 */
+.btn {
+    padding: 10px 20px;
+    border: none;
+    border-radius: 6px;
+    font-size: 0.9rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.btn.primary { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; }
+.btn.success { background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; }
+.btn.warning { background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); color: white; }
+.btn.secondary { background: linear-gradient(135deg, #6b7280 0%, #4b5563 100%); color: white; }
+
+.btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+}
+
+.btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    transform: none;
+}
+
+.button-row {
+    display: flex;
+    gap: 10px;
+}
+
+.full-width {
+    width: 100%;
+}
+
+/* 预览卡片 */
+.preview-card {
+    min-height: 500px;
+    display: flex;
+    flex-direction: column;
+}
+
+.preview-card .panel-body {
+    flex: 1;
+    position: relative;
+    padding: 0;
+}
+
+.preview-info {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+}
+
+.loading-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(255,255,255,0.9);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    z-index: 10;
+}
+
+.loading-spinner {
+    width: 40px;
+    height: 40px;
+    border: 3px solid var(--border-color);
+    border-top-color: var(--primary-color);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+.data-preview {
+    height: 100%;
+    overflow: auto;
+}
+
+.empty-message {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 300px;
+    color: var(--text-secondary);
+}
+
+.empty-icon {
+    font-size: 3rem;
+    margin-bottom: 15px;
+}
+
+/* 数据表格 */
+.data-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+}
+
+.data-table th,
+.data-table td {
+    padding: 8px 12px;
+    text-align: right;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.data-table th {
+    background: var(--background-color);
+    font-weight: 600;
+    position: sticky;
+    top: 0;
+}
+
+.data-table td:first-child,
+.data-table th:first-child {
+    text-align: left;
+}
+
+.data-table tr:hover {
+    background: rgba(102, 126, 234, 0.05);
+}
+
+/* 批量结果 */
+.result-card {
+    margin-top: 15px;
+}
+
+.batch-result {
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.result-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.result-item:last-child {
+    border-bottom: none;
+}
+
+.result-item.success {
+    color: #10b981;
+}
+
+.result-item.failed {
+    color: #ef4444;
+}
+
+/* 响应式 */
+@media (max-width: 1024px) {
+    .main-content {
+        grid-template-columns: 1fr;
+    }
+
+    .status-bar {
+        flex-direction: column;
+        gap: 10px;
+    }
+}
+</style>
+
+<script>
+function showLoading(show) {
+    document.getElementById('loadingOverlay').style.display = show ? 'flex' : 'none';
+}
+
+function getCodeType() {
+    return document.querySelector('input[name="codeType"]:checked').value;
+}
+
+function checkTdxPath() {
+    const path = document.getElementById('tdxPath').value;
+
+    fetch('{{ url_for("tdx_bp.check_tdx_path") }}', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({path: path})
+    })
+    .then(res => res.json())
+    .then(data => {
+        const statusEl = document.getElementById('tdxPathStatus');
+        if (data.valid) {
+            statusEl.textContent = data.path;
+            statusEl.className = 'status-value ready';
+            document.getElementById('tdxPath').value = data.path;
+            alert(data.message);
+        } else {
+            statusEl.textContent = '未找到';
+            statusEl.className = 'status-value';
+            alert(data.message);
+        }
+    })
+    .catch(error => {
+        alert('检测失败: ' + error.message);
+    });
+}
+
+function previewData() {
+    const code = document.getElementById('stockCode').value.trim();
+    const days = document.getElementById('downloadDays').value;
+    const codeType = getCodeType();
+
+    if (!code) {
+        alert('请输入代码');
+        return;
+    }
+
+    showLoading(true);
+
+    fetch('{{ url_for("tdx_bp.download_via_pytdx") }}', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            stock_code: code,
+            days: days,
+            code_type: codeType
+        })
+    })
+    .then(res => res.json())
+    .then(data => {
+        showLoading(false);
+
+        if (data.success) {
+            document.getElementById('previewInfo').textContent =
+                `共 ${data.total} 条 | ${data.first_date} ~ ${data.last_date}`;
+            renderDataTable(data.data);
+        } else {
+            document.getElementById('previewInfo').textContent = '加载失败';
+            document.getElementById('dataPreview').innerHTML =
+                `<div class="empty-message"><p>${data.message}</p></div>`;
+        }
+    })
+    .catch(error => {
+        showLoading(false);
+        alert('预览失败: ' + error.message);
+    });
+}
+
+function downloadAndSave() {
+    const code = document.getElementById('stockCode').value.trim();
+    const days = document.getElementById('downloadDays').value;
+    const codeType = getCodeType();
+
+    if (!code) {
+        alert('请输入代码');
+        return;
+    }
+
+    showLoading(true);
+
+    fetch('{{ url_for("tdx_bp.save_tdx_to_csv") }}', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            stock_code: code,
+            days: days,
+            code_type: codeType
+        })
+    })
+    .then(res => res.json())
+    .then(data => {
+        showLoading(false);
+
+        if (data.success) {
+            alert(data.message);
+            document.getElementById('previewInfo').textContent =
+                `已保存 ${data.total} 条记录`;
+        } else {
+            alert('保存失败: ' + data.message);
+        }
+    })
+    .catch(error => {
+        showLoading(false);
+        alert('保存失败: ' + error.message);
+    });
+}
+
+function readLocalData() {
+    const tdxPath = document.getElementById('tdxPath').value.trim();
+    const code = document.getElementById('localCode').value.trim();
+    const dataType = document.getElementById('dataType').value;
+
+    if (!code) {
+        alert('请输入股票代码');
+        return;
+    }
+
+    showLoading(true);
+
+    fetch('{{ url_for("tdx_bp.read_local_tdx_data") }}', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            tdx_path: tdxPath,
+            stock_code: code,
+            data_type: dataType
+        })
+    })
+    .then(res => res.json())
+    .then(data => {
+        showLoading(false);
+
+        if (data.success) {
+            document.getElementById('previewInfo').textContent =
+                `共 ${data.total} 条 | ${data.first_date} ~ ${data.last_date}`;
+            renderDataTable(data.data);
+        } else {
+            document.getElementById('previewInfo').textContent = '加载失败';
+            document.getElementById('dataPreview').innerHTML =
+                `<div class="empty-message"><p>${data.message}</p></div>`;
+        }
+    })
+    .catch(error => {
+        showLoading(false);
+        alert('读取失败: ' + error.message);
+    });
+}
+
+function batchDownload() {
+    const codes = document.getElementById('batchCodes').value.trim();
+    const days = document.getElementById('batchDays').value;
+
+    if (!codes) {
+        alert('请输入股票代码');
+        return;
+    }
+
+    showLoading(true);
+    document.getElementById('batchResultCard').style.display = 'block';
+    document.getElementById('batchResult').innerHTML = '<p>正在下载...</p>';
+
+    fetch('{{ url_for("tdx_bp.batch_download_pytdx") }}', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            stock_codes: codes,
+            days: days
+        })
+    })
+    .then(res => res.json())
+    .then(data => {
+        showLoading(false);
+
+        if (data.success) {
+            let html = `<div style="padding: 10px; background: var(--background-color); margin-bottom: 10px; border-radius: 6px;">
+                <strong>完成:</strong> 成功 ${data.success_count}, 失败 ${data.fail_count}
+            </div>`;
+
+            data.results.forEach(r => {
+                if (r.success) {
+                    html += `<div class="result-item success">
+                        <span>${r.code}</span>
+                        <span>${r.records} 条</span>
+                    </div>`;
+                } else {
+                    html += `<div class="result-item failed">
+                        <span>${r.code}</span>
+                        <span>${r.message}</span>
+                    </div>`;
+                }
+            });
+
+            document.getElementById('batchResult').innerHTML = html;
+        } else {
+            document.getElementById('batchResult').innerHTML =
+                `<p style="color: #ef4444;">${data.message}</p>`;
+        }
+    })
+    .catch(error => {
+        showLoading(false);
+        document.getElementById('batchResult').innerHTML =
+            `<p style="color: #ef4444;">下载失败: ${error.message}</p>`;
+    });
+}
+
+function renderDataTable(data) {
+    if (!data || data.length === 0) {
+        document.getElementById('dataPreview').innerHTML =
+            '<div class="empty-message"><p>无数据</p></div>';
+        return;
+    }
+
+    let html = `<table class="data-table">
+        <thead>
+            <tr>
+                <th>时间</th>
+                <th>开盘</th>
+                <th>最高</th>
+                <th>最低</th>
+                <th>收盘</th>
+                <th>成交量</th>
+                <th>成交额</th>
+            </tr>
+        </thead>
+        <tbody>`;
+
+    // 倒序显示（最新的在前）
+    data.slice().reverse().forEach(row => {
+        html += `<tr>
+            <td>${row.date}</td>
+            <td>${parseFloat(row.open).toFixed(2)}</td>
+            <td>${parseFloat(row.high).toFixed(2)}</td>
+            <td>${parseFloat(row.low).toFixed(2)}</td>
+            <td>${parseFloat(row.close).toFixed(2)}</td>
+            <td>${parseInt(row.volume).toLocaleString()}</td>
+            <td>${parseInt(row.money).toLocaleString()}</td>
+        </tr>`;
+    });
+
+    html += '</tbody></table>';
+    document.getElementById('dataPreview').innerHTML = html;
+}
+
+// 页面加载时检测通达信路径
+document.addEventListener('DOMContentLoaded', function() {
+    checkTdxPath();
+});
+</script>
+{% endblock %}

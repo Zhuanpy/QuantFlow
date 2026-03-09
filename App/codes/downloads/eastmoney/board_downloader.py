@@ -46,7 +46,11 @@ class BoardDownloader:
     @classmethod
     def board_1m_multiple(cls, code: str, days: int = 5) -> pd.DataFrame:
         """
-        下载板块多天1分钟数据
+        下载板块多天1分钟数据（智能多阶段策略）
+
+        优先级顺序：
+        1. pytdx（稳定，支持多天数据）
+        2. 东方财富 kline API（备用方案）
 
         Args:
             code: 板块代码（如 BK0437）
@@ -55,9 +59,46 @@ class BoardDownloader:
         Returns:
             pd.DataFrame: 下载的板块数据
         """
-        logger.info(f"开始下载板块 {code} 的 {days} 天数据...")
+        logger.info("*" * 80)
+        logger.info(f"开始下载板块 {code} 的 {days} 天数据")
+        logger.info("*" * 80)
 
-        url = my_url('board_1m_multiple_days').format(days, code)
+        # 第一阶段：优先使用 pytdx
+        logger.info("=" * 60)
+        logger.info("第一阶段：使用 pytdx 获取数据（优先方案）")
+        logger.info("=" * 60)
+
+        try:
+            from App.codes.downloads.DlPytdx import download_board_1m_pytdx
+
+            df_pytdx, end_date = download_board_1m_pytdx(code, days)
+
+            if not df_pytdx.empty:
+                logger.info(f"pytdx 成功获取 {len(df_pytdx)} 条数据")
+                show_download('1m', code)
+                logger.info("*" * 80)
+                logger.info(f"成功下载板块 {code} 的 {len(df_pytdx)} 条记录")
+                logger.info("*" * 80)
+                return df_pytdx
+            else:
+                logger.warning("pytdx 返回空数据，尝试备用方案")
+
+        except ImportError:
+            logger.warning("pytdx 未安装，跳过第一阶段")
+        except Exception as e:
+            logger.warning(f"pytdx 获取失败: {e}")
+
+        # 第二阶段：使用东方财富 kline API
+        logger.info("")
+        logger.info("=" * 60)
+        logger.info("第二阶段：使用东方财富 kline API（备用方案）")
+        logger.info("=" * 60)
+
+        # 计算需要的记录数量（每天约240根K线）
+        lmt = min(days * 240, 2000)  # 最多2000条记录
+        logger.info(f"计算记录数量: {days}天 x 240 = {lmt} 条")
+
+        url = my_url('board_1m_multiple_days').format(code, lmt)
         logger.info(f"尝试访问URL: {url}")
 
         source = EastMoneyHttpClient.get_source_with_rotation(url, 'board_1m_multiple_days')

@@ -169,10 +169,12 @@ class Config:
     }
 
     EASTMONEY_URLS = {
+        # 单日分时数据（trends2 API）
         'stock_1m_data': 'http://push2.eastmoney.com/api/qt/stock/trends2/get?secid={}&fields1=f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13&fields2=f51,f52,f53,f54,f55,f56,f57,f58',
-        'stock_1m_multiple_days': 'http://push2his.eastmoney.com/api/qt/stock/trends2/get?fields1=f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13&fields2=f51,f52,f53,f54,f55,f56,f57,f58&lmt={}&secid={}',
         'board_1m_data': 'http://push2.eastmoney.com/api/qt/stock/trends2/get?secid=90.{}&fields1=f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13&fields2=f51,f52,f53,f54,f55,f56,f57,f58',
-        'board_1m_multiple_days': 'http://push2his.eastmoney.com/api/qt/stock/trends2/get?fields1=f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13&fields2=f51,f52,f53,f54,f55,f56,f57,f58&lmt={}&secid=90.{}',
+        # 多天K线数据（kline API）- klt=1表示1分钟K线
+        'stock_1m_multiple_days': 'http://push2his.eastmoney.com/api/qt/stock/kline/get?secid={}&klt=1&fqt=1&lmt={}&end=20500101&fields1=f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61',
+        'board_1m_multiple_days': 'http://push2his.eastmoney.com/api/qt/stock/kline/get?secid=90.{}&klt=1&fqt=1&lmt={}&end=20500101&fields1=f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61',
         'funds_awkward': 'http://fundf10.eastmoney.com/FundArchivesDatas.aspx?type=jjcc&code={}&topline=10&year=&month=&rt=0.7468124095836639'
     }
 

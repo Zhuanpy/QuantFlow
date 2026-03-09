@@ -15,21 +15,21 @@ logger = logging.getLogger(__name__)
 model_cache: Dict[Tuple[str, int], Any] = {}
 
 
-class RecordStockMinute(db.Model):
+class DownloadRecord(db.Model):
     """
     股票分钟数据下载记录表
-    
+
     用于记录每只股票的分钟数据下载状态和进度，
-    避免与 stock_codes 表重复，通过外键关联
+    避免与 stock_info 表重复，通过外键关联
     """
-    __tablename__ = 'record_stock_minute'
-    __bind_key__ = 'quanttradingsystem'  # 绑定到 quanttradingsystem 数据库
+    __tablename__ = 'data_download_records'
+    __bind_key__ = 'quanttradingsystem'
 
     # 主键
     id = db.Column(db.BigInteger, primary_key=True, autoincrement=True, comment='主键ID')
-    
-    # 关联到 stock_market_data 表的外键 - 修复数据类型匹配
-    stock_code_id = db.Column(db.BigInteger, db.ForeignKey('stock_market_data.id', ondelete='CASCADE'), nullable=False, comment='股票代码ID')
+
+    # 关联到 data_stock_info 表的外键
+    stock_code_id = db.Column(db.BigInteger, db.ForeignKey('data_stock_info.id', ondelete='CASCADE'), nullable=False, comment='股票代码ID')
     
     # 下载状态和进度
     download_status = db.Column(db.String(20), default='pending', comment='下载状态：pending/processing/success/failed')
@@ -54,29 +54,28 @@ class RecordStockMinute(db.Model):
     # stock_code = db.relationship('StockCodes', backref='minute_records', foreign_keys=[stock_code_id])
 
     def __repr__(self):
-        return f'<RecordStockMinute {self.stock_code_id}:{self.download_status}>'
+        return f'<DownloadRecord {self.stock_code_id}:{self.download_status}>'
 
     @classmethod
     def get_by_stock_code(cls, code: str):
         """
         根据股票代码获取下载记录
-        
+
         Args:
             code: 股票代码
-            
+
         Returns:
-            RecordStockMinute: 下载记录对象
+            DownloadRecord: 下载记录对象
         """
-        # 暂时直接查询，不使用join
         return cls.query.filter_by(stock_code_id=code).first()
 
     @classmethod
     def get_pending_downloads(cls):
         """
         获取待下载的记录
-        
+
         Returns:
-            List[RecordStockMinute]: 待下载记录列表
+            List[DownloadRecord]: 待下载记录列表
         """
         return cls.query.filter_by(download_status='pending').all()
 
@@ -84,16 +83,16 @@ class RecordStockMinute(db.Model):
     def get_failed_downloads(cls):
         """
         获取下载失败的记录
-        
+
         Returns:
-            List[RecordStockMinute]: 下载失败记录列表
+            List[DownloadRecord]: 下载失败记录列表
         """
         return cls.query.filter_by(download_status='failed').all()
 
     def update_download_status(self, status: str, progress: float = None, error_msg: str = None):
         """
         更新下载状态
-        
+
         Args:
             status: 下载状态
             progress: 下载进度
@@ -106,6 +105,10 @@ class RecordStockMinute(db.Model):
             self.error_message = error_msg
         self.last_download_time = datetime.utcnow()
         self.updated_at = datetime.utcnow()
+
+
+# 保持向后兼容的别名
+RecordStockMinute = DownloadRecord
 
 
 def create_1m_stock_model(stock_code: str, year: int):
@@ -133,7 +136,7 @@ def create_1m_stock_model(stock_code: str, year: int):
         class_name,
         (db.Model,),
         {
-            '__tablename__': f"{stock_code}",
+            '__tablename__': f"data_1m_{stock_code}",
             '__bind_key__': f"data1m{year}",
             'date': db.Column(db.DateTime, primary_key=True, nullable=False, comment='交易时间'),
             'open': db.Column(db.Float, nullable=False, comment='开盘价'),

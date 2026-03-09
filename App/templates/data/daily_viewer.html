@@ -1,0 +1,828 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="viewer-container">
+    <!-- 顶部标题栏 -->
+    <div class="viewer-header">
+        <div class="header-left">
+            <button class="btn-toggle-panel" onclick="togglePanel()" title="展开/收起股票列表">
+                <svg id="panelIcon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M3 12h18M3 6h18M3 18h18"/>
+                </svg>
+                <span style="margin-left:4px;font-size:0.8rem;">选股</span>
+            </button>
+            <div>
+                <h2>日线数据查看器</h2>
+                <p class="header-desc">data_stock_daily · <span id="headerStockInfo">未选择股票</span></p>
+            </div>
+        </div>
+        <div class="header-actions">
+            <div class="quick-search-wrap">
+                <input type="text" id="quickSearchInput" placeholder="输入代码或名称搜索..." class="quick-search-input"
+                       autocomplete="off" onfocus="onQuickSearchFocus()" oninput="onQuickSearchInput()">
+                <div class="quick-search-dropdown" id="quickSearchDropdown"></div>
+            </div>
+            <button class="btn-refresh" onclick="refreshAll()">刷新</button>
+        </div>
+    </div>
+
+    <!-- 总览统计 -->
+    <div class="overview-section">
+        <div class="overview-grid">
+            <div class="overview-item">
+                <div class="overview-number" id="ovStockCount">-</div>
+                <div class="overview-label">维护股票数</div>
+            </div>
+            <div class="overview-item">
+                <div class="overview-number primary" id="ovTotalRecords">-</div>
+                <div class="overview-label">总记录数</div>
+            </div>
+            <div class="overview-item">
+                <div class="overview-number success" id="ovRecentCount">-</div>
+                <div class="overview-label">最新日有数据</div>
+            </div>
+            <div class="overview-item">
+                <div class="overview-number" id="ovAvgRecords">-</div>
+                <div class="overview-label">平均记录数</div>
+            </div>
+            <div class="overview-item">
+                <div class="overview-number" id="ovDateRange">-</div>
+                <div class="overview-label">数据日期范围</div>
+            </div>
+            <div class="overview-item">
+                <div class="overview-number primary" id="ovRecentDate">-</div>
+                <div class="overview-label">最新数据日期</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 主内容 -->
+    <div class="main-content">
+        <!-- 左侧抽屉：股票列表 -->
+        <div class="stock-drawer" id="stockDrawer">
+            <div class="drawer-header">
+                <h3>股票列表</h3>
+                <span class="panel-info" id="stockListInfo">加载中...</span>
+            </div>
+            <div class="drawer-search">
+                <input type="text" id="searchInput" placeholder="搜索代码或名称..." class="search-input-drawer">
+                <select id="sortSelect" onchange="loadStockList(1)" class="sort-select-drawer">
+                    <option value="records">按记录数</option>
+                    <option value="date">按更新时间</option>
+                    <option value="code">按代码</option>
+                </select>
+            </div>
+            <div class="stock-list" id="stockList">
+                <div class="loading-msg">加载中...</div>
+            </div>
+            <div class="pagination" id="stockPagination">
+                <button class="btn-page" id="stockPrevBtn" onclick="loadStockList(currentPage - 1)" disabled>上一页</button>
+                <span id="stockPageInfo">第 1 页</span>
+                <button class="btn-page" id="stockNextBtn" onclick="loadStockList(currentPage + 1)" disabled>下一页</button>
+            </div>
+        </div>
+        <!-- 遮罩层 -->
+        <div class="drawer-overlay" id="drawerOverlay" onclick="togglePanel()"></div>
+
+        <!-- 右侧：日线数据（全宽） -->
+        <div class="detail-panel">
+            <div class="panel-header">
+                <h3 id="detailTitle">日线数据</h3>
+                <div class="detail-controls">
+                    <input type="date" id="filterStartDate" title="开始日期">
+                    <input type="date" id="filterEndDate" title="结束日期">
+                    <button class="btn-filter" onclick="loadDailyData(1)">筛选</button>
+                    <span class="controls-sep">|</span>
+                    <select id="downloadDays" class="dl-days-select">
+                        <option value="365">1年</option>
+                        <option value="730">2年</option>
+                        <option value="1825" selected>5年</option>
+                        <option value="3650">10年</option>
+                    </select>
+                    <button class="btn-download" id="btnDownload" onclick="downloadDaily()" disabled>补充日K数据</button>
+                </div>
+            </div>
+
+            <!-- 股票摘要 -->
+            <div class="stock-summary" id="stockSummary">
+                <div class="summary-placeholder">点击左上角菜单按钮选择股票</div>
+            </div>
+
+            <!-- 数据表格 -->
+            <div class="table-wrapper">
+                <table class="data-table" id="dailyTable">
+                    <thead>
+                        <!-- 分组标题行 -->
+                        <tr class="group-header-row">
+                            <th colspan="7" class="group-header gh-market">行情数据</th>
+                            <th colspan="2" class="group-header gh-fund">基金</th>
+                            <th colspan="10" class="group-header gh-task">任务状态</th>
+                            <th colspan="5" class="group-header gh-trend">趋势信号</th>
+                            <th colspan="6" class="group-header gh-cycle">周期</th>
+                            <th colspan="6" class="group-header gh-predict">预测</th>
+                            <th colspan="4" class="group-header gh-real">真实</th>
+                            <th colspan="8" class="group-header gh-score">评分</th>
+                        </tr>
+                        <!-- 字段标题行 -->
+                        <tr class="field-header-row">
+                            <!-- 行情 7 -->
+                            <th class="sticky-col">日期</th>
+                            <th>开盘</th><th>收盘</th><th>最高</th><th>最低</th>
+                            <th>成交量</th><th>成交额</th>
+                            <!-- 基金 2 -->
+                            <th>基金数</th><th>基金占比</th>
+                            <!-- 任务 10 -->
+                            <th class="th-task">1m下</th><th class="th-task">1m清</th>
+                            <th class="th-task">15m</th><th class="th-task">MACD</th>
+                            <th class="th-task">量能</th><th class="th-task">日K</th>
+                            <th class="th-task">特征</th><th class="th-task">RNN</th>
+                            <th class="th-task">板块</th><th class="th-task">基金</th>
+                            <!-- 趋势 5 -->
+                            <th>方向</th><th>信号名</th><th>信号ID</th>
+                            <th>信号时间</th><th>重趋势</th>
+                            <!-- 周期 6 -->
+                            <th>振幅/bar</th><th>振幅max</th><th>振幅</th>
+                            <th>量max1</th><th>量max5</th><th>周期长</th>
+                            <!-- 预测 6 -->
+                            <th>周期长</th><th>周期幅</th><th>周期价</th>
+                            <th>Bar幅</th><th>Bar价</th><th>Bar量</th>
+                            <!-- 真实 4 -->
+                            <th>周期长</th><th>周期幅</th>
+                            <th>Bar幅</th><th>Bar量</th>
+                            <!-- 评分 8 -->
+                            <th>RNN</th><th>布林</th><th>资金</th><th>热度</th>
+                            <th>基金</th><th>趋势概率</th><th>趋势分</th><th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="dailyTableBody">
+                        <tr><td colspan="48" class="empty-cell">点击左上角菜单按钮选择股票</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- 数据分页 -->
+            <div class="pagination" id="dataPagination" style="display:none;">
+                <button class="btn-page" id="dataPrevBtn" onclick="loadDailyData(currentDataPage - 1)" disabled>上一页</button>
+                <span id="dataPageInfo">第 1 页</span>
+                <button class="btn-page" id="dataNextBtn" onclick="loadDailyData(currentDataPage + 1)" disabled>下一页</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+/* ===== 全宽布局 ===== */
+.viewer-container {
+    width: 100%;
+    padding: 1rem 1.5rem;
+}
+
+/* ===== 顶部标题 ===== */
+.viewer-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+    color: white;
+    padding: 0.75rem 1.5rem;
+    border-radius: 0.75rem;
+    margin-bottom: 1rem;
+}
+.header-left { display: flex; align-items: center; gap: 0.75rem; }
+.viewer-header h2 { margin: 0; font-size: 1.25rem; }
+.header-desc { margin: 0.15rem 0 0; font-size: 0.8rem; opacity: 0.85; }
+.header-actions { display: flex; gap: 0.5rem; align-items: center; }
+/* ===== 快速搜索 ===== */
+.quick-search-wrap { position: relative; }
+.quick-search-input {
+    padding: 0.45rem 0.75rem; border: none; border-radius: 0.5rem;
+    font-size: 0.85rem; width: 220px; background: rgba(255,255,255,0.9);
+    outline: none;
+}
+.quick-search-input:focus { background: white; box-shadow: 0 0 0 2px rgba(255,255,255,0.4); }
+.quick-search-dropdown {
+    display: none; position: absolute; top: 100%; left: 0; right: 0;
+    margin-top: 4px; background: white; border-radius: 0.5rem;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.15); max-height: 320px; overflow-y: auto;
+    z-index: 300; min-width: 280px;
+}
+.quick-search-dropdown.show { display: block; }
+.qs-item {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 0.55rem 0.75rem; cursor: pointer; border-bottom: 1px solid #f3f4f6;
+    color: #1f2937; font-size: 0.82rem;
+}
+.qs-item:last-child { border-bottom: none; }
+.qs-item:hover { background: #eff6ff; }
+.qs-code { font-weight: 600; }
+.qs-name { color: #6b7280; margin-left: 0.5rem; }
+.qs-meta { font-size: 0.72rem; color: #9ca3af; }
+.qs-empty { padding: 1rem; text-align: center; color: #9ca3af; font-size: 0.82rem; }
+
+.btn-refresh {
+    padding: 0.45rem 1rem; background: rgba(255,255,255,0.2); color: white;
+    border: 1px solid rgba(255,255,255,0.3); border-radius: 0.5rem;
+    cursor: pointer; font-size: 0.85rem;
+}
+.btn-refresh:hover { background: rgba(255,255,255,0.3); }
+.btn-toggle-panel {
+    display: flex; align-items: center; justify-content: center;
+    width: 36px; height: 36px; border: 1px solid rgba(255,255,255,0.3);
+    border-radius: 0.5rem; background: rgba(255,255,255,0.15);
+    color: white; cursor: pointer; flex-shrink: 0;
+}
+.btn-toggle-panel:hover { background: rgba(255,255,255,0.3); }
+
+/* ===== 总览统计 ===== */
+.overview-section {
+    background: var(--card-background); border-radius: 0.75rem;
+    padding: 0.75rem 1rem; margin-bottom: 1rem; box-shadow: var(--shadow-sm);
+}
+.overview-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 0.75rem; }
+.overview-item { text-align: center; padding: 0.6rem; background: var(--background-color); border-radius: 0.5rem; }
+.overview-number { font-size: 1.3rem; font-weight: 700; color: var(--text-primary); }
+.overview-number.success { color: #10b981; }
+.overview-number.primary { color: var(--primary-color); }
+.overview-label { font-size: 0.72rem; color: var(--text-secondary); margin-top: 0.2rem; }
+
+/* ===== 主内容 - 全宽 ===== */
+.main-content { position: relative; }
+
+/* ===== 左侧抽屉 ===== */
+.stock-drawer {
+    position: fixed;
+    top: 0; left: -340px;
+    width: 340px; height: 100vh;
+    background: var(--card-background);
+    box-shadow: 4px 0 20px rgba(0,0,0,0.15);
+    z-index: 200;
+    display: flex; flex-direction: column;
+    transition: left 0.3s ease;
+}
+.stock-drawer.open { left: 0; }
+
+.drawer-overlay {
+    display: none;
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.3);
+    z-index: 199;
+}
+.drawer-overlay.show { display: block; }
+
+.drawer-header {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 1rem 1rem 0.75rem; border-bottom: 1px solid #e5e7eb;
+    flex-shrink: 0;
+}
+.drawer-header h3 { margin: 0; font-size: 1rem; font-weight: 600; }
+.panel-info { font-size: 0.8rem; color: var(--text-secondary); }
+
+.drawer-search {
+    display: flex; gap: 0.4rem; padding: 0.6rem 0.75rem;
+    border-bottom: 1px solid #e5e7eb; flex-shrink: 0;
+}
+.search-input-drawer {
+    flex: 1; padding: 0.4rem 0.6rem; border: 1px solid #d1d5db;
+    border-radius: 0.4rem; font-size: 0.82rem; outline: none;
+}
+.search-input-drawer:focus { border-color: var(--primary-color); }
+.sort-select-drawer {
+    padding: 0.35rem 0.4rem; border: 1px solid #d1d5db;
+    border-radius: 0.4rem; font-size: 0.78rem; background: white;
+}
+
+.stock-list { flex: 1; overflow-y: auto; padding: 0.5rem; }
+.stock-item {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 0.6rem 0.75rem; border-radius: 0.5rem; cursor: pointer;
+    transition: background 0.15s; border-left: 3px solid transparent;
+}
+.stock-item:hover { background: var(--background-color); }
+.stock-item.active { background: rgba(37,99,235,0.08); border-left-color: var(--primary-color); }
+.stock-info { flex: 1; min-width: 0; }
+.stock-code { font-weight: 600; font-size: 0.9rem; }
+.stock-name { font-size: 0.75rem; color: var(--text-secondary); }
+.stock-meta { text-align: right; font-size: 0.72rem; color: var(--text-secondary); flex-shrink: 0; margin-left: 0.5rem; }
+.stock-records { color: var(--primary-color); font-weight: 500; }
+.stock-dates { margin-top: 2px; }
+
+/* ===== 详情面板 - 全宽 ===== */
+.detail-panel {
+    background: var(--card-background); border-radius: 0.75rem;
+    box-shadow: var(--shadow-sm); overflow: hidden; width: 100%;
+}
+.panel-header {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 0.75rem 1rem; background: var(--background-color);
+    border-bottom: 1px solid #e5e7eb;
+}
+.panel-header h3 { margin: 0; font-size: 1rem; font-weight: 600; }
+
+.detail-controls { display: flex; align-items: center; gap: 0.4rem; }
+.detail-controls input[type="date"] {
+    padding: 0.25rem 0.4rem; border: 1px solid #e5e7eb; border-radius: 0.25rem; font-size: 0.78rem;
+}
+.btn-filter {
+    padding: 0.3rem 0.75rem; background: var(--primary-color); color: white;
+    border: none; border-radius: 0.25rem; cursor: pointer; font-size: 0.78rem;
+}
+.btn-filter:hover { background: var(--secondary-color); }
+.controls-sep { color: #d1d5db; margin: 0 0.15rem; }
+.dl-days-select {
+    padding: 0.25rem 0.35rem; border: 1px solid #e5e7eb; border-radius: 0.25rem;
+    font-size: 0.78rem; background: white;
+}
+.btn-download {
+    padding: 0.3rem 0.75rem; background: #059669; color: white;
+    border: none; border-radius: 0.25rem; cursor: pointer; font-size: 0.78rem;
+    font-weight: 500;
+}
+.btn-download:hover { background: #047857; }
+.btn-download:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-download.loading { background: #6b7280; }
+
+/* ===== 下载结果提示 ===== */
+.dl-toast {
+    position: fixed; top: 1rem; right: 1rem; z-index: 400;
+    padding: 0.75rem 1.25rem; border-radius: 0.5rem; font-size: 0.85rem;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.15); max-width: 400px;
+    animation: slideIn 0.3s ease;
+}
+.dl-toast.success { background: #ecfdf5; color: #065f46; border: 1px solid #a7f3d0; }
+.dl-toast.error { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; }
+@keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+
+/* ===== 摘要 ===== */
+.stock-summary { padding: 0.75rem 1rem; border-bottom: 1px solid #e5e7eb; }
+.summary-placeholder { text-align: center; color: var(--text-secondary); padding: 0.5rem; }
+.summary-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 0.75rem; }
+.summary-item { text-align: center; padding: 0.5rem; background: var(--background-color); border-radius: 0.5rem; }
+.summary-value { font-size: 1rem; font-weight: 600; color: var(--text-primary); }
+.summary-label { font-size: 0.7rem; color: var(--text-secondary); }
+
+/* ===== 表格 - 全宽铺开 ===== */
+.table-wrapper {
+    max-height: calc(100vh - 360px);
+    overflow: auto;
+}
+.data-table { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
+.data-table th, .data-table td {
+    padding: 0.35rem 0.5rem; text-align: right; border-bottom: 1px solid #e5e7eb; white-space: nowrap;
+}
+.data-table th {
+    font-weight: 600;
+    position: sticky; top: 0; z-index: 1;
+}
+.data-table td:first-child {
+    text-align: left; position: sticky; left: 0; z-index: 2;
+    background: var(--card-background); box-shadow: 2px 0 4px rgba(0,0,0,0.06);
+}
+.data-table th:first-child {
+    text-align: left; position: sticky; left: 0; z-index: 3;
+    box-shadow: 2px 0 4px rgba(0,0,0,0.06);
+}
+.data-table tr:hover { background: rgba(37,99,235,0.04); }
+.empty-cell { text-align: center !important; color: var(--text-secondary); padding: 2rem !important; }
+.loading-msg { text-align: center; color: var(--text-secondary); padding: 2rem; }
+
+/* ===== 分组表头（第一行：深色组名） ===== */
+.group-header-row th {
+    text-align: center !important;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    padding: 0.35rem 0.25rem;
+    border-bottom: none;
+    color: white;
+    top: 0;
+}
+.gh-market  { background: #2563eb; }
+.gh-fund    { background: #7c3aed; }
+.gh-task    { background: #4b5563; }
+.gh-trend   { background: #d97706; color: white !important; }
+.gh-cycle   { background: #0891b2; }
+.gh-predict { background: #059669; }
+.gh-real    { background: #dc2626; }
+.gh-score   { background: #db2777; }
+
+/* ===== 字段表头（第二行：浅色底 + 深色字） ===== */
+.field-header-row th {
+    top: 29px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    padding: 0.35rem 0.5rem;
+    color: #1e293b;
+    border-bottom: 2px solid #cbd5e1;
+}
+/* 每组字段列头的浅色背景，与上方组名色系对应 */
+.field-header-row th:nth-child(-n+7)                        { background: #dbeafe; }  /* 行情 蓝 */
+.field-header-row th:nth-child(n+8):nth-child(-n+9)         { background: #ede9fe; }  /* 基金 紫 */
+.field-header-row th:nth-child(n+10):nth-child(-n+19)       { background: #e5e7eb; }  /* 任务 灰 */
+.field-header-row th:nth-child(n+20):nth-child(-n+24)       { background: #fef3c7; }  /* 趋势 黄 */
+.field-header-row th:nth-child(n+25):nth-child(-n+30)       { background: #cffafe; }  /* 周期 青 */
+.field-header-row th:nth-child(n+31):nth-child(-n+36)       { background: #d1fae5; }  /* 预测 绿 */
+.field-header-row th:nth-child(n+37):nth-child(-n+40)       { background: #fee2e2; }  /* 真实 红 */
+.field-header-row th:nth-child(n+41)                        { background: #fce7f3; }  /* 评分 粉 */
+
+.th-task { font-size: 0.68rem !important; padding: 0.35rem 0.3rem !important; }
+.task-ok { color: #16a34a; font-weight: 600; }
+.task-no { color: #d1d5db; }
+
+/* ===== 趋势/操作标记 ===== */
+.trend-up { color: #ef4444; font-weight: 600; }
+.trend-down { color: #10b981; font-weight: 600; }
+.action-buy { color: #ef4444; font-weight: 600; }
+.action-sell { color: #2563eb; font-weight: 600; }
+
+/* ===== 分页 ===== */
+.pagination {
+    display: flex; justify-content: center; align-items: center;
+    gap: 0.5rem; padding: 0.6rem; background: var(--background-color);
+    flex-shrink: 0;
+}
+.btn-page {
+    padding: 0.25rem 0.75rem; border: none; border-radius: 0.25rem;
+    font-size: 0.75rem; cursor: pointer; background: var(--primary-color); color: white;
+}
+.btn-page:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ===== 响应式 ===== */
+@media (max-width: 1024px) {
+    .overview-grid { grid-template-columns: repeat(3, 1fr); }
+}
+@media (max-width: 768px) {
+    .viewer-header { flex-direction: column; gap: 0.75rem; }
+    .overview-grid { grid-template-columns: repeat(2, 1fr); }
+    .summary-grid { grid-template-columns: repeat(4, 1fr); }
+    .stock-drawer { width: 300px; left: -300px; }
+}
+</style>
+
+<script>
+let currentPage = 1, totalPages = 1;
+let currentDataPage = 1, totalDataPages = 1;
+let selectedStock = null;
+let searchTimeout = null;
+let drawerOpen = false;
+
+document.addEventListener('DOMContentLoaded', function() {
+    loadOverview();
+    loadStockList(1);
+
+    document.getElementById('searchInput').addEventListener('input', function() {
+        clearTimeout(searchTimeout);
+        searchTimeout = setTimeout(() => loadStockList(1), 300);
+    });
+
+    // ESC 关闭抽屉
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape' && drawerOpen) togglePanel();
+    });
+});
+
+/* ===== 抽屉控制 ===== */
+function togglePanel() {
+    drawerOpen = !drawerOpen;
+    document.getElementById('stockDrawer').classList.toggle('open', drawerOpen);
+    document.getElementById('drawerOverlay').classList.toggle('show', drawerOpen);
+}
+
+/* ===== 总览 ===== */
+function loadOverview() {
+    fetch('{{ url_for("daily_viewer.get_overview") }}')
+        .then(r => r.json())
+        .then(d => {
+            if (d.error) return;
+            document.getElementById('ovStockCount').textContent = d.stock_count.toLocaleString();
+            document.getElementById('ovTotalRecords').textContent = d.total_records.toLocaleString();
+            document.getElementById('ovRecentCount').textContent = d.recent_count.toLocaleString();
+            document.getElementById('ovAvgRecords').textContent = d.avg_records.toLocaleString();
+            document.getElementById('ovDateRange').textContent = d.min_date + ' ~ ' + d.max_date;
+            document.getElementById('ovDateRange').style.fontSize = '0.8rem';
+            document.getElementById('ovRecentDate').textContent = d.recent_date;
+        })
+        .catch(e => console.error('加载总览失败:', e));
+}
+
+/* ===== 股票列表 ===== */
+function loadStockList(page) {
+    currentPage = page;
+    const search = document.getElementById('searchInput').value;
+    const sortBy = document.getElementById('sortSelect').value;
+
+    fetch(`{{ url_for("daily_viewer.get_stocks") }}?page=${page}&per_page=50&search=${encodeURIComponent(search)}&sort_by=${sortBy}`)
+        .then(r => r.json())
+        .then(d => {
+            if (d.error) {
+                document.getElementById('stockList').innerHTML = `<div class="loading-msg">加载失败</div>`;
+                return;
+            }
+            totalPages = d.total_pages || 1;
+            document.getElementById('stockListInfo').textContent = `共 ${d.total} 只`;
+
+            if (d.stocks.length === 0) {
+                document.getElementById('stockList').innerHTML = '<div class="loading-msg">暂无数据</div>';
+            } else {
+                document.getElementById('stockList').innerHTML = d.stocks.map(s => `
+                    <div class="stock-item ${selectedStock === s.code ? 'active' : ''}"
+                         onclick="selectStock('${s.code}', '${s.name}')">
+                        <div class="stock-info">
+                            <div class="stock-code">${s.code}</div>
+                            <div class="stock-name">${s.name}</div>
+                        </div>
+                        <div class="stock-meta">
+                            <div class="stock-records">${s.records.toLocaleString()} 条</div>
+                            <div class="stock-dates">${s.start_date} ~ ${s.end_date}</div>
+                        </div>
+                    </div>
+                `).join('');
+            }
+
+            document.getElementById('stockPageInfo').textContent = `第 ${currentPage} / ${totalPages} 页`;
+            document.getElementById('stockPrevBtn').disabled = currentPage <= 1;
+            document.getElementById('stockNextBtn').disabled = currentPage >= totalPages;
+        })
+        .catch(e => {
+            console.error('加载股票列表失败:', e);
+            document.getElementById('stockList').innerHTML = '<div class="loading-msg">加载失败</div>';
+        });
+}
+
+/* ===== 选择股票 ===== */
+function selectStock(code, name) {
+    selectedStock = code;
+    currentDataPage = 1;
+
+    // 更新顶部提示
+    document.getElementById('headerStockInfo').textContent = `${code} ${name || ''}`;
+    // 启用下载按钮
+    document.getElementById('btnDownload').disabled = false;
+
+    // 高亮
+    document.querySelectorAll('.stock-item').forEach(item => {
+        item.classList.remove('active');
+        if (item.querySelector('.stock-code').textContent === code) {
+            item.classList.add('active');
+        }
+    });
+
+    // 清空日期筛选
+    document.getElementById('filterStartDate').value = '';
+    document.getElementById('filterEndDate').value = '';
+
+    // 关闭抽屉
+    if (drawerOpen) togglePanel();
+
+    loadDailyData(1);
+}
+
+/* ===== 加载日线数据 ===== */
+function loadDailyData(page) {
+    if (!selectedStock) return;
+    currentDataPage = page;
+
+    const startDate = document.getElementById('filterStartDate').value;
+    const endDate = document.getElementById('filterEndDate').value;
+
+    let url = `{{ url_for("daily_viewer.get_stock_daily_data", stock_code="__CODE__") }}`.replace('__CODE__', selectedStock);
+    url += `?page=${page}&per_page=100`;
+    if (startDate) url += `&start_date=${startDate}`;
+    if (endDate) url += `&end_date=${endDate}`;
+
+    document.getElementById('dailyTableBody').innerHTML =
+        '<tr><td colspan="48" class="empty-cell">加载中...</td></tr>';
+
+    fetch(url)
+        .then(r => r.json())
+        .then(d => {
+            if (d.error) {
+                document.getElementById('dailyTableBody').innerHTML =
+                    `<tr><td colspan="48" class="empty-cell">加载失败: ${d.error}</td></tr>`;
+                return;
+            }
+
+            // 标题
+            document.getElementById('detailTitle').textContent =
+                `${d.stock_code} ${d.stock_name} 日线数据`;
+
+            // 摘要
+            if (d.total > 0) {
+                const last = d.data[0];
+                const sigClass = last.signal === 1 ? 'trend-up' : (last.signal === -1 ? 'trend-down' : '');
+                const sigText = last.signal === 1 ? '上涨' : (last.signal === -1 ? '下跌' : '-');
+                document.getElementById('stockSummary').innerHTML = `
+                    <div class="summary-grid">
+                        <div class="summary-item">
+                            <div class="summary-value">${last.date}</div>
+                            <div class="summary-label">最新日期</div>
+                        </div>
+                        <div class="summary-item">
+                            <div class="summary-value">${last.close}</div>
+                            <div class="summary-label">最新收盘价</div>
+                        </div>
+                        <div class="summary-item">
+                            <div class="summary-value ${sigClass}">${sigText}</div>
+                            <div class="summary-label">当前趋势</div>
+                        </div>
+                        <div class="summary-item">
+                            <div class="summary-value">${last.sc_rnn || '-'}</div>
+                            <div class="summary-label">RNN评分</div>
+                        </div>
+                        <div class="summary-item">
+                            <div class="summary-value">${last.pred_bar_price || '-'}</div>
+                            <div class="summary-label">预测价格</div>
+                        </div>
+                        <div class="summary-item">
+                            <div class="summary-value">${d.total.toLocaleString()}</div>
+                            <div class="summary-label">总记录数</div>
+                        </div>
+                        <div class="summary-item">
+                            <div class="summary-value">${last.volume.toLocaleString()}</div>
+                            <div class="summary-label">最新成交量</div>
+                        </div>
+                        <div class="summary-item">
+                            <div class="summary-value">${last.fund_count}</div>
+                            <div class="summary-label">基金持有数</div>
+                        </div>
+                    </div>
+                `;
+            } else {
+                document.getElementById('stockSummary').innerHTML =
+                    '<div class="summary-placeholder">该股票暂无日线数据</div>';
+            }
+
+            // 表格
+            totalDataPages = d.total_pages || 1;
+            if (d.data.length === 0) {
+                document.getElementById('dailyTableBody').innerHTML =
+                    '<tr><td colspan="48" class="empty-cell">暂无数据</td></tr>';
+                document.getElementById('dataPagination').style.display = 'none';
+                return;
+            }
+
+            document.getElementById('dailyTableBody').innerHTML = d.data.map(r => {
+                // 趋势方向
+                const sigClass = r.signal === 1 ? 'trend-up' : (r.signal === -1 ? 'trend-down' : '');
+                const sigText = r.signal === 1 ? '涨' : (r.signal === -1 ? '跌' : '-');
+                // 交易操作
+                let actClass = '', actText = '-';
+                if (r.trade_action === 1) { actClass = 'action-buy'; actText = '买入'; }
+                else if (r.trade_action === -1) { actClass = 'action-sell'; actText = '卖出'; }
+                // 任务状态 helper
+                const tk = v => v ? '<span class="task-ok">✓</span>' : '<span class="task-no">-</span>';
+                // 数值 helper
+                const n = (v, d=2) => (v !== null && v !== undefined && v !== 0) ? Number(v).toFixed(d) : '-';
+                const ni = v => (v !== null && v !== undefined && v !== 0) ? v.toLocaleString() : '-';
+
+                return `<tr>
+                    <td>${r.date}</td>
+                    <td>${r.open.toFixed(2)}</td><td>${r.close.toFixed(2)}</td>
+                    <td>${r.high.toFixed(2)}</td><td>${r.low.toFixed(2)}</td>
+                    <td>${r.volume.toLocaleString()}</td><td>${r.money.toLocaleString()}</td>
+                    <td>${r.fund_count}</td><td>${r.fund_ratio}%</td>
+                    <td>${tk(r.t_1m_dl)}</td><td>${tk(r.t_1m_cl)}</td>
+                    <td>${tk(r.t_15m)}</td><td>${tk(r.t_macd)}</td>
+                    <td>${tk(r.t_vol)}</td><td>${tk(r.t_daily)}</td>
+                    <td>${tk(r.t_feat)}</td><td>${tk(r.t_rnn)}</td>
+                    <td>${tk(r.t_board)}</td><td>${tk(r.t_fund)}</td>
+                    <td class="${sigClass}">${sigText}</td>
+                    <td>${r.signal_name || '-'}</td>
+                    <td>${r.signal_id || '-'}</td>
+                    <td>${r.signal_start || '-'}</td>
+                    <td>${r.re_trend || '-'}</td>
+                    <td>${n(r.cyc_amp_bar, 4)}</td><td>${n(r.cyc_amp_max, 4)}</td>
+                    <td>${n(r.cyc_amp, 4)}</td>
+                    <td>${ni(r.cyc_vol1)}</td><td>${ni(r.cyc_vol5)}</td>
+                    <td>${ni(r.cyc_len)}</td>
+                    <td>${ni(r.pred_cyc_len)}</td><td>${n(r.pred_cyc_chg)}</td>
+                    <td>${n(r.pred_cyc_price)}</td><td>${n(r.pred_bar_chg)}</td>
+                    <td>${n(r.pred_bar_price)}</td><td>${ni(r.pred_bar_vol)}</td>
+                    <td>${ni(r.real_cyc_len)}</td><td>${n(r.real_cyc_chg)}</td>
+                    <td>${n(r.real_bar_chg)}</td><td>${ni(r.real_bar_vol)}</td>
+                    <td>${n(r.sc_rnn)}</td><td>${n(r.sc_boll)}</td>
+                    <td>${n(r.sc_money)}</td><td>${n(r.sc_hot)}</td>
+                    <td>${n(r.sc_fund)}</td><td>${n(r.trend_prob)}</td>
+                    <td>${n(r.trend_score)}</td>
+                    <td class="${actClass}">${actText}</td>
+                </tr>`;
+            }).join('');
+
+            // 分页
+            document.getElementById('dataPagination').style.display = 'flex';
+            document.getElementById('dataPageInfo').textContent =
+                `第 ${currentDataPage} / ${totalDataPages} 页 (共 ${d.total} 条)`;
+            document.getElementById('dataPrevBtn').disabled = currentDataPage <= 1;
+            document.getElementById('dataNextBtn').disabled = currentDataPage >= totalDataPages;
+        })
+        .catch(e => {
+            console.error('加载日线数据失败:', e);
+            document.getElementById('dailyTableBody').innerHTML =
+                '<tr><td colspan="48" class="empty-cell">加载失败</td></tr>';
+        });
+}
+
+/* ===== 下载补充日K数据 ===== */
+function downloadDaily() {
+    if (!selectedStock) return;
+    const btn = document.getElementById('btnDownload');
+    const days = parseInt(document.getElementById('downloadDays').value);
+    const origText = btn.textContent;
+
+    btn.disabled = true;
+    btn.classList.add('loading');
+    btn.textContent = '下载中...';
+
+    fetch('{{ url_for("daily_viewer.download_daily_data") }}', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stock_code: selectedStock, days: days })
+    })
+    .then(r => r.json())
+    .then(d => {
+        btn.classList.remove('loading');
+        btn.textContent = origText;
+        btn.disabled = false;
+
+        if (d.error) {
+            showToast(d.error, 'error');
+            return;
+        }
+
+        showToast(`${d.stock_code} 下载完成：获取 ${d.downloaded} 条，新增 ${d.added} 条，数据范围 ${d.date_range.start} ~ ${d.date_range.end}（共 ${d.new_count} 条）`, 'success');
+        loadDailyData(1);
+        loadOverview();
+        loadStockList(currentPage);
+    })
+    .catch(e => {
+        btn.classList.remove('loading');
+        btn.textContent = origText;
+        btn.disabled = false;
+        showToast('下载请求失败: ' + e.message, 'error');
+    });
+}
+
+function showToast(msg, type) {
+    document.querySelectorAll('.dl-toast').forEach(el => el.remove());
+    const toast = document.createElement('div');
+    toast.className = `dl-toast ${type}`;
+    toast.textContent = msg;
+    document.body.appendChild(toast);
+    setTimeout(() => toast.remove(), 6000);
+}
+
+/* ===== 快速搜索 ===== */
+let qsTimeout = null;
+function onQuickSearchInput() {
+    clearTimeout(qsTimeout);
+    const val = document.getElementById('quickSearchInput').value.trim();
+    if (!val) {
+        document.getElementById('quickSearchDropdown').classList.remove('show');
+        return;
+    }
+    qsTimeout = setTimeout(() => {
+        fetch(`{{ url_for("daily_viewer.get_stocks") }}?page=1&per_page=10&search=${encodeURIComponent(val)}&sort_by=records`)
+            .then(r => r.json())
+            .then(d => {
+                const dd = document.getElementById('quickSearchDropdown');
+                if (d.error || d.stocks.length === 0) {
+                    dd.innerHTML = '<div class="qs-empty">未找到匹配股票</div>';
+                } else {
+                    dd.innerHTML = d.stocks.map(s => `
+                        <div class="qs-item" onclick="quickSelectStock('${s.code}', '${s.name}')">
+                            <div><span class="qs-code">${s.code}</span><span class="qs-name">${s.name}</span></div>
+                            <div class="qs-meta">${s.records}条 ${s.end_date}</div>
+                        </div>
+                    `).join('');
+                }
+                dd.classList.add('show');
+            });
+    }, 250);
+}
+
+function onQuickSearchFocus() {
+    const val = document.getElementById('quickSearchInput').value.trim();
+    if (val) onQuickSearchInput();
+}
+
+function quickSelectStock(code, name) {
+    document.getElementById('quickSearchDropdown').classList.remove('show');
+    document.getElementById('quickSearchInput').value = code + ' ' + name;
+    selectStock(code, name);
+}
+
+// 点击外部关闭下拉
+document.addEventListener('click', function(e) {
+    const wrap = document.querySelector('.quick-search-wrap');
+    if (wrap && !wrap.contains(e.target)) {
+        document.getElementById('quickSearchDropdown').classList.remove('show');
+    }
+});
+
+/* ===== 刷新 ===== */
+function refreshAll() {
+    loadOverview();
+    loadStockList(currentPage);
+    if (selectedStock) loadDailyData(currentDataPage);
+}
+</script>
+{% endblock %}

@@ -1,19 +1,46 @@
 {% extends "base.html" %}
 
 {% block content %}
-<div class="container">
-    <div class="header">
-        <h1>股票数据下载</h1>
-        <a href="{{ url_for('dl_bp.dl') }}" class="back-link">返回下载中心</a>
+<div class="result-container">
+    <!-- 页面标题 -->
+    <div class="page-header">
+        <div class="header-content">
+            <div class="title-section">
+                <h1>数据下载结果</h1>
+                <p class="subtitle">查看下载数据的验证结果和详细信息</p>
+            </div>
+            <a href="{{ url_for('dl_bp.dl') }}" class="back-btn">
+                <span class="icon">←</span>
+                返回下载中心
+            </a>
+        </div>
     </div>
 
-    <div class="card">
-        <h2>下载新数据</h2>
-        <form action="{{ url_for('download_eastmoney_data.download_stock_1m_close_data_today_eastmoney') }}" method="post" class="download-form">
-            <div class="form-group">
-                <label for="stock_code">股票代码</label>
-                <input type="text" id="stock_code" name="stock_code" placeholder="如：002475" required>
-                <button type="submit" class="button">开始下载</button>
+    <!-- 下载新数据表单 -->
+    <section class="download-section">
+        <div class="section-header">
+            <h2>下载新数据</h2>
+        </div>
+        <form action="{{ url_for('download_data_bp.download_stock_1m_close_data') }}" method="post" class="download-form">
+            <div class="input-group">
+                <div class="input-wrapper">
+                    <span class="input-icon">📊</span>
+                    <input type="text" id="stock_code" name="stock_code" placeholder="输入股票代码，如：002475" required>
+                </div>
+                <div class="days-select-wrapper">
+                    <span class="select-icon">📅</span>
+                    <select name="days" id="days" class="days-select">
+                        <option value="1">最近1天</option>
+                        <option value="2">最近2天</option>
+                        <option value="3">最近3天</option>
+                        <option value="4">最近4天</option>
+                        <option value="5" selected>最近5天</option>
+                    </select>
+                </div>
+                <button type="submit" class="submit-btn">
+                    <span class="btn-icon">↓</span>
+                    开始下载
+                </button>
             </div>
         </form>
 
@@ -21,455 +48,1136 @@
             {% if messages %}
                 <div class="alert success">
                     <span class="alert-icon">✓</span>
-                    {{ messages[0] }}
+                    <span class="alert-text">{{ messages[0] }}</span>
                 </div>
             {% endif %}
         {% endwith %}
+    </section>
 
-        {% if file_path %}
-        <div class="file-info">
-            <h3>📁 文件保存信息</h3>
-            
-            <!-- 1分钟数据路径 -->
-            <div class="file-path">
-                <label>1分钟数据路径:</label>
-                <div class="path-container">
+    <!-- 文件保存信息 -->
+    {% if file_path %}
+    <section class="file-section">
+        <div class="section-header">
+            <h2>文件保存信息</h2>
+            <span class="section-badge success">保存成功</span>
+        </div>
+
+        <div class="file-cards">
+            <!-- 1分钟数据 -->
+            <div class="file-card">
+                <div class="file-card-header">
+                    <span class="file-icon">📁</span>
+                    <span class="file-type">1分钟数据</span>
+                </div>
+                <div class="file-path-box">
                     <code class="file-path-text">{{ file_path }}</code>
-                    <button onclick="copyToClipboard('{{ file_path }}')" class="copy-btn" title="复制路径">
-                        📋
-                    </button>
                 </div>
                 <div class="file-actions">
-                    <button onclick="openFile('{{ file_path }}')" class="btn btn-secondary">
-                        📄 打开1分钟数据文件
+                    <button onclick="copyToClipboard('{{ file_path }}')" class="action-btn copy">
+                        <span>📋</span> 复制路径
+                    </button>
+                    <button onclick="openFile('{{ file_path }}')" class="action-btn open">
+                        <span>📄</span> 打开文件
                     </button>
                 </div>
             </div>
-            
-            <!-- 15分钟数据路径 -->
+
+            <!-- 15分钟数据 -->
             {% if file_path_15m %}
-            <div class="file-path">
-                <label>15分钟数据路径:</label>
-                <div class="path-container">
+            <div class="file-card">
+                <div class="file-card-header">
+                    <span class="file-icon">📁</span>
+                    <span class="file-type">15分钟数据</span>
+                </div>
+                <div class="file-path-box">
                     <code class="file-path-text">{{ file_path_15m }}</code>
-                    <button onclick="copyToClipboard('{{ file_path_15m }}')" class="copy-btn" title="复制路径">
-                        📋
-                    </button>
                 </div>
                 <div class="file-actions">
-                    <button onclick="openFile('{{ file_path_15m }}')" class="btn btn-secondary">
-                        📄 打开15分钟数据文件
+                    <button onclick="copyToClipboard('{{ file_path_15m }}')" class="action-btn copy">
+                        <span>📋</span> 复制路径
+                    </button>
+                    <button onclick="openFile('{{ file_path_15m }}')" class="action-btn open">
+                        <span>📄</span> 打开文件
                     </button>
                 </div>
             </div>
             {% endif %}
-            
-            <!-- 日线数据路径 -->
+
+            <!-- 日线数据 -->
             {% if file_path_daily %}
-            <div class="file-path">
-                <label>日线数据路径:</label>
-                <div class="path-container">
+            <div class="file-card">
+                <div class="file-card-header">
+                    <span class="file-icon">📁</span>
+                    <span class="file-type">日线数据</span>
+                </div>
+                <div class="file-path-box">
                     <code class="file-path-text">{{ file_path_daily }}</code>
-                    <button onclick="copyToClipboard('{{ file_path_daily }}')" class="copy-btn" title="复制路径">
-                        📋
-                    </button>
                 </div>
                 <div class="file-actions">
-                    <button onclick="openFile('{{ file_path_daily }}')" class="btn btn-secondary">
-                        📄 打开日线数据文件
+                    <button onclick="copyToClipboard('{{ file_path_daily }}')" class="action-btn copy">
+                        <span>📋</span> 复制路径
                     </button>
+                    <button onclick="openFile('{{ file_path_daily }}')" class="action-btn open">
+                        <span>📄</span> 打开文件
+                    </button>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+    </section>
+    {% endif %}
+
+    <!-- 数据质量验证 -->
+    {% if validation_result %}
+    <section class="validation-section">
+        <div class="section-header">
+            <h2>数据质量验证</h2>
+        </div>
+
+        <!-- 验证状态卡片 -->
+        <div class="validation-status-card {{ validation_result.status }}">
+            <div class="status-icon-wrapper">
+                {% if validation_result.status == 'success' %}
+                    <span class="status-icon success-icon">✓</span>
+                {% elif validation_result.status == 'warning' %}
+                    <span class="status-icon warning-icon">!</span>
+                {% else %}
+                    <span class="status-icon error-icon">✕</span>
+                {% endif %}
+            </div>
+            <div class="status-content">
+                {% if validation_result.status == 'success' %}
+                    <h3>数据验证通过</h3>
+                    <p>所有检查项均正常，数据质量良好</p>
+                {% elif validation_result.status == 'warning' %}
+                    <h3>数据存在警告</h3>
+                    <p>请查看以下检查项，部分数据可能需要关注</p>
+                {% else %}
+                    <h3>数据存在问题</h3>
+                    <p>请查看以下检查项，部分数据可能不正确</p>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- 统计信息网格 -->
+        {% if validation_result.stats %}
+        <div class="stats-container">
+            <h3 class="stats-title">数据统计</h3>
+            <div class="stats-grid">
+                <div class="stat-card primary">
+                    <div class="stat-icon">📊</div>
+                    <div class="stat-info">
+                        <div class="stat-value">{{ validation_result.stats.total_records }}</div>
+                        <div class="stat-label">总记录数</div>
+                    </div>
+                </div>
+                <div class="stat-card info">
+                    <div class="stat-icon">🕐</div>
+                    <div class="stat-info">
+                        <div class="stat-value small">{{ validation_result.stats.first_time }}</div>
+                        <div class="stat-label">首条时间</div>
+                    </div>
+                </div>
+                <div class="stat-card success">
+                    <div class="stat-icon">🕕</div>
+                    <div class="stat-info">
+                        <div class="stat-value small">{{ validation_result.stats.last_time }}</div>
+                        <div class="stat-label">末条时间</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 每日记录数 -->
+            {% if validation_result.stats.daily_counts %}
+            <div class="daily-stats">
+                <h4>每日记录数分布</h4>
+                <div class="daily-counts-grid">
+                    {% for date, count in validation_result.stats.daily_counts.items() %}
+                    <div class="daily-count-item {% if count < 200 %}warning{% endif %}">
+                        <span class="count-date">{{ date }}</span>
+                        <span class="count-value">{{ count }}条</span>
+                        {% if count < 200 %}
+                        <span class="count-warning">数据不足</span>
+                        {% endif %}
+                    </div>
+                    {% endfor %}
                 </div>
             </div>
             {% endif %}
         </div>
         {% endif %}
-    </div>
 
-    {% if data_html %}
-    <div class="card mt-4">
-        <h2>查询结果</h2>
-        <div class="table-container">
-            {{ data_html | safe }}
+        <!-- 检查结果列表 -->
+        <div class="issues-container">
+            <h3 class="issues-title">检查结果</h3>
+            <div class="issues-list">
+                {% for issue in validation_result.issues %}
+                <div class="issue-item {% if '✅' in issue %}success{% elif '⚠️' in issue %}warning{% elif '❌' in issue %}error{% endif %}">
+                    <span class="issue-text">{{ issue }}</span>
+                </div>
+                {% endfor %}
+            </div>
         </div>
-    </div>
+    </section>
     {% endif %}
 
+    <!-- 1分钟数据预览 -->
+    {% if data_1m_preview %}
+    <section class="preview-section">
+        <div class="section-header">
+            <h2>1分钟数据预览</h2>
+            <span class="section-badge info">共 {{ data_1m_preview.total_count }} 条记录</span>
+        </div>
+
+        <div class="full-data-card">
+            <div class="full-data-header">
+                <div class="header-left">
+                    <span class="preview-icon">📊</span>
+                    <h3>全部数据</h3>
+                </div>
+                <div class="header-right">
+                    <span class="record-count">{{ data_1m_preview.total_count }} 条</span>
+                </div>
+            </div>
+            <div class="full-table-wrapper">
+                <table class="data-table full-data-table">
+                    <thead>
+                        <tr>
+                            <th class="col-index">#</th>
+                            <th class="col-time">时间</th>
+                            <th class="col-price">开盘</th>
+                            <th class="col-price">收盘</th>
+                            <th class="col-price">最高</th>
+                            <th class="col-price">最低</th>
+                            <th class="col-volume">成交量</th>
+                            <th class="col-money">成交额</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in data_1m_preview.all %}
+                        <tr class="{% if loop.index % 2 == 0 %}even-row{% endif %}">
+                            <td class="index-cell">{{ loop.index }}</td>
+                            <td class="time-cell">{{ row.date }}</td>
+                            <td class="price-cell {% if row.open == 0 %}error-cell{% endif %}">{{ row.open|round(2) }}</td>
+                            <td class="price-cell">{{ row.close|round(2) }}</td>
+                            <td class="price-cell high-cell">{{ row.high|round(2) }}</td>
+                            <td class="price-cell low-cell">{{ row.low|round(2) }}</td>
+                            <td class="volume-cell">{{ "{:,}".format(row.volume) }}</td>
+                            <td class="money-cell">{{ "{:,}".format(row.money) }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </section>
+    {% endif %}
+
+    <!-- 数据库日线数据验证 -->
     {% if daily_data_from_db is not none and not daily_data_from_db.empty %}
-    <div class="card mt-4">
-        <h2>📊 日线数据验证 (来自 daily_stock_data 表)</h2>
-        <div class="verification-info">
-            <p class="verification-text">
-                ✅ 以下数据已成功保存到数据库表 <code>daily_stock_data</code> 中，用于验证数据正确性：
-            </p>
+    <section class="db-section">
+        <div class="section-header">
+            <h2>日线数据验证</h2>
+            <span class="section-badge success">数据库数据</span>
         </div>
-        <div class="table-container">
-            {{ daily_data_from_db.to_html(classes='table table-striped verification-table', index=False, escape=False) | safe }}
+
+        <div class="db-info-banner">
+            <span class="banner-icon">✓</span>
+            <div class="banner-content">
+                <strong>数据已保存到数据库</strong>
+                <span>以下数据来自 <code>daily_stock_data</code> 表，用于验证数据正确性</span>
+            </div>
         </div>
-        <div class="verification-summary">
-            <p><strong>验证信息：</strong></p>
-            <ul>
-                <li>📅 显示最近7天的日线数据</li>
-                <li>💾 数据来源：daily_stock_data 数据库表</li>
-                <li>🔄 数据已通过完整下载流程处理</li>
-                <li>✅ 包含完整的OHLCV数据</li>
-            </ul>
+
+        <div class="table-wrapper db-table">
+            {{ daily_data_from_db.to_html(classes='data-table db-data-table', index=False, escape=False) | safe }}
         </div>
-    </div>
+
+        <div class="db-summary">
+            <div class="summary-item">
+                <span class="summary-icon">📅</span>
+                <span>显示最近7天的日线数据</span>
+            </div>
+            <div class="summary-item">
+                <span class="summary-icon">💾</span>
+                <span>数据来源：daily_stock_data 数据库表</span>
+            </div>
+            <div class="summary-item">
+                <span class="summary-icon">🔄</span>
+                <span>数据已通过完整下载流程处理</span>
+            </div>
+            <div class="summary-item">
+                <span class="summary-icon">✓</span>
+                <span>包含完整的OHLCV数据</span>
+            </div>
+        </div>
+    </section>
     {% endif %}
 </div>
 
 <style>
-    .container {
-        max-width: 1200px;
+    .result-container {
+        max-width: 1400px;
         margin: 0 auto;
-        padding: 20px;
+        padding: 20px 30px;
     }
 
-    .header {
+    /* 页面标题 */
+    .page-header {
+        margin-bottom: 25px;
+    }
+
+    .header-content {
         display: flex;
         justify-content: space-between;
         align-items: center;
-        margin-bottom: 30px;
+        padding: 20px 25px;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        border-radius: 12px;
+        color: white;
     }
 
-    .header h1 {
-        color: var(--text-primary);
+    .title-section h1 {
         margin: 0;
+        font-size: 1.8rem;
+        font-weight: 700;
     }
 
-    .back-link {
-        color: var(--primary-color);
-        text-decoration: none;
+    .subtitle {
+        margin: 5px 0 0;
+        opacity: 0.9;
+        font-size: 0.95rem;
+    }
+
+    .back-btn {
         display: flex;
         align-items: center;
-        gap: 5px;
-    }
-
-    .card {
-        background: var(--card-background);
+        gap: 8px;
+        padding: 10px 20px;
+        background: rgba(255, 255, 255, 0.2);
+        color: white;
+        text-decoration: none;
         border-radius: 8px;
-        padding: 20px;
-        box-shadow: var(--shadow-md);
+        font-weight: 500;
+        transition: all 0.3s ease;
     }
 
-    .card h2 {
-        color: var(--primary-color);
-        margin-top: 0;
+    .back-btn:hover {
+        background: rgba(255, 255, 255, 0.3);
+        transform: translateX(-3px);
+    }
+
+    /* 区块通用样式 */
+    section {
+        background: var(--card-background);
+        border-radius: 12px;
+        padding: 25px;
+        margin-bottom: 25px;
+        box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+    }
+
+    .section-header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
         margin-bottom: 20px;
-        padding-bottom: 10px;
+        padding-bottom: 15px;
         border-bottom: 2px solid var(--background-color);
     }
 
-    .download-form {
-        margin-top: 20px;
-    }
-
-    .form-group {
-        display: flex;
-        gap: 10px;
-        align-items: center;
-    }
-
-    .form-group label {
-        min-width: 100px;
+    .section-header h2 {
+        margin: 0;
         color: var(--text-primary);
+        font-size: 1.2rem;
+        font-weight: 600;
     }
 
-    .form-group input {
+    .section-badge {
+        padding: 4px 12px;
+        border-radius: 20px;
+        font-size: 0.75rem;
+        font-weight: 600;
+    }
+
+    .section-badge.success {
+        background: rgba(16, 185, 129, 0.1);
+        color: #059669;
+    }
+
+    .section-badge.info {
+        background: rgba(59, 130, 246, 0.1);
+        color: #3b82f6;
+    }
+
+    /* 下载表单 */
+    .download-form {
+        margin-bottom: 15px;
+    }
+
+    .input-group {
+        display: flex;
+        gap: 12px;
+    }
+
+    .input-wrapper {
         flex: 1;
-        padding: 8px;
-        border: 1px solid #ddd;
-        border-radius: 4px;
-        font-size: 14px;
-    }
-
-    .button {
-        background-color: var(--primary-color);
-        color: white;
-        padding: 10px 20px;
-        border: none;
-        border-radius: 4px;
-        cursor: pointer;
-        font-size: 14px;
+        display: flex;
+        align-items: center;
+        background: var(--background-color);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        padding: 0 15px;
         transition: all 0.3s ease;
     }
 
-    .button:hover {
-        background-color: var(--secondary-color);
+    .input-wrapper:focus-within {
+        border-color: var(--primary-color);
+        box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+    }
+
+    .input-icon {
+        font-size: 1.2rem;
+        margin-right: 10px;
+    }
+
+    .input-wrapper input {
+        flex: 1;
+        border: none;
+        background: transparent;
+        padding: 12px 0;
+        font-size: 0.95rem;
+        outline: none;
+    }
+
+    /* 天数选择器 */
+    .days-select-wrapper {
+        display: flex;
+        align-items: center;
+        background: var(--background-color);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        padding: 0 15px;
+        transition: all 0.3s ease;
+        min-width: 140px;
+    }
+
+    .days-select-wrapper:focus-within {
+        border-color: var(--primary-color);
+        box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+    }
+
+    .select-icon {
+        font-size: 1.1rem;
+        margin-right: 8px;
+    }
+
+    .days-select {
+        flex: 1;
+        border: none;
+        background: transparent;
+        padding: 12px 0;
+        font-size: 0.95rem;
+        outline: none;
+        cursor: pointer;
+        color: var(--text-primary);
+    }
+
+    .days-select option {
+        background: var(--card-background);
+        color: var(--text-primary);
+        padding: 8px;
+    }
+
+    .submit-btn {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 12px 24px;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        border: none;
+        border-radius: 8px;
+        font-size: 0.95rem;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.3s ease;
+    }
+
+    .submit-btn:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
     }
 
     .alert {
-        margin-top: 20px;
-        padding: 15px;
-        border-radius: 4px;
         display: flex;
         align-items: center;
-        gap: 10px;
+        gap: 12px;
+        padding: 15px 20px;
+        border-radius: 8px;
+        margin-top: 15px;
     }
 
     .alert.success {
-        background-color: rgba(16, 185, 129, 0.1);
-        color: var(--success-color);
-        border: 1px solid var(--success-color);
+        background: rgba(16, 185, 129, 0.1);
+        border: 1px solid rgba(16, 185, 129, 0.3);
     }
 
     .alert-icon {
-        font-size: 18px;
+        width: 24px;
+        height: 24px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #059669;
+        color: white;
+        border-radius: 50%;
+        font-size: 0.8rem;
         font-weight: bold;
     }
 
-    .table-container {
-        margin-top: 20px;
-        overflow-x: auto;
-    }
-
-    .table-container table {
-        width: 100%;
-        border-collapse: collapse;
-    }
-
-    .table-container th,
-    .table-container td {
-        padding: 12px;
-        text-align: left;
-        border-bottom: 1px solid var(--background-color);
-    }
-
-    .table-container th {
-        background-color: var(--background-color);
-        color: var(--text-primary);
-        font-weight: 500;
-    }
-
-    .table-container tr:hover {
-        background-color: var(--background-color);
-    }
-
-    .mt-4 {
-        margin-top: 1.5rem;
-    }
-
-    /* 验证区域样式 */
-    .verification-info {
-        background: rgba(34, 197, 94, 0.1);
-        border: 1px solid rgba(34, 197, 94, 0.3);
-        border-radius: 6px;
-        padding: 15px;
-        margin-bottom: 20px;
-    }
-
-    .verification-text {
-        margin: 0;
-        color: var(--text-primary);
-        font-size: 14px;
-        line-height: 1.5;
-    }
-
-    .verification-text code {
-        background: rgba(34, 197, 94, 0.2);
+    .alert-text {
         color: #059669;
-        padding: 2px 6px;
-        border-radius: 3px;
-        font-family: 'Courier New', monospace;
-        font-size: 13px;
-    }
-
-    .verification-table {
-        background: white;
-        border-radius: 8px;
-        overflow: hidden;
-        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-    }
-
-    .verification-table th {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        color: white;
-        font-weight: 600;
-        text-align: center;
-        padding: 12px 8px;
-    }
-
-    .verification-table td {
-        text-align: center;
-        padding: 10px 8px;
-        border-bottom: 1px solid #f0f0f0;
-    }
-
-    .verification-table tr:nth-child(even) {
-        background-color: #f8f9fa;
-    }
-
-    .verification-table tr:hover {
-        background-color: #e3f2fd;
-    }
-
-    .verification-summary {
-        margin-top: 20px;
-        padding: 15px;
-        background: rgba(59, 130, 246, 0.05);
-        border: 1px solid rgba(59, 130, 246, 0.2);
-        border-radius: 6px;
-    }
-
-    .verification-summary p {
-        margin: 0 0 10px 0;
-        color: var(--text-primary);
         font-weight: 500;
     }
 
-    .verification-summary ul {
-        margin: 0;
-        padding-left: 20px;
-        color: var(--text-secondary);
+    /* 文件卡片 */
+    .file-cards {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+        gap: 20px;
     }
 
-    .verification-summary li {
-        margin-bottom: 5px;
-        font-size: 14px;
-    }
-
-    .file-info {
-        margin-top: 20px;
+    .file-card {
+        background: var(--background-color);
+        border-radius: 10px;
         padding: 20px;
-        background: rgba(16, 185, 129, 0.05);
-        border: 1px solid rgba(16, 185, 129, 0.2);
-        border-radius: 8px;
-    }
-
-    .file-info h3 {
-        margin-top: 0;
-        margin-bottom: 15px;
-        color: var(--success-color);
-        font-size: 1.1rem;
-    }
-
-    .file-path {
-        margin-bottom: 20px;
-        padding: 15px;
-        background: rgba(255, 255, 255, 0.05);
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        border-radius: 6px;
-    }
-
-    .file-path:last-child {
-        margin-bottom: 0;
-    }
-
-    .file-path label {
-        display: block;
-        margin-bottom: 8px;
-        font-weight: 500;
-        color: var(--text-primary);
-    }
-
-    .path-container {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        background: var(--background-secondary);
-        padding: 10px;
-        border-radius: 4px;
         border: 1px solid var(--border-color);
     }
 
+    .file-card-header {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 15px;
+    }
+
+    .file-icon {
+        font-size: 1.5rem;
+    }
+
+    .file-type {
+        font-weight: 600;
+        color: var(--text-primary);
+    }
+
+    .file-path-box {
+        background: var(--card-background);
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        padding: 12px;
+        margin-bottom: 15px;
+    }
+
     .file-path-text {
-        flex: 1;
         font-family: 'Courier New', monospace;
-        font-size: 13px;
+        font-size: 0.85rem;
         color: var(--text-secondary);
-        background: transparent;
-        border: none;
         word-break: break-all;
-        line-height: 1.4;
-    }
-
-    .copy-btn {
-        background: var(--primary-color);
-        color: white;
-        border: none;
-        padding: 5px 10px;
-        border-radius: 4px;
-        cursor: pointer;
-        font-size: 12px;
-        transition: all 0.3s ease;
-    }
-
-    .copy-btn:hover {
-        background: var(--secondary-color);
-        transform: scale(1.05);
+        line-height: 1.5;
     }
 
     .file-actions {
         display: flex;
         gap: 10px;
-        flex-wrap: wrap;
     }
 
-    .btn {
-        padding: 10px 20px;
-        border: none;
-        border-radius: 6px;
-        cursor: pointer;
-        font-size: 14px;
-        font-weight: 500;
-        transition: all 0.3s ease;
+    .action-btn {
+        flex: 1;
         display: flex;
         align-items: center;
+        justify-content: center;
+        gap: 6px;
+        padding: 10px;
+        border: none;
+        border-radius: 6px;
+        font-size: 0.85rem;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.3s ease;
+    }
+
+    .action-btn.copy {
+        background: rgba(59, 130, 246, 0.1);
+        color: #3b82f6;
+    }
+
+    .action-btn.copy:hover {
+        background: rgba(59, 130, 246, 0.2);
+    }
+
+    .action-btn.open {
+        background: rgba(16, 185, 129, 0.1);
+        color: #059669;
+    }
+
+    .action-btn.open:hover {
+        background: rgba(16, 185, 129, 0.2);
+    }
+
+    /* 验证状态卡片 */
+    .validation-status-card {
+        display: flex;
+        align-items: center;
+        gap: 20px;
+        padding: 20px 25px;
+        border-radius: 12px;
+        margin-bottom: 25px;
+    }
+
+    .validation-status-card.success {
+        background: linear-gradient(135deg, rgba(16, 185, 129, 0.1) 0%, rgba(5, 150, 105, 0.05) 100%);
+        border: 1px solid rgba(16, 185, 129, 0.3);
+    }
+
+    .validation-status-card.warning {
+        background: linear-gradient(135deg, rgba(245, 158, 11, 0.1) 0%, rgba(217, 119, 6, 0.05) 100%);
+        border: 1px solid rgba(245, 158, 11, 0.3);
+    }
+
+    .validation-status-card.error {
+        background: linear-gradient(135deg, rgba(239, 68, 68, 0.1) 0%, rgba(220, 38, 38, 0.05) 100%);
+        border: 1px solid rgba(239, 68, 68, 0.3);
+    }
+
+    .status-icon-wrapper {
+        width: 50px;
+        height: 50px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 50%;
+    }
+
+    .status-icon {
+        font-size: 1.5rem;
+        font-weight: bold;
+    }
+
+    .success-icon {
+        color: #059669;
+        background: rgba(16, 185, 129, 0.2);
+        width: 50px;
+        height: 50px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 50%;
+    }
+
+    .warning-icon {
+        color: #d97706;
+        background: rgba(245, 158, 11, 0.2);
+        width: 50px;
+        height: 50px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 50%;
+    }
+
+    .error-icon {
+        color: #dc2626;
+        background: rgba(239, 68, 68, 0.2);
+        width: 50px;
+        height: 50px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 50%;
+    }
+
+    .status-content h3 {
+        margin: 0 0 5px;
+        font-size: 1.1rem;
+        color: var(--text-primary);
+    }
+
+    .status-content p {
+        margin: 0;
+        font-size: 0.9rem;
+        color: var(--text-secondary);
+    }
+
+    /* 统计网格 */
+    .stats-container {
+        margin-bottom: 25px;
+    }
+
+    .stats-title {
+        font-size: 0.95rem;
+        color: var(--text-secondary);
+        margin: 0 0 15px;
+        font-weight: 500;
+    }
+
+    .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 15px;
+        margin-bottom: 20px;
+    }
+
+    .stat-card {
+        display: flex;
+        align-items: center;
+        gap: 15px;
+        padding: 20px;
+        border-radius: 10px;
+        background: var(--background-color);
+    }
+
+    .stat-card.primary {
+        border-left: 4px solid #667eea;
+    }
+
+    .stat-card.info {
+        border-left: 4px solid #3b82f6;
+    }
+
+    .stat-card.success {
+        border-left: 4px solid #10b981;
+    }
+
+    .stat-icon {
+        font-size: 1.8rem;
+    }
+
+    .stat-value {
+        font-size: 1.5rem;
+        font-weight: 700;
+        color: var(--text-primary);
+    }
+
+    .stat-value.small {
+        font-size: 1rem;
+    }
+
+    .stat-label {
+        font-size: 0.8rem;
+        color: var(--text-secondary);
+        margin-top: 3px;
+    }
+
+    /* 每日统计 */
+    .daily-stats {
+        background: var(--background-color);
+        border-radius: 10px;
+        padding: 20px;
+    }
+
+    .daily-stats h4 {
+        margin: 0 0 15px;
+        font-size: 0.9rem;
+        color: var(--text-secondary);
+    }
+
+    .daily-counts-grid {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+    }
+
+    .daily-count-item {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 16px;
+        background: rgba(59, 130, 246, 0.1);
+        border-radius: 8px;
+    }
+
+    .daily-count-item.warning {
+        background: rgba(245, 158, 11, 0.1);
+    }
+
+    .count-date {
+        font-weight: 600;
+        color: var(--text-primary);
+    }
+
+    .count-value {
+        color: #3b82f6;
+        font-weight: 500;
+    }
+
+    .daily-count-item.warning .count-value {
+        color: #d97706;
+    }
+
+    .count-warning {
+        font-size: 0.75rem;
+        color: #d97706;
+        background: rgba(245, 158, 11, 0.2);
+        padding: 2px 8px;
+        border-radius: 10px;
+    }
+
+    /* 检查结果 */
+    .issues-container {
+        background: var(--background-color);
+        border-radius: 10px;
+        padding: 20px;
+    }
+
+    .issues-title {
+        margin: 0 0 15px;
+        font-size: 0.95rem;
+        color: var(--text-secondary);
+    }
+
+    .issues-list {
+        display: flex;
+        flex-direction: column;
         gap: 8px;
     }
 
-    .btn-primary {
+    .issue-item {
+        padding: 12px 16px;
+        border-radius: 8px;
+        font-size: 0.9rem;
+        border-left: 4px solid;
+    }
+
+    .issue-item.success {
+        background: rgba(16, 185, 129, 0.05);
+        border-color: #10b981;
+    }
+
+    .issue-item.warning {
+        background: rgba(245, 158, 11, 0.05);
+        border-color: #f59e0b;
+    }
+
+    .issue-item.error {
+        background: rgba(239, 68, 68, 0.05);
+        border-color: #ef4444;
+    }
+
+    /* 数据预览 - 全部数据 */
+    .full-data-card {
+        background: var(--background-color);
+        border-radius: 10px;
+        overflow: hidden;
+        border: 1px solid var(--border-color);
+    }
+
+    .full-data-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 15px 20px;
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         color: white;
     }
 
-    .btn-primary:hover {
-        background: linear-gradient(135deg, #5a6fd8 0%, #6a4190 100%);
-        transform: translateY(-2px);
-        box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+    .header-left {
+        display: flex;
+        align-items: center;
+        gap: 10px;
     }
 
-    .btn-secondary {
-        background: var(--background-secondary);
+    .header-left h3 {
+        margin: 0;
+        font-size: 1rem;
+        font-weight: 500;
+    }
+
+    .header-right {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    .record-count {
+        background: rgba(255, 255, 255, 0.2);
+        padding: 5px 12px;
+        border-radius: 15px;
+        font-size: 0.85rem;
+        font-weight: 500;
+    }
+
+    .preview-icon {
+        font-size: 1.3rem;
+    }
+
+    .full-table-wrapper {
+        max-height: 500px;
+        overflow-y: auto;
+        overflow-x: auto;
+    }
+
+    .full-table-wrapper::-webkit-scrollbar {
+        width: 8px;
+        height: 8px;
+    }
+
+    .full-table-wrapper::-webkit-scrollbar-track {
+        background: var(--background-color);
+        border-radius: 4px;
+    }
+
+    .full-table-wrapper::-webkit-scrollbar-thumb {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        border-radius: 4px;
+    }
+
+    .full-table-wrapper::-webkit-scrollbar-thumb:hover {
+        background: #5a6fd8;
+    }
+
+    .full-data-table {
+        min-width: 800px;
+    }
+
+    .full-data-table thead {
+        position: sticky;
+        top: 0;
+        z-index: 10;
+    }
+
+    .full-data-table th {
+        background: linear-gradient(135deg, #5a6fd8 0%, #6a4190 100%);
+        color: white;
+        padding: 12px 10px;
+        text-align: center;
+        font-weight: 600;
+        font-size: 0.85rem;
+        border-bottom: none;
+    }
+
+    .full-data-table .col-index {
+        width: 50px;
+    }
+
+    .full-data-table .col-time {
+        width: 140px;
+    }
+
+    .full-data-table .col-price {
+        width: 80px;
+    }
+
+    .full-data-table .col-volume,
+    .full-data-table .col-money {
+        width: 100px;
+    }
+
+    .full-data-table td {
+        padding: 8px 10px;
+        text-align: center;
+        border-bottom: 1px solid var(--border-color);
+        font-size: 0.85rem;
+    }
+
+    .full-data-table .even-row {
+        background: rgba(102, 126, 234, 0.03);
+    }
+
+    .full-data-table tr:hover {
+        background: rgba(102, 126, 234, 0.08);
+    }
+
+    .index-cell {
+        color: var(--text-secondary);
+        font-size: 0.8rem;
+    }
+
+    .price-cell {
+        font-family: 'Courier New', monospace;
+    }
+
+    .table-wrapper {
+        overflow-x: auto;
+    }
+
+    .data-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.85rem;
+    }
+
+    .data-table th {
+        background: rgba(102, 126, 234, 0.1);
+        padding: 12px 10px;
+        text-align: center;
+        font-weight: 600;
+        color: #667eea;
+        border-bottom: 2px solid rgba(102, 126, 234, 0.2);
+    }
+
+    .data-table td {
+        padding: 10px;
+        text-align: center;
+        border-bottom: 1px solid var(--border-color);
+    }
+
+    .data-table tr:hover {
+        background: rgba(102, 126, 234, 0.05);
+    }
+
+    .data-table tr:last-child td {
+        border-bottom: none;
+    }
+
+    .time-cell {
+        font-family: 'Courier New', monospace;
+        font-size: 0.8rem;
+        color: var(--text-secondary);
+    }
+
+    .error-cell {
+        background: rgba(239, 68, 68, 0.1);
+        color: #dc2626;
+        font-weight: 600;
+    }
+
+    .high-cell {
+        color: #dc2626;
+    }
+
+    .low-cell {
+        color: #059669;
+    }
+
+    .volume-cell, .money-cell {
+        font-family: 'Courier New', monospace;
+        font-size: 0.8rem;
+    }
+
+    /* 数据库验证 */
+    .db-info-banner {
+        display: flex;
+        align-items: center;
+        gap: 15px;
+        padding: 15px 20px;
+        background: rgba(16, 185, 129, 0.1);
+        border: 1px solid rgba(16, 185, 129, 0.3);
+        border-radius: 10px;
+        margin-bottom: 20px;
+    }
+
+    .banner-icon {
+        width: 32px;
+        height: 32px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #059669;
+        color: white;
+        border-radius: 50%;
+        font-weight: bold;
+    }
+
+    .banner-content {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+    }
+
+    .banner-content strong {
         color: var(--text-primary);
+    }
+
+    .banner-content span {
+        font-size: 0.85rem;
+        color: var(--text-secondary);
+    }
+
+    .banner-content code {
+        background: rgba(16, 185, 129, 0.2);
+        color: #059669;
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-size: 0.8rem;
+    }
+
+    .db-table {
+        border-radius: 10px;
+        overflow: hidden;
         border: 1px solid var(--border-color);
     }
 
-    .btn-secondary:hover {
-        background: var(--background-color);
-        transform: translateY(-2px);
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    .db-data-table th {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
     }
 
+    .db-summary {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 15px;
+        margin-top: 20px;
+        padding: 20px;
+        background: rgba(59, 130, 246, 0.05);
+        border: 1px solid rgba(59, 130, 246, 0.15);
+        border-radius: 10px;
+    }
+
+    .summary-item {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 0.9rem;
+        color: var(--text-secondary);
+    }
+
+    .summary-icon {
+        font-size: 1.1rem;
+    }
+
+    /* 响应式 */
     @media (max-width: 768px) {
-        .form-group {
+        .result-container {
+            padding: 15px;
+        }
+
+        .header-content {
             flex-direction: column;
-            align-items: stretch;
+            gap: 15px;
+            text-align: center;
         }
 
-        .form-group label {
-            margin-bottom: 5px;
+        .input-group {
+            flex-direction: column;
         }
 
-        .table-container {
-            margin-top: 10px;
+        .days-select-wrapper {
+            width: 100%;
+        }
+
+        .submit-btn {
+            justify-content: center;
+        }
+
+        .file-cards {
+            grid-template-columns: 1fr;
+        }
+
+        .preview-grid {
+            grid-template-columns: 1fr;
+        }
+
+        .stats-grid {
+            grid-template-columns: 1fr;
         }
 
         .file-actions {
             flex-direction: column;
         }
 
-        .btn {
-            justify-content: center;
-        }
-
-        .path-container {
+        .validation-status-card {
             flex-direction: column;
-            align-items: stretch;
-        }
-
-        .copy-btn {
-            align-self: flex-end;
+            text-align: center;
         }
     }
 </style>
@@ -478,15 +1186,16 @@
 // 复制路径到剪贴板
 function copyToClipboard(text) {
     navigator.clipboard.writeText(text).then(function() {
-        // 显示复制成功提示
-        const btn = event.target;
-        const originalText = btn.innerHTML;
-        btn.innerHTML = '✅';
-        btn.style.background = '#28a745';
-        
+        const btn = event.target.closest('.action-btn');
+        const originalHTML = btn.innerHTML;
+        btn.innerHTML = '<span>✓</span> 已复制';
+        btn.style.background = 'rgba(16, 185, 129, 0.2)';
+        btn.style.color = '#059669';
+
         setTimeout(function() {
-            btn.innerHTML = originalText;
+            btn.innerHTML = originalHTML;
             btn.style.background = '';
+            btn.style.color = '';
         }, 2000);
     }).catch(function(err) {
         console.error('复制失败: ', err);
@@ -494,92 +1203,30 @@ function copyToClipboard(text) {
     });
 }
 
-// 打开文件所在文件夹
-function openFileFolder(filePath) {
-    try {
-        // 检查路径是否为空
-        if (!filePath || filePath.trim() === '') {
-            console.error('文件路径为空');
-            alert('文件路径为空，无法打开文件夹');
-            return;
-        }
-        
-        // 提取文件夹路径
-        const folderPath = filePath.substring(0, filePath.lastIndexOf('\\'));
-        
-        console.log('尝试打开文件夹:', folderPath);
-        
-        // 使用Windows命令打开文件夹
-        fetch('/api/open-folder', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ path: folderPath })
-        }).then(response => {
-            console.log('API响应状态:', response.status);
-            if (response.ok) {
-                console.log('文件夹已打开');
-                return response.json();
-            } else {
-                return response.json().then(data => {
-                    throw new Error(data.message || '打开文件夹失败');
-                });
-            }
-        }).then(data => {
-            console.log('API响应数据:', data);
-        }).catch(error => {
-            console.error('打开文件夹失败:', error);
-            alert('打开文件夹失败: ' + error.message);
-        });
-    } catch (error) {
-        console.error('打开文件夹异常:', error);
-        alert('无法打开文件夹，请手动导航到: ' + filePath.substring(0, filePath.lastIndexOf('\\')));
-    }
-}
-
 // 打开文件
 function openFile(filePath) {
-    try {
-        // 检查路径是否为空
-        if (!filePath || filePath.trim() === '') {
-            console.error('文件路径为空');
-            alert('文件路径为空，无法打开文件');
-            return;
-        }
-        
-        console.log('尝试打开文件:', filePath);
-        
-        // 使用Windows命令打开文件
-        fetch('/api/open-file', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ path: filePath })
-        }).then(response => {
-            console.log('API响应状态:', response.status);
-            if (response.ok) {
-                console.log('文件已打开');
-                return response.json();
-            } else {
-                return response.json().then(data => {
-                    throw new Error(data.message || '打开文件失败');
-                });
-            }
-        }).then(data => {
-            console.log('API响应数据:', data);
-        }).catch(error => {
-            console.error('打开文件失败:', error);
-            alert('打开文件失败: ' + error.message);
-        });
-    } catch (error) {
-        console.error('打开文件异常:', error);
-        alert('无法打开文件，请手动打开: ' + filePath);
+    if (!filePath || filePath.trim() === '') {
+        alert('文件路径为空');
+        return;
     }
+
+    fetch('/api/open-file', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: filePath })
+    }).then(response => {
+        if (!response.ok) {
+            return response.json().then(data => {
+                throw new Error(data.message || '打开文件失败');
+            });
+        }
+        return response.json();
+    }).catch(error => {
+        console.error('打开文件失败:', error);
+        alert('打开文件失败: ' + error.message);
+    });
 }
 
-// 页面加载完成后的初始化
 document.addEventListener('DOMContentLoaded', function() {
     console.log('页面加载完成');
 });

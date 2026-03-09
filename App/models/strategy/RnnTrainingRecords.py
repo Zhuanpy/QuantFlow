@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 class RnnTrainingRecords(db.Model):
     """RNN模型训练记录表"""
-    __tablename__ = 'rnn_training_records'
+    __tablename__ = 'strategy_rnn_training'
     __bind_key__ = 'quanttradingsystem'  # 绑定到主数据库
 
     # 状态常量

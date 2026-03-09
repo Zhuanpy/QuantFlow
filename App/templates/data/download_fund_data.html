@@ -1,27 +1,40 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="download-container">
-    <div class="download-card">
-        <div class="download-header">
-            <h2>基金重仓数据下载</h2>
-        </div>
-        
-        <div class="download-content">
-            <!-- 控制按钮区域 -->
-            <div class="button-group">
-                <button id="startBtn" class="btn btn-primary">
-                    开始下载
-                </button>
-                <button id="stopBtn" class="btn btn-danger" disabled>
-                    暂停下载
-                </button>
-                <button id="resetBtn" class="btn btn-warning">
-                    重置状态
-                </button>
-                <button id="openFolderBtn" class="btn btn-info">
-                    打开数据文件夹
-                </button>
+    <!-- 页面切换标签 -->
+    <div class="page-tabs">
+        <button class="tab-btn active" data-tab="download">数据下载</button>
+        <button class="tab-btn" data-tab="manage">基金列表管理</button>
+        <button class="tab-btn" data-tab="analysis">基金重仓分析</button>
+        <button class="tab-btn" data-tab="advanced">高级分析</button>
+    </div>
+
+    <!-- 下载页面 -->
+    <div id="downloadPage" class="tab-page active">
+        <div class="download-card">
+            <div class="download-header">
+                <h2>基金重仓数据下载</h2>
             </div>
+
+            <div class="download-content">
+                <!-- 控制按钮区域 -->
+                <div class="button-group">
+                    <button id="startBtn" class="btn btn-primary">
+                        开始下载
+                    </button>
+                    <button id="stopBtn" class="btn btn-danger" disabled>
+                        暂停下载
+                    </button>
+                    <button id="retryFailedBtn" class="btn btn-warning">
+                        重试失败
+                    </button>
+                    <button id="resetBtn" class="btn btn-secondary">
+                        重置全部
+                    </button>
+                    <button id="openFolderBtn" class="btn btn-info">
+                        打开数据文件夹
+                    </button>
+                </div>
             
             <!-- 下载统计区域 -->
             <div class="stats-section">
@@ -96,13 +109,520 @@
             </div>
         </div>
     </div>
+    </div>
+
+    <!-- 管理页面 -->
+    <div id="managePage" class="tab-page">
+        <div class="download-card">
+            <div class="download-header">
+                <h2>基金列表管理</h2>
+            </div>
+
+            <div class="download-content">
+                <!-- 操作按钮区域 -->
+                <div class="button-group" style="justify-content: space-between;">
+                <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
+                    <button id="addFundBtn" class="btn btn-primary">
+                        添加基金
+                    </button>
+                    <button id="batchAddBtn" class="btn btn-info">
+                        批量添加
+                    </button>
+                    <button id="batchDeleteBtn" class="btn btn-danger" disabled>
+                        批量删除
+                    </button>
+                </div>
+                <div class="search-box">
+                    <select id="statusFilter" class="form-select-sm">
+                        <option value="">全部状态</option>
+                        <option value="waiting">等待下载</option>
+                        <option value="success">下载成功</option>
+                        <option value="failed">下载失败</option>
+                    </select>
+                    <input type="text" id="searchInput" placeholder="搜索基金代码或名称..." class="form-input">
+                    <button id="searchBtn" class="btn btn-primary btn-sm">搜索</button>
+                </div>
+            </div>
+
+            <!-- 基金列表表格 -->
+            <div class="table-container">
+                <table class="data-table" id="fundsTable">
+                    <thead>
+                        <tr>
+                            <th style="width: 40px;">
+                                <input type="checkbox" id="selectAll">
+                            </th>
+                            <th>基金代码</th>
+                            <th>基金名称</th>
+                            <th>分析参考</th>
+                            <th>下载状态</th>
+                            <th>最后下载时间</th>
+                            <th style="width: 150px;">操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="fundsTableBody">
+                        <tr><td colspan="7" style="text-align: center;">加载中...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- 分页控件 -->
+            <div class="pagination-container">
+                <div class="pagination-info">
+                    显示 <span id="showingStart">0</span> - <span id="showingEnd">0</span> 条，共 <span id="totalRecords">0</span> 条
+                </div>
+                <div class="pagination-controls">
+                    <button id="prevPageBtn" class="btn btn-sm" disabled>上一页</button>
+                    <span class="page-info">第 <span id="currentPage">1</span> / <span id="totalPages">1</span> 页</span>
+                    <button id="nextPageBtn" class="btn btn-sm">下一页</button>
+                    <select id="pageSizeSelect" class="form-select-sm">
+                        <option value="10">10条/页</option>
+                        <option value="20" selected>20条/页</option>
+                        <option value="50">50条/页</option>
+                        <option value="100">100条/页</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+    </div>
+    </div>
+
+    <!-- 分析页面 -->
+    <div id="analysisPage" class="tab-page">
+        <div class="download-card">
+            <div class="download-header">
+                <h2>基金重仓分析</h2>
+            </div>
+
+            <div class="download-content">
+                <!-- 分析控制区域 -->
+                <div class="analysis-controls">
+                    <div class="control-row">
+                        <div class="control-item">
+                            <label>数据日期：</label>
+                            <select id="analysisDateSelect" class="form-select">
+                                <option value="">加载中...</option>
+                            </select>
+                        </div>
+                        <div class="control-item">
+                            <label>基金筛选：</label>
+                            <select id="fundFilterSelect" class="form-select">
+                                <option value="selected">仅选中的基金</option>
+                                <option value="all">所有基金</option>
+                            </select>
+                        </div>
+                        <div class="control-item">
+                            <label>最少持仓：</label>
+                            <select id="minHoldingsSelect" class="form-select">
+                                <option value="1">≥1只基金</option>
+                                <option value="3">≥3只基金</option>
+                                <option value="5" selected>≥5只基金</option>
+                                <option value="10">≥10只基金</option>
+                                <option value="20">≥20只基金</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="control-row" style="margin-top: 1rem;">
+                        <div class="control-item">
+                            <span id="selectionInfo">已选择 0 / 0 只基金</span>
+                        </div>
+                        <div class="control-item">
+                            <button id="selectTop500Btn" class="btn btn-secondary btn-sm">选择前500只</button>
+                            <button id="selectAllFundsBtn" class="btn btn-secondary btn-sm">全选</button>
+                            <button id="unselectAllFundsBtn" class="btn btn-secondary btn-sm">取消全选</button>
+                        </div>
+                        <div class="control-item">
+                            <button id="analyzeBtn" class="btn btn-primary">开始分析</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 分析结果统计 -->
+                <div id="analysisSummary" class="analysis-summary" style="display: none;">
+                    <div class="summary-item">
+                        <span class="summary-label">分析日期：</span>
+                        <span id="summaryDate">-</span>
+                    </div>
+                    <div class="summary-item">
+                        <span class="summary-label">参与基金：</span>
+                        <span id="summaryFunds">-</span>
+                    </div>
+                    <div class="summary-item">
+                        <span class="summary-label">涉及股票：</span>
+                        <span id="summaryStocks">-</span>
+                    </div>
+                    <div class="summary-item">
+                        <span class="summary-label">持仓记录：</span>
+                        <span id="summaryRecords">-</span>
+                    </div>
+                </div>
+
+                <!-- 分析结果表格 -->
+                <div class="table-container">
+                    <table class="data-table" id="analysisTable">
+                        <thead>
+                            <tr>
+                                <th style="width: 60px;">排名</th>
+                                <th>股票代码</th>
+                                <th>股票名称</th>
+                                <th>持仓基金数</th>
+                                <th>平均持仓比例</th>
+                                <th style="width: 80px;">操作</th>
+                            </tr>
+                        </thead>
+                        <tbody id="analysisTableBody">
+                            <tr><td colspan="6" style="text-align: center; color: var(--text-secondary);">请选择日期并点击"开始分析"</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 高级分析页面 -->
+    <div id="advancedPage" class="tab-page">
+        <div class="download-card">
+            <div class="download-header">
+                <h2>高级分析</h2>
+            </div>
+
+            <div class="download-content">
+                <!-- 日期选择和控制 -->
+                <div class="analysis-controls">
+                    <div class="control-row">
+                        <div class="control-item">
+                            <label>分析日期：</label>
+                            <select id="advDateSelect" class="form-select">
+                                <option value="">加载中...</option>
+                            </select>
+                        </div>
+                        <div class="control-item">
+                            <button id="advRefreshBtn" class="btn btn-primary btn-sm">刷新数据</button>
+                            <button id="advSaveBtn" class="btn btn-info btn-sm">保存到日线数据</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 数据概览 -->
+                <div class="stats-section" style="margin-top: 1.5rem;">
+                    <h3>数据概览</h3>
+                    <div class="stats-grid">
+                        <div class="stat-item">
+                            <div class="stat-number stat-total" id="advTotalFunds">-</div>
+                            <div class="stat-label">基金总数</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-number stat-success" id="advTotalStocks">-</div>
+                            <div class="stat-label">股票总数</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-number stat-waiting" id="advTotalRecords">-</div>
+                            <div class="stat-label">持仓记录</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-number stat-failure" id="advAvgHoldings">-</div>
+                            <div class="stat-label">平均持仓数</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 分析子标签 -->
+                <div class="sub-tabs" style="margin-top: 1.5rem;">
+                    <div class="sub-tab-nav">
+                        <button class="sub-tab-btn active" data-subtab="hot-stocks">热门股票</button>
+                        <button class="sub-tab-btn" data-subtab="fund-dist">基金分布</button>
+                        <button class="sub-tab-btn" data-subtab="market-analysis">市场分析</button>
+                    </div>
+
+                    <!-- 热门股票 -->
+                    <div class="sub-tab-content active" id="hot-stocks-content">
+                        <p class="description">被最多基金持有的股票排行（前20名）</p>
+                        <div class="table-container">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>排名</th>
+                                        <th>股票代码</th>
+                                        <th>股票名称</th>
+                                        <th>持有基金数</th>
+                                        <th>平均持仓比例</th>
+                                        <th>总持仓比例</th>
+                                        <th>最大持仓比例</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="advHotStocksBody">
+                                    <tr><td colspan="7" style="text-align: center;">加载中...</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- 基金分布 -->
+                    <div class="sub-tab-content" id="fund-dist-content">
+                        <p class="description">基金持仓股票数量分布情况</p>
+                        <div class="info-section" style="margin-bottom: 1rem;">
+                            <div class="info-content" id="advDistStats">
+                                <div class="info-item"><strong>平均持仓股票数：</strong><span id="advDistMean">-</span></div>
+                                <div class="info-item"><strong>最多持仓股票数：</strong><span id="advDistMax">-</span></div>
+                                <div class="info-item"><strong>最少持仓股票数：</strong><span id="advDistMin">-</span></div>
+                            </div>
+                        </div>
+                        <h4>持仓股票最多的基金</h4>
+                        <div class="table-container">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>基金代码</th>
+                                        <th>基金名称</th>
+                                        <th>持仓股票数</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="advTopFundsBody">
+                                    <tr><td colspan="3" style="text-align: center;">加载中...</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- 市场分析 -->
+                    <div class="sub-tab-content" id="market-analysis-content">
+                        <p class="description">基于股票市场的分布分析</p>
+                        <div class="table-container">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>市场</th>
+                                        <th>股票数量</th>
+                                        <th>基金数量</th>
+                                        <th>平均持仓比例</th>
+                                        <th>总持仓比例</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="advMarketStatsBody">
+                                    <tr><td colspan="5" style="text-align: center;">加载中...</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 股票详情模态框 -->
+<div id="stockDetailModal" class="modal">
+    <div class="modal-content modal-lg">
+        <div class="modal-header">
+            <h3 id="stockDetailTitle">股票持仓详情</h3>
+            <span class="close-btn" onclick="closeStockDetailModal()">&times;</span>
+        </div>
+        <div class="modal-body">
+            <div class="table-container" style="max-height: 400px; overflow-y: auto;">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>基金代码</th>
+                            <th>基金名称</th>
+                            <th>持仓比例</th>
+                        </tr>
+                    </thead>
+                    <tbody id="stockDetailTableBody">
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" onclick="closeStockDetailModal()">关闭</button>
+        </div>
+    </div>
+</div>
+
+<!-- 添加/编辑基金模态框 -->
+<div id="fundModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3 id="modalTitle">添加基金</h3>
+            <span class="close-btn" onclick="closeFundModal()">&times;</span>
+        </div>
+        <div class="modal-body">
+            <form id="fundForm">
+                <input type="hidden" id="fundId">
+                <div class="form-group">
+                    <label for="fundCode">基金代码 <span class="required">*</span></label>
+                    <input type="text" id="fundCode" class="form-input" required placeholder="例如: 000001">
+                </div>
+                <div class="form-group">
+                    <label for="fundName">基金名称 <span class="required">*</span></label>
+                    <input type="text" id="fundName" class="form-input" required placeholder="例如: 华夏成长">
+                </div>
+            </form>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" onclick="closeFundModal()">取消</button>
+            <button type="button" class="btn btn-primary" onclick="saveFund()">保存</button>
+        </div>
+    </div>
+</div>
+
+<!-- 批量添加模态框 -->
+<div id="batchAddModal" class="modal">
+    <div class="modal-content modal-lg">
+        <div class="modal-header">
+            <h3>批量添加基金</h3>
+            <span class="close-btn" onclick="closeBatchAddModal()">&times;</span>
+        </div>
+        <div class="modal-body">
+            <div class="form-group">
+                <label>输入格式说明：</label>
+                <p class="help-text">每行一个基金，格式：基金代码,基金名称</p>
+                <p class="help-text">例如：</p>
+                <pre class="code-example">000001,华夏成长
+000002,华夏回报
+000003,中海可转债</pre>
+            </div>
+            <div class="form-group">
+                <label for="batchFundsInput">基金数据：</label>
+                <textarea id="batchFundsInput" class="form-textarea" rows="10" placeholder="000001,华夏成长&#10;000002,华夏回报"></textarea>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" onclick="closeBatchAddModal()">取消</button>
+            <button type="button" class="btn btn-primary" onclick="batchAddFunds()">批量添加</button>
+        </div>
+    </div>
 </div>
 
 <style>
 .download-container {
-    max-width: 800px;
+    max-width: 1000px;
     margin: 0 auto;
     padding: 0 1rem;
+}
+
+/* 标签页切换 */
+.page-tabs {
+    display: flex;
+    gap: 0;
+    margin-bottom: 1.5rem;
+    background-color: var(--card-background, white);
+    border-radius: 0.75rem;
+    padding: 0.5rem;
+    box-shadow: var(--shadow-sm);
+}
+
+.tab-btn {
+    flex: 1;
+    padding: 0.75rem 1.5rem;
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 1rem;
+    font-weight: 500;
+    cursor: pointer;
+    border-radius: 0.5rem;
+    transition: all 0.3s ease;
+}
+
+.tab-btn:hover {
+    background-color: var(--background-color, #f3f4f6);
+}
+
+.tab-btn.active {
+    background-color: var(--primary-color);
+    color: white;
+}
+
+.tab-page {
+    display: none;
+}
+
+.tab-page.active {
+    display: block;
+}
+
+/* 分析控制区域 */
+.analysis-controls {
+    background-color: var(--background-color, #f9fafb);
+    padding: 1.5rem;
+    border-radius: 0.75rem;
+    margin-bottom: 1.5rem;
+}
+
+.control-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1.5rem;
+    align-items: center;
+}
+
+.control-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.control-item label {
+    font-weight: 500;
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+
+.form-select {
+    padding: 0.5rem 1rem;
+    border: 1px solid var(--border-color, #d1d5db);
+    border-radius: 0.375rem;
+    font-size: 0.875rem;
+    background-color: white;
+    min-width: 150px;
+}
+
+.form-select:focus {
+    outline: none;
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+}
+
+/* 分析结果统计 */
+.analysis-summary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2rem;
+    padding: 1rem 1.5rem;
+    background: linear-gradient(135deg, var(--primary-color), var(--secondary-color, #6366f1));
+    border-radius: 0.75rem;
+    margin-bottom: 1.5rem;
+    color: white;
+}
+
+.summary-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.summary-label {
+    opacity: 0.9;
+}
+
+.summary-item span:last-child {
+    font-weight: 600;
+    font-size: 1.1rem;
+}
+
+/* 持仓数量高亮 */
+.fund-count-high {
+    color: #dc2626;
+    font-weight: 700;
+}
+
+.fund-count-medium {
+    color: #f59e0b;
+    font-weight: 600;
+}
+
+.fund-count-low {
+    color: var(--text-primary);
 }
 
 .download-card {
@@ -308,33 +828,432 @@
     margin-right: 0.5rem;
 }
 
+/* 表格样式 */
+.table-container {
+    overflow-x: auto;
+    margin: 1.5rem 0;
+}
+
+.data-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.875rem;
+}
+
+.data-table th,
+.data-table td {
+    padding: 0.75rem;
+    text-align: left;
+    border-bottom: 1px solid var(--border-color, #e5e7eb);
+}
+
+.data-table th {
+    background-color: var(--background-color, #f9fafb);
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+
+.data-table tbody tr:hover {
+    background-color: var(--background-color, #f9fafb);
+}
+
+.data-table input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+}
+
+/* 搜索框 */
+.search-box {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+}
+
+.form-input {
+    padding: 0.5rem 1rem;
+    border: 1px solid var(--border-color, #d1d5db);
+    border-radius: 0.375rem;
+    font-size: 0.875rem;
+    min-width: 200px;
+}
+
+.form-input:focus {
+    outline: none;
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+}
+
+.btn-sm {
+    padding: 0.375rem 0.75rem;
+    font-size: 0.8rem;
+    min-width: auto;
+}
+
+.btn-secondary {
+    background-color: #6b7280;
+    color: white;
+}
+
+.btn-secondary:hover:not(:disabled) {
+    background-color: #4b5563;
+}
+
+/* 分页 */
+.pagination-container {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 0;
+    flex-wrap: wrap;
+    gap: 1rem;
+}
+
+.pagination-info {
+    color: var(--text-secondary);
+    font-size: 0.875rem;
+}
+
+.pagination-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.page-info {
+    color: var(--text-primary);
+    font-size: 0.875rem;
+    margin: 0 0.5rem;
+}
+
+.form-select-sm {
+    padding: 0.375rem 0.5rem;
+    border: 1px solid var(--border-color, #d1d5db);
+    border-radius: 0.375rem;
+    font-size: 0.8rem;
+    background-color: white;
+}
+
+/* 操作按钮 */
+.action-btns {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.btn-edit {
+    background-color: #3b82f6;
+    color: white;
+    padding: 0.25rem 0.5rem;
+    border: none;
+    border-radius: 0.25rem;
+    cursor: pointer;
+    font-size: 0.75rem;
+}
+
+.btn-edit:hover {
+    background-color: #2563eb;
+}
+
+.btn-delete {
+    background-color: #ef4444;
+    color: white;
+    padding: 0.25rem 0.5rem;
+    border: none;
+    border-radius: 0.25rem;
+    cursor: pointer;
+    font-size: 0.75rem;
+}
+
+.btn-delete:hover {
+    background-color: #dc2626;
+}
+
+/* 状态标签 */
+.status-badge {
+    display: inline-block;
+    padding: 0.25rem 0.5rem;
+    border-radius: 0.25rem;
+    font-size: 0.75rem;
+    font-weight: 500;
+}
+
+.status-waiting {
+    background-color: #fef3c7;
+    color: #92400e;
+}
+
+.status-success {
+    background-color: #d1fae5;
+    color: #065f46;
+}
+
+.status-failed {
+    background-color: #fee2e2;
+    color: #991b1b;
+}
+
+/* 切换开关样式 */
+.selection-toggle {
+    position: relative;
+    display: inline-block;
+    width: 40px;
+    height: 20px;
+    cursor: pointer;
+}
+
+.selection-toggle input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.toggle-slider {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: #ccc;
+    border-radius: 20px;
+    transition: 0.3s;
+}
+
+.toggle-slider:before {
+    position: absolute;
+    content: "";
+    height: 14px;
+    width: 14px;
+    left: 3px;
+    bottom: 3px;
+    background-color: white;
+    border-radius: 50%;
+    transition: 0.3s;
+}
+
+.selection-toggle input:checked + .toggle-slider {
+    background-color: var(--primary-color, #3b82f6);
+}
+
+.selection-toggle input:checked + .toggle-slider:before {
+    transform: translateX(20px);
+}
+
+/* 子标签样式 */
+.sub-tabs {
+    background-color: var(--background-color, #f9fafb);
+    border-radius: 0.75rem;
+    padding: 1rem;
+}
+
+.sub-tab-nav {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+    border-bottom: 1px solid var(--border-color, #e5e7eb);
+    padding-bottom: 0.5rem;
+}
+
+.sub-tab-btn {
+    padding: 0.5rem 1rem;
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    border-radius: 0.375rem;
+    transition: all 0.2s ease;
+}
+
+.sub-tab-btn:hover {
+    background-color: var(--card-background, white);
+}
+
+.sub-tab-btn.active {
+    background-color: var(--primary-color);
+    color: white;
+}
+
+.sub-tab-content {
+    display: none;
+    padding: 1rem 0;
+}
+
+.sub-tab-content.active {
+    display: block;
+}
+
+.sub-tab-content .description {
+    color: var(--text-secondary);
+    font-size: 0.875rem;
+    margin-bottom: 1rem;
+}
+
+/* 模态框 */
+.modal {
+    display: none;
+    position: fixed;
+    z-index: 1000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.5);
+    justify-content: center;
+    align-items: center;
+}
+
+.modal.show {
+    display: flex;
+}
+
+.modal-content {
+    background-color: var(--card-background, white);
+    border-radius: 0.75rem;
+    width: 90%;
+    max-width: 450px;
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+}
+
+.modal-content.modal-lg {
+    max-width: 600px;
+}
+
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid var(--border-color, #e5e7eb);
+}
+
+.modal-header h3 {
+    margin: 0;
+    font-size: 1.125rem;
+    color: var(--text-primary);
+}
+
+.close-btn {
+    font-size: 1.5rem;
+    color: var(--text-secondary);
+    cursor: pointer;
+    line-height: 1;
+}
+
+.close-btn:hover {
+    color: var(--text-primary);
+}
+
+.modal-body {
+    padding: 1.5rem;
+}
+
+.modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.75rem;
+    padding: 1rem 1.5rem;
+    border-top: 1px solid var(--border-color, #e5e7eb);
+}
+
+.form-group {
+    margin-bottom: 1rem;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 0.5rem;
+    font-weight: 500;
+    color: var(--text-primary);
+}
+
+.form-group .form-input {
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.required {
+    color: #ef4444;
+}
+
+.form-textarea {
+    width: 100%;
+    padding: 0.75rem;
+    border: 1px solid var(--border-color, #d1d5db);
+    border-radius: 0.375rem;
+    font-size: 0.875rem;
+    font-family: inherit;
+    resize: vertical;
+    box-sizing: border-box;
+}
+
+.form-textarea:focus {
+    outline: none;
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+}
+
+.help-text {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    margin: 0.25rem 0;
+}
+
+.code-example {
+    background-color: var(--background-color, #f3f4f6);
+    padding: 0.75rem;
+    border-radius: 0.375rem;
+    font-size: 0.8rem;
+    overflow-x: auto;
+    margin: 0.5rem 0;
+}
+
 @media (max-width: 768px) {
     .download-content {
         padding: 1rem;
     }
-    
+
     .button-group {
         flex-direction: column;
         align-items: center;
     }
-    
+
     .btn {
         width: 100%;
         max-width: 200px;
     }
-    
+
     .stats-grid {
         grid-template-columns: repeat(2, 1fr);
         gap: 0.75rem;
         padding: 1rem;
     }
-    
+
     .stat-number {
         font-size: 1.5rem;
     }
-    
+
     .info-content {
         font-size: 0.8rem;
+    }
+
+    .search-box {
+        width: 100%;
+    }
+
+    .search-box .form-input {
+        flex: 1;
+        min-width: auto;
+    }
+
+    .pagination-container {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .pagination-controls {
+        justify-content: center;
+        flex-wrap: wrap;
     }
 }
 </style>
@@ -342,6 +1261,15 @@
 <script>
 let polling = null;
 let statsPolling = null;
+
+// 基金列表管理相关变量
+let fundsCurrentPage = 1;
+let fundsPageSize = 20;
+let fundsTotalPages = 1;
+let selectedFundIds = new Set();
+
+// API基础路径 - 使用蓝图的URL前缀
+const API_BASE = '/funds/';
 
 function updateStatistics() {
     fetch('{{ url_for("dl_funds_awkward_bp.get_statistics") }}')
@@ -472,6 +1400,31 @@ document.getElementById('resetBtn').onclick = function() {
     }
 };
 
+document.getElementById('retryFailedBtn').onclick = function() {
+    const failureCount = parseInt(document.getElementById('failureFunds').innerText) || 0;
+    if (failureCount === 0) {
+        alert('没有下载失败的基金需要重试');
+        return;
+    }
+
+    if (confirm(`确定要重新下载 ${failureCount} 个失败的基金吗？`)) {
+        fetch('{{ url_for("dl_funds_awkward_bp.reset_failed_funds") }}', {method: 'POST'})
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    alert(data.message);
+                    updateStatistics(); // 更新统计数据
+                } else {
+                    alert('操作失败: ' + (data.error || data.message));
+                }
+            })
+            .catch(error => {
+                console.error('重试失败基金失败:', error);
+                alert('操作失败: ' + error.message);
+            });
+    }
+};
+
 document.getElementById('openFolderBtn').onclick = function() {
     fetch('{{ url_for("dl_funds_awkward_bp.open_funds_data_folder") }}', {method: 'POST'})
         .then(res => res.json())
@@ -487,5 +1440,927 @@ document.getElementById('openFolderBtn').onclick = function() {
             alert('打开文件夹失败: ' + error.message);
         });
 };
+
+// ==================== 基金列表管理功能 ====================
+
+// 标签页切换
+function switchTab(tabName) {
+    // 切换标签按钮状态
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.classList.remove('active');
+        if (btn.dataset.tab === tabName) {
+            btn.classList.add('active');
+        }
+    });
+
+    // 切换页面显示
+    document.querySelectorAll('.tab-page').forEach(page => {
+        page.classList.remove('active');
+    });
+
+    if (tabName === 'download') {
+        document.getElementById('downloadPage').classList.add('active');
+    } else if (tabName === 'manage') {
+        document.getElementById('managePage').classList.add('active');
+        // 首次切换到管理页面时加载数据
+        if (!window.fundsListLoaded) {
+            loadFundsList();
+            window.fundsListLoaded = true;
+        }
+    } else if (tabName === 'analysis') {
+        document.getElementById('analysisPage').classList.add('active');
+        // 首次切换到分析页面时加载数据
+        if (!window.analysisInitialized) {
+            initAnalysisPage();
+            window.analysisInitialized = true;
+        }
+    } else if (tabName === 'advanced') {
+        document.getElementById('advancedPage').classList.add('active');
+        // 首次切换到高级分析页面时加载数据
+        if (!window.advancedInitialized) {
+            initAdvancedPage();
+            window.advancedInitialized = true;
+        }
+    }
+}
+
+// 加载基金列表
+function loadFundsList(page = 1, search = '') {
+    fundsCurrentPage = page;
+    const searchQuery = search || document.getElementById('searchInput').value;
+    const statusFilter = document.getElementById('statusFilter').value;
+
+    let url = `${API_BASE}api/funds?page=${page}&per_page=${fundsPageSize}&search=${encodeURIComponent(searchQuery)}`;
+    if (statusFilter) {
+        url += `&status=${statusFilter}`;
+    }
+
+    fetch(url)
+        .then(res => res.json())
+        .then(data => {
+            if (data.success) {
+                renderFundsTable(data.data);
+                updatePagination(data.pagination);
+            } else {
+                console.error('加载基金列表失败:', data.message);
+            }
+        })
+        .catch(error => {
+            console.error('加载基金列表失败:', error);
+            document.getElementById('fundsTableBody').innerHTML =
+                '<tr><td colspan="7" style="text-align: center; color: #ef4444;">加载失败</td></tr>';
+        });
+}
+
+// 渲染表格
+function renderFundsTable(funds) {
+    const tbody = document.getElementById('fundsTableBody');
+
+    if (!funds || funds.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align: center;">暂无数据</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = funds.map(fund => `
+        <tr data-id="${fund.id}">
+            <td>
+                <input type="checkbox" class="fund-checkbox" value="${fund.id}"
+                    ${selectedFundIds.has(fund.id) ? 'checked' : ''}>
+            </td>
+            <td>${fund.fund_code || '-'}</td>
+            <td>${fund.fund_name || '-'}</td>
+            <td>
+                <label class="selection-toggle">
+                    <input type="checkbox" class="selection-checkbox" data-fund-id="${fund.id}"
+                        ${fund.selection === 1 ? 'checked' : ''}>
+                    <span class="toggle-slider"></span>
+                </label>
+            </td>
+            <td>${getStatusBadge(fund.status)}</td>
+            <td>${fund.last_download_time || '-'}</td>
+            <td>
+                <div class="action-btns">
+                    <button class="btn-edit" onclick="editFund(${fund.id})">编辑</button>
+                    <button class="btn-delete" onclick="deleteFund(${fund.id})">删除</button>
+                </div>
+            </td>
+        </tr>
+    `).join('');
+
+    // 绑定复选框事件
+    document.querySelectorAll('.fund-checkbox').forEach(cb => {
+        cb.addEventListener('change', function() {
+            if (this.checked) {
+                selectedFundIds.add(parseInt(this.value));
+            } else {
+                selectedFundIds.delete(parseInt(this.value));
+            }
+            updateBatchDeleteBtn();
+            updateSelectAllCheckbox();
+        });
+    });
+
+    // 绑定分析参考切换事件
+    document.querySelectorAll('.selection-checkbox').forEach(cb => {
+        cb.addEventListener('change', function() {
+            const fundId = this.dataset.fundId;
+            toggleFundSelection(fundId, this);
+        });
+    });
+}
+
+// 切换基金的分析参考状态
+function toggleFundSelection(fundId, checkbox) {
+    fetch(`${API_BASE}api/analysis/toggle_selection/${fundId}`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'}
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (!data.success) {
+            // 切换失败，恢复原状态
+            checkbox.checked = !checkbox.checked;
+            alert('切换状态失败: ' + data.message);
+        }
+    })
+    .catch(error => {
+        // 切换失败，恢复原状态
+        checkbox.checked = !checkbox.checked;
+        alert('切换状态失败: ' + error.message);
+    });
+}
+
+// 获取状态徽章
+function getStatusBadge(status) {
+    if (!status || status === 'waiting') {
+        return '<span class="status-badge status-waiting">等待下载</span>';
+    } else if (status === 'success') {
+        return '<span class="status-badge status-success">下载成功</span>';
+    } else if (status === 'failed') {
+        return '<span class="status-badge status-failed">下载失败</span>';
+    }
+    return '<span class="status-badge">' + status + '</span>';
+}
+
+// 更新分页
+function updatePagination(pagination) {
+    fundsTotalPages = pagination.pages;
+
+    document.getElementById('showingStart').innerText =
+        pagination.total === 0 ? 0 : (pagination.page - 1) * pagination.per_page + 1;
+    document.getElementById('showingEnd').innerText =
+        Math.min(pagination.page * pagination.per_page, pagination.total);
+    document.getElementById('totalRecords').innerText = pagination.total;
+    document.getElementById('currentPage').innerText = pagination.page;
+    document.getElementById('totalPages').innerText = pagination.pages;
+
+    document.getElementById('prevPageBtn').disabled = !pagination.has_prev;
+    document.getElementById('nextPageBtn').disabled = !pagination.has_next;
+}
+
+// 更新批量删除按钮状态
+function updateBatchDeleteBtn() {
+    document.getElementById('batchDeleteBtn').disabled = selectedFundIds.size === 0;
+}
+
+// 更新全选复选框状态
+function updateSelectAllCheckbox() {
+    const checkboxes = document.querySelectorAll('.fund-checkbox');
+    const allChecked = checkboxes.length > 0 &&
+        Array.from(checkboxes).every(cb => cb.checked);
+    document.getElementById('selectAll').checked = allChecked;
+}
+
+// 打开添加基金模态框
+function openAddFundModal() {
+    document.getElementById('modalTitle').innerText = '添加基金';
+    document.getElementById('fundId').value = '';
+    document.getElementById('fundCode').value = '';
+    document.getElementById('fundName').value = '';
+    document.getElementById('fundModal').classList.add('show');
+}
+
+// 关闭基金模态框
+function closeFundModal() {
+    document.getElementById('fundModal').classList.remove('show');
+}
+
+// 编辑基金
+function editFund(id) {
+    fetch(`${API_BASE}api/funds/${id}`)
+        .then(res => res.json())
+        .then(data => {
+            if (data.success) {
+                document.getElementById('modalTitle').innerText = '编辑基金';
+                document.getElementById('fundId').value = data.data.id;
+                document.getElementById('fundCode').value = data.data.fund_code || '';
+                document.getElementById('fundName').value = data.data.fund_name || '';
+                document.getElementById('fundModal').classList.add('show');
+            } else {
+                alert('获取基金信息失败: ' + data.message);
+            }
+        })
+        .catch(error => {
+            alert('获取基金信息失败: ' + error.message);
+        });
+}
+
+// 保存基金
+function saveFund() {
+    const id = document.getElementById('fundId').value;
+    const fundCode = document.getElementById('fundCode').value.trim();
+    const fundName = document.getElementById('fundName').value.trim();
+
+    if (!fundCode || !fundName) {
+        alert('请填写完整信息');
+        return;
+    }
+
+    const url = id ? `${API_BASE}api/funds/${id}` : `${API_BASE}api/funds`;
+    const method = id ? 'PUT' : 'POST';
+
+    fetch(url, {
+        method: method,
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({fund_code: fundCode, fund_name: fundName})
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.success) {
+            closeFundModal();
+            loadFundsList(fundsCurrentPage);
+            updateStatistics();
+            alert(id ? '更新成功' : '添加成功');
+        } else {
+            alert('保存失败: ' + data.message);
+        }
+    })
+    .catch(error => {
+        alert('保存失败: ' + error.message);
+    });
+}
+
+// 删除基金
+function deleteFund(id) {
+    if (!confirm('确定要删除该基金吗？')) {
+        return;
+    }
+
+    fetch(`${API_BASE}api/funds/${id}`, {method: 'DELETE'})
+        .then(res => res.json())
+        .then(data => {
+            if (data.success) {
+                selectedFundIds.delete(id);
+                loadFundsList(fundsCurrentPage);
+                updateStatistics();
+            } else {
+                alert('删除失败: ' + data.message);
+            }
+        })
+        .catch(error => {
+            alert('删除失败: ' + error.message);
+        });
+}
+
+// 批量删除
+function batchDeleteFunds() {
+    if (selectedFundIds.size === 0) {
+        alert('请先选择要删除的基金');
+        return;
+    }
+
+    if (!confirm(`确定要删除选中的 ${selectedFundIds.size} 个基金吗？`)) {
+        return;
+    }
+
+    fetch(`${API_BASE}api/funds/batch_delete`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ids: Array.from(selectedFundIds)})
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.success) {
+            selectedFundIds.clear();
+            loadFundsList(1);
+            updateStatistics();
+            updateBatchDeleteBtn();
+            alert(`成功删除 ${data.deleted_count} 个基金`);
+        } else {
+            alert('批量删除失败: ' + data.message);
+        }
+    })
+    .catch(error => {
+        alert('批量删除失败: ' + error.message);
+    });
+}
+
+// 打开批量添加模态框
+function openBatchAddModal() {
+    document.getElementById('batchFundsInput').value = '';
+    document.getElementById('batchAddModal').classList.add('show');
+}
+
+// 关闭批量添加模态框
+function closeBatchAddModal() {
+    document.getElementById('batchAddModal').classList.remove('show');
+}
+
+// 批量添加基金
+function batchAddFunds() {
+    const input = document.getElementById('batchFundsInput').value.trim();
+    if (!input) {
+        alert('请输入基金数据');
+        return;
+    }
+
+    const lines = input.split('\n').filter(line => line.trim());
+    const funds = [];
+
+    for (const line of lines) {
+        const parts = line.split(',');
+        if (parts.length >= 2) {
+            funds.push({
+                fund_code: parts[0].trim(),
+                fund_name: parts[1].trim()
+            });
+        }
+    }
+
+    if (funds.length === 0) {
+        alert('未能解析任何有效的基金数据，请检查格式');
+        return;
+    }
+
+    fetch(`${API_BASE}api/funds/batch_add`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({funds: funds})
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.success) {
+            closeBatchAddModal();
+            loadFundsList(1);
+            updateStatistics();
+            alert(`成功添加 ${data.added_count} 个基金，跳过 ${data.skipped_count} 个已存在的基金`);
+        } else {
+            alert('批量添加失败: ' + data.message);
+        }
+    })
+    .catch(error => {
+        alert('批量添加失败: ' + error.message);
+    });
+}
+
+// 初始化基金列表管理事件
+document.addEventListener('DOMContentLoaded', function() {
+    // 标签页切换
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.onclick = function() {
+            switchTab(this.dataset.tab);
+        };
+    });
+
+    // 添加按钮
+    document.getElementById('addFundBtn').onclick = openAddFundModal;
+
+    // 批量添加按钮
+    document.getElementById('batchAddBtn').onclick = openBatchAddModal;
+
+    // 批量删除按钮
+    document.getElementById('batchDeleteBtn').onclick = batchDeleteFunds;
+
+    // 搜索
+    document.getElementById('searchBtn').onclick = function() {
+        loadFundsList(1);
+    };
+
+    document.getElementById('searchInput').onkeypress = function(e) {
+        if (e.key === 'Enter') {
+            loadFundsList(1);
+        }
+    };
+
+    // 状态筛选
+    document.getElementById('statusFilter').onchange = function() {
+        loadFundsList(1);
+    };
+
+    // 分页
+    document.getElementById('prevPageBtn').onclick = function() {
+        if (fundsCurrentPage > 1) {
+            loadFundsList(fundsCurrentPage - 1);
+        }
+    };
+
+    document.getElementById('nextPageBtn').onclick = function() {
+        if (fundsCurrentPage < fundsTotalPages) {
+            loadFundsList(fundsCurrentPage + 1);
+        }
+    };
+
+    document.getElementById('pageSizeSelect').onchange = function() {
+        fundsPageSize = parseInt(this.value);
+        loadFundsList(1);
+    };
+
+    // 全选
+    document.getElementById('selectAll').onchange = function() {
+        const checkboxes = document.querySelectorAll('.fund-checkbox');
+        checkboxes.forEach(cb => {
+            cb.checked = this.checked;
+            if (this.checked) {
+                selectedFundIds.add(parseInt(cb.value));
+            } else {
+                selectedFundIds.delete(parseInt(cb.value));
+            }
+        });
+        updateBatchDeleteBtn();
+    };
+});
+
+// ==================== 基金重仓分析功能 ====================
+
+let currentAnalysisDate = '';
+
+// 初始化分析页面
+function initAnalysisPage() {
+    loadAnalysisFiles();
+    loadSelectionInfo();
+
+    // 绑定事件
+    document.getElementById('analyzeBtn').onclick = runAnalysis;
+    document.getElementById('selectTop500Btn').onclick = () => selectTopFunds('select', 500, 'selectTop500Btn');
+    document.getElementById('selectAllFundsBtn').onclick = () => selectTopFunds('select_all', 0, 'selectAllFundsBtn');
+    document.getElementById('unselectAllFundsBtn').onclick = () => selectTopFunds('unselect_all', 0, 'unselectAllFundsBtn');
+}
+
+// 加载可用的数据文件
+function loadAnalysisFiles() {
+    fetch(`${API_BASE}api/analysis/files`)
+        .then(res => res.json())
+        .then(data => {
+            if (data.success) {
+                const select = document.getElementById('analysisDateSelect');
+                select.innerHTML = '';
+
+                if (data.data.length === 0) {
+                    select.innerHTML = '<option value="">暂无数据</option>';
+                    return;
+                }
+
+                data.data.forEach((file, index) => {
+                    const option = document.createElement('option');
+                    option.value = file.date;
+                    // 格式化日期显示
+                    const dateStr = file.date;
+                    const formattedDate = `${dateStr.slice(0,4)}-${dateStr.slice(4,6)}-${dateStr.slice(6,8)}`;
+                    option.textContent = formattedDate;
+                    if (index === 0) option.selected = true;
+                    select.appendChild(option);
+                });
+
+                currentAnalysisDate = data.data[0].date;
+            }
+        })
+        .catch(error => {
+            console.error('加载分析文件列表失败:', error);
+        });
+}
+
+// 加载基金选择信息
+function loadSelectionInfo() {
+    fetch(`${API_BASE}api/analysis/funds_selection`)
+        .then(res => res.json())
+        .then(data => {
+            if (data.success) {
+                document.getElementById('selectionInfo').innerText =
+                    `已选择 ${data.data.selected} / ${data.data.total} 只基金`;
+            }
+        })
+        .catch(error => {
+            console.error('加载选择信息失败:', error);
+        });
+}
+
+// 选择前N只基金
+function selectTopFunds(action, topN = 500, btnId = null) {
+    const btn = btnId ? document.getElementById(btnId) : null;
+    const originalText = btn ? btn.innerText : '';
+    if (btn) {
+        btn.disabled = true;
+        btn.innerText = '处理中...';
+    }
+
+    fetch(`${API_BASE}api/analysis/select_top`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({action: action, top_n: topN})
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.success) {
+            loadSelectionInfo();
+        } else {
+            alert('操作失败: ' + data.message);
+        }
+    })
+    .catch(error => {
+        alert('操作失败: ' + error.message);
+    })
+    .finally(() => {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerText = originalText;
+        }
+    });
+}
+
+// 执行分析
+function runAnalysis() {
+    const dateSelect = document.getElementById('analysisDateSelect');
+    const date = dateSelect.value;
+
+    if (!date) {
+        alert('请选择数据日期');
+        return;
+    }
+
+    const useSelected = document.getElementById('fundFilterSelect').value === 'selected';
+    const minHoldings = parseInt(document.getElementById('minHoldingsSelect').value);
+
+    const btn = document.getElementById('analyzeBtn');
+    btn.disabled = true;
+    btn.innerText = '分析中...';
+
+    document.getElementById('analysisTableBody').innerHTML =
+        '<tr><td colspan="6" style="text-align: center;">正在分析数据...</td></tr>';
+
+    fetch(`${API_BASE}api/analysis/holdings`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            date: date,
+            use_selected: useSelected,
+            min_holdings: minHoldings
+        })
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.success) {
+            currentAnalysisDate = date;
+            renderAnalysisResult(data);
+        } else {
+            alert('分析失败: ' + data.message);
+            document.getElementById('analysisTableBody').innerHTML =
+                '<tr><td colspan="6" style="text-align: center; color: #ef4444;">分析失败</td></tr>';
+        }
+    })
+    .catch(error => {
+        alert('分析失败: ' + error.message);
+        document.getElementById('analysisTableBody').innerHTML =
+            '<tr><td colspan="6" style="text-align: center; color: #ef4444;">分析失败</td></tr>';
+    })
+    .finally(() => {
+        btn.disabled = false;
+        btn.innerText = '开始分析';
+    });
+}
+
+// 渲染分析结果
+function renderAnalysisResult(data) {
+    // 显示统计信息
+    const summary = document.getElementById('analysisSummary');
+    summary.style.display = 'flex';
+
+    const dateStr = data.summary.date;
+    document.getElementById('summaryDate').innerText =
+        `${dateStr.slice(0,4)}-${dateStr.slice(4,6)}-${dateStr.slice(6,8)}`;
+    document.getElementById('summaryFunds').innerText = data.summary.total_funds + ' 只';
+    document.getElementById('summaryStocks').innerText = data.summary.total_stocks + ' 只';
+    document.getElementById('summaryRecords').innerText = data.summary.total_records + ' 条';
+
+    // 渲染表格
+    const tbody = document.getElementById('analysisTableBody');
+
+    if (!data.data || data.data.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align: center;">无符合条件的数据</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = data.data.map((stock, index) => {
+        // 根据持仓数量设置颜色
+        let countClass = 'fund-count-low';
+        if (stock.fund_count >= 20) countClass = 'fund-count-high';
+        else if (stock.fund_count >= 10) countClass = 'fund-count-medium';
+
+        return `
+            <tr>
+                <td style="text-align: center;">${index + 1}</td>
+                <td>${stock.stock_code}</td>
+                <td>${stock.stock_name}</td>
+                <td class="${countClass}">${stock.fund_count}</td>
+                <td>${stock.avg_ratio}%</td>
+                <td>
+                    <button class="btn-edit" onclick="showStockDetail('${stock.stock_code}', '${stock.stock_name}')">详情</button>
+                </td>
+            </tr>
+        `;
+    }).join('');
+}
+
+// 显示股票详情
+function showStockDetail(stockCode, stockName) {
+    document.getElementById('stockDetailTitle').innerText = `${stockName} (${stockCode}) 持仓详情`;
+    document.getElementById('stockDetailTableBody').innerHTML =
+        '<tr><td colspan="3" style="text-align: center;">加载中...</td></tr>';
+    document.getElementById('stockDetailModal').classList.add('show');
+
+    fetch(`${API_BASE}api/analysis/stock_detail/${stockCode}`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({date: currentAnalysisDate})
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.success) {
+            const tbody = document.getElementById('stockDetailTableBody');
+            tbody.innerHTML = data.data.map(fund => `
+                <tr>
+                    <td>${fund.fund_code}</td>
+                    <td>${fund.fund_name}</td>
+                    <td>${fund.holdings_ratio || '-'}%</td>
+                </tr>
+            `).join('');
+        } else {
+            document.getElementById('stockDetailTableBody').innerHTML =
+                '<tr><td colspan="3" style="text-align: center; color: #ef4444;">加载失败</td></tr>';
+        }
+    })
+    .catch(error => {
+        document.getElementById('stockDetailTableBody').innerHTML =
+            '<tr><td colspan="3" style="text-align: center; color: #ef4444;">加载失败</td></tr>';
+    });
+}
+
+// 关闭股票详情模态框
+function closeStockDetailModal() {
+    document.getElementById('stockDetailModal').classList.remove('show');
+}
+
+// ==================== 高级分析功能 ====================
+
+let advCurrentDate = '';
+
+// 初始化高级分析页面
+function initAdvancedPage() {
+    loadAdvAvailableDates();
+    setupAdvEventListeners();
+}
+
+// 设置高级分析事件监听
+function setupAdvEventListeners() {
+    // 日期选择
+    document.getElementById('advDateSelect').addEventListener('change', function() {
+        advCurrentDate = this.value;
+        if (advCurrentDate) {
+            loadAdvOverviewData();
+            loadAdvActiveSubTab();
+        }
+    });
+
+    // 刷新按钮
+    document.getElementById('advRefreshBtn').addEventListener('click', function() {
+        loadAdvAvailableDates();
+    });
+
+    // 保存到日线数据按钮
+    document.getElementById('advSaveBtn').addEventListener('click', function() {
+        saveAdvFundHoldingsToDaily();
+    });
+
+    // 子标签切换
+    document.querySelectorAll('.sub-tab-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            switchSubTab(this.dataset.subtab);
+        });
+    });
+}
+
+// 加载可用日期
+async function loadAdvAvailableDates() {
+    try {
+        const response = await fetch(`${API_BASE}api/analysis/files`);
+        const data = await response.json();
+
+        if (data.success) {
+            const select = document.getElementById('advDateSelect');
+            select.innerHTML = '';
+
+            if (data.data.length === 0) {
+                select.innerHTML = '<option value="">暂无数据</option>';
+                return;
+            }
+
+            data.data.forEach((file, index) => {
+                const option = document.createElement('option');
+                option.value = file.date;
+                const dateStr = file.date;
+                option.textContent = `${dateStr.slice(0,4)}-${dateStr.slice(4,6)}-${dateStr.slice(6,8)}`;
+                if (index === 0) option.selected = true;
+                select.appendChild(option);
+            });
+
+            advCurrentDate = data.data[0].date;
+            loadAdvOverviewData();
+            loadAdvActiveSubTab();
+        }
+    } catch (error) {
+        console.error('加载日期失败:', error);
+    }
+}
+
+// 加载概览数据
+async function loadAdvOverviewData() {
+    if (!advCurrentDate) return;
+
+    try {
+        const response = await fetch(`${API_BASE}api/adv/hot_stocks?date=${advCurrentDate}`);
+        const data = await response.json();
+
+        if (data.success) {
+            document.getElementById('advTotalFunds').textContent = data.total_funds;
+            document.getElementById('advTotalStocks').textContent = data.total_stocks;
+            document.getElementById('advTotalRecords').textContent = data.total_records || '-';
+            const avgHoldings = data.total_funds > 0 ? (data.total_stocks / data.total_funds).toFixed(1) : '-';
+            document.getElementById('advAvgHoldings').textContent = avgHoldings;
+        }
+    } catch (error) {
+        console.error('加载概览数据失败:', error);
+    }
+}
+
+// 加载当前活跃的子标签数据
+function loadAdvActiveSubTab() {
+    const activeBtn = document.querySelector('.sub-tab-btn.active');
+    if (activeBtn) {
+        loadSubTabData(activeBtn.dataset.subtab);
+    }
+}
+
+// 切换子标签
+function switchSubTab(subtabName) {
+    // 更新按钮状态
+    document.querySelectorAll('.sub-tab-btn').forEach(btn => {
+        btn.classList.remove('active');
+        if (btn.dataset.subtab === subtabName) {
+            btn.classList.add('active');
+        }
+    });
+
+    // 更新内容显示
+    document.querySelectorAll('.sub-tab-content').forEach(content => {
+        content.classList.remove('active');
+    });
+    document.getElementById(subtabName + '-content').classList.add('active');
+
+    // 加载数据
+    loadSubTabData(subtabName);
+}
+
+// 加载子标签数据
+async function loadSubTabData(subtabName) {
+    if (!advCurrentDate) return;
+
+    try {
+        let response, data;
+
+        switch (subtabName) {
+            case 'hot-stocks':
+                response = await fetch(`${API_BASE}api/adv/hot_stocks?date=${advCurrentDate}`);
+                data = await response.json();
+                if (data.success) {
+                    renderAdvHotStocks(data.top_stocks);
+                }
+                break;
+
+            case 'fund-dist':
+                response = await fetch(`${API_BASE}api/adv/fund_distribution?date=${advCurrentDate}`);
+                data = await response.json();
+                if (data.success) {
+                    renderAdvFundDistribution(data);
+                }
+                break;
+
+            case 'market-analysis':
+                response = await fetch(`${API_BASE}api/adv/industry_analysis?date=${advCurrentDate}`);
+                data = await response.json();
+                if (data.success) {
+                    renderAdvMarketStats(data.market_stats);
+                }
+                break;
+        }
+    } catch (error) {
+        console.error(`加载${subtabName}数据失败:`, error);
+    }
+}
+
+// 渲染热门股票
+function renderAdvHotStocks(topStocks) {
+    const tbody = document.getElementById('advHotStocksBody');
+    if (!topStocks || topStocks.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align: center;">暂无数据</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = topStocks.map((stock, index) => `
+        <tr>
+            <td>${index + 1}</td>
+            <td>${stock.stock_code}</td>
+            <td>${stock.stock_name}</td>
+            <td>${stock.fund_count}</td>
+            <td>${stock.avg_ratio}%</td>
+            <td>${stock.total_ratio}%</td>
+            <td>${stock.max_ratio}%</td>
+        </tr>
+    `).join('');
+}
+
+// 渲染基金分布
+function renderAdvFundDistribution(data) {
+    // 统计信息
+    document.getElementById('advDistMean').textContent = data.distribution_stats?.mean?.toFixed(1) || '-';
+    document.getElementById('advDistMax').textContent = data.distribution_stats?.max || '-';
+    document.getElementById('advDistMin').textContent = data.distribution_stats?.min || '-';
+
+    // 持仓最多的基金
+    const tbody = document.getElementById('advTopFundsBody');
+    if (!data.top_funds || data.top_funds.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="3" style="text-align: center;">暂无数据</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = data.top_funds.map(fund => `
+        <tr>
+            <td>${fund.fund_code}</td>
+            <td>${fund.fund_name}</td>
+            <td>${fund.stock_count}</td>
+        </tr>
+    `).join('');
+}
+
+// 渲染市场统计
+function renderAdvMarketStats(marketStats) {
+    const tbody = document.getElementById('advMarketStatsBody');
+    if (!marketStats || marketStats.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" style="text-align: center;">暂无数据</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = marketStats.map(market => `
+        <tr>
+            <td>${market.market}</td>
+            <td>${market.stock_count}</td>
+            <td>${market.fund_count}</td>
+            <td>${market.avg_ratio}%</td>
+            <td>${market.total_ratio}%</td>
+        </tr>
+    `).join('');
+}
+
+// 保存到日线数据
+async function saveAdvFundHoldingsToDaily() {
+    if (!advCurrentDate) {
+        alert('请先选择分析日期');
+        return;
+    }
+
+    const btn = document.getElementById('advSaveBtn');
+    const originalText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = '保存中...';
+
+    try {
+        const response = await fetch(`${API_BASE}api/adv/save_to_daily`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({date: advCurrentDate})
+        });
+        const data = await response.json();
+
+        if (data.success) {
+            alert('基金持仓数据已成功保存到日线数据表！');
+        } else {
+            alert('保存失败: ' + (data.error || data.message));
+        }
+    } catch (error) {
+        console.error('保存失败:', error);
+        alert('保存失败: ' + error.message);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = originalText;
+    }
+}
 </script>
 {% endblock %} 

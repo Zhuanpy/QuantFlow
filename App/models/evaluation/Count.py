@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 class CountBoard(db.Model):
     """板块统计信息表"""
-    __tablename__ = 'count_board'
+    __tablename__ = 'eval_board_stats'
     __bind_key__ = 'quanttradingsystem'  # 绑定到主数据库
 
     id = db.Column(db.Integer, primary_key=True, autoincrement=True, comment='主键ID')
@@ -113,7 +113,7 @@ class CountBoard(db.Model):
 
 class CountStockPool(db.Model):
     """统计股票池信息表"""
-    __tablename__ = 'count_stock_pool'
+    __tablename__ = 'eval_pool_stats'
     __bind_key__ = 'quanttradingsystem'  # 绑定到主数据库
 
     # 主键 ID

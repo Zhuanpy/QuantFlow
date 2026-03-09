@@ -1,0 +1,749 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="viewer-container">
+    <!-- 顶部标题栏 -->
+    <div class="viewer-header">
+        <h2>数据查看器</h2>
+        <div class="header-actions">
+            <input type="text" id="searchInput" placeholder="搜索股票代码或名称..." class="search-input">
+            <button class="btn btn-refresh" onclick="refreshData()">刷新</button>
+        </div>
+    </div>
+
+    <!-- 数据质量概览 -->
+    <div class="quality-section">
+        <div class="quality-grid">
+            <div class="quality-item">
+                <div class="quality-number" id="totalStocks">-</div>
+                <div class="quality-label">总股票数</div>
+            </div>
+            <div class="quality-item">
+                <div class="quality-number success" id="withData">-</div>
+                <div class="quality-label">有数据</div>
+            </div>
+            <div class="quality-item">
+                <div class="quality-number primary" id="upToDate">-</div>
+                <div class="quality-label">数据最新</div>
+            </div>
+            <div class="quality-item">
+                <div class="quality-number warning" id="outdated">-</div>
+                <div class="quality-label">数据过期</div>
+            </div>
+            <div class="quality-item">
+                <div class="quality-number" id="avgRecords">-</div>
+                <div class="quality-label">平均记录数</div>
+            </div>
+            <div class="quality-item">
+                <div class="quality-number primary" id="coverage">-</div>
+                <div class="quality-label">数据覆盖率</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 主内容区 -->
+    <div class="main-content">
+        <!-- 左侧：股票列表 -->
+        <div class="stock-list-panel">
+            <div class="panel-header">
+                <h3>股票列表</h3>
+                <span id="stockListInfo">加载中...</span>
+            </div>
+            <div class="stock-list" id="stockList">
+                <div class="loading-message">加载中...</div>
+            </div>
+            <div class="pagination">
+                <button id="stockPrevBtn" class="btn-small" onclick="loadStockList(currentStockPage - 1)" disabled>上一页</button>
+                <span id="stockPageInfo">第 1 页</span>
+                <button id="stockNextBtn" class="btn-small" onclick="loadStockList(currentStockPage + 1)" disabled>下一页</button>
+            </div>
+        </div>
+
+        <!-- 右侧：数据详情 -->
+        <div class="data-detail-panel">
+            <div class="panel-header">
+                <h3>数据详情</h3>
+                <div class="detail-controls">
+                    <select id="yearSelect" onchange="loadStockData()">
+                        <option value="2025">2025年</option>
+                        <option value="2024">2024年</option>
+                        <option value="2023">2023年</option>
+                    </select>
+                    <button class="btn-icon" onclick="openDataFolder()" title="打开数据文件夹">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+
+            <!-- 股票概要 -->
+            <div class="stock-summary" id="stockSummary">
+                <div class="summary-placeholder">请选择一只股票查看数据</div>
+            </div>
+
+            <!-- 数据表格 -->
+            <div class="data-table-container">
+                <table class="data-table" id="dataTable">
+                    <thead>
+                        <tr>
+                            <th>时间</th>
+                            <th>开盘</th>
+                            <th>最高</th>
+                            <th>最低</th>
+                            <th>收盘</th>
+                            <th>成交量</th>
+                            <th>成交额</th>
+                        </tr>
+                    </thead>
+                    <tbody id="dataTableBody">
+                        <tr><td colspan="7" class="empty-cell">请选择一只股票查看数据</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- 数据分页 -->
+            <div class="pagination" id="dataPagination" style="display: none;">
+                <button id="dataPrevBtn" class="btn-small" onclick="loadStockData(currentDataPage - 1)" disabled>上一页</button>
+                <span id="dataPageInfo">第 1 页</span>
+                <button id="dataNextBtn" class="btn-small" onclick="loadStockData(currentDataPage + 1)" disabled>下一页</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.viewer-container {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 1rem;
+}
+
+.viewer-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+    color: white;
+    padding: 1rem 1.5rem;
+    border-radius: 0.75rem;
+    margin-bottom: 1rem;
+}
+
+.viewer-header h2 {
+    margin: 0;
+    font-size: 1.25rem;
+}
+
+.header-actions {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+}
+
+.search-input {
+    padding: 0.5rem 1rem;
+    border: none;
+    border-radius: 0.5rem;
+    font-size: 0.875rem;
+    width: 200px;
+    background: rgba(255,255,255,0.9);
+}
+
+.btn-refresh {
+    padding: 0.5rem 1rem;
+    background: rgba(255,255,255,0.2);
+    color: white;
+    border: 1px solid rgba(255,255,255,0.3);
+    border-radius: 0.5rem;
+    cursor: pointer;
+    font-size: 0.875rem;
+}
+
+.btn-refresh:hover {
+    background: rgba(255,255,255,0.3);
+}
+
+/* 数据质量区域 */
+.quality-section {
+    background: var(--card-background);
+    border-radius: 0.75rem;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    box-shadow: var(--shadow-sm);
+}
+
+.quality-grid {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 1rem;
+}
+
+.quality-item {
+    text-align: center;
+    padding: 0.75rem;
+    background: var(--background-color);
+    border-radius: 0.5rem;
+}
+
+.quality-number {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--text-primary);
+}
+
+.quality-number.success { color: #10b981; }
+.quality-number.primary { color: var(--primary-color); }
+.quality-number.warning { color: #f59e0b; }
+
+.quality-label {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    margin-top: 0.25rem;
+}
+
+/* 主内容区 */
+.main-content {
+    display: grid;
+    grid-template-columns: 350px 1fr;
+    gap: 1rem;
+    align-items: start;
+}
+
+/* 面板通用样式 */
+.stock-list-panel, .data-detail-panel {
+    background: var(--card-background);
+    border-radius: 0.75rem;
+    box-shadow: var(--shadow-sm);
+    overflow: hidden;
+}
+
+.panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.75rem 1rem;
+    background: var(--background-color);
+    border-bottom: 1px solid var(--border-color, #e5e7eb);
+}
+
+.panel-header h3 {
+    margin: 0;
+    font-size: 1rem;
+    font-weight: 600;
+}
+
+/* 股票列表 */
+.stock-list {
+    max-height: 500px;
+    overflow-y: auto;
+    padding: 0.5rem;
+}
+
+.stock-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.75rem;
+    border-radius: 0.5rem;
+    cursor: pointer;
+    transition: background 0.2s;
+    border-left: 3px solid transparent;
+}
+
+.stock-item:hover {
+    background: var(--background-color);
+}
+
+.stock-item.active {
+    background: rgba(59, 130, 246, 0.1);
+    border-left-color: var(--primary-color);
+}
+
+.stock-info {
+    flex: 1;
+}
+
+.stock-code {
+    font-weight: 600;
+    font-size: 0.9rem;
+    color: var(--text-primary);
+}
+
+.stock-name {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+}
+
+.stock-meta {
+    text-align: right;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+}
+
+.stock-records {
+    color: var(--primary-color);
+    font-weight: 500;
+}
+
+/* 股票概要 */
+.stock-summary {
+    padding: 1rem;
+    border-bottom: 1px solid var(--border-color, #e5e7eb);
+}
+
+.summary-placeholder {
+    text-align: center;
+    color: var(--text-secondary);
+    padding: 1rem;
+}
+
+.summary-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1rem;
+}
+
+.summary-item {
+    text-align: center;
+    padding: 0.5rem;
+    background: var(--background-color);
+    border-radius: 0.5rem;
+}
+
+.summary-value {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.summary-label {
+    font-size: 0.7rem;
+    color: var(--text-secondary);
+}
+
+/* 数据表格 */
+.data-table-container {
+    max-height: 400px;
+    overflow: auto;
+}
+
+.data-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.8rem;
+}
+
+.data-table th, .data-table td {
+    padding: 0.5rem;
+    text-align: right;
+    border-bottom: 1px solid var(--border-color, #e5e7eb);
+}
+
+.data-table th {
+    background: var(--background-color);
+    font-weight: 600;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+}
+
+.data-table th:first-child, .data-table td:first-child {
+    text-align: left;
+}
+
+.data-table tr:hover {
+    background: rgba(59, 130, 246, 0.05);
+}
+
+.empty-cell {
+    text-align: center !important;
+    color: var(--text-secondary);
+    padding: 2rem !important;
+}
+
+.loading-message {
+    text-align: center;
+    color: var(--text-secondary);
+    padding: 2rem;
+}
+
+/* 分页 */
+.pagination {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.75rem;
+    background: var(--background-color);
+}
+
+.btn-small {
+    padding: 0.25rem 0.75rem;
+    border: none;
+    border-radius: 0.25rem;
+    font-size: 0.75rem;
+    cursor: pointer;
+    background: var(--primary-color);
+    color: white;
+}
+
+.btn-small:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* 详情控制 */
+.detail-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.detail-controls select {
+    padding: 0.25rem 0.5rem;
+    border: 1px solid var(--border-color, #e5e7eb);
+    border-radius: 0.25rem;
+    font-size: 0.8rem;
+}
+
+.btn-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    border: 1px solid var(--border-color, #e5e7eb);
+    border-radius: 0.375rem;
+    background: var(--card-background, #fff);
+    color: var(--text-secondary, #6b7280);
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.btn-icon:hover {
+    background: var(--primary-color, #3b82f6);
+    border-color: var(--primary-color, #3b82f6);
+    color: white;
+}
+
+/* 响应式 */
+@media (max-width: 1024px) {
+    .main-content {
+        grid-template-columns: 1fr;
+    }
+
+    .quality-grid {
+        grid-template-columns: repeat(3, 1fr);
+    }
+}
+
+@media (max-width: 768px) {
+    .viewer-header {
+        flex-direction: column;
+        gap: 1rem;
+    }
+
+    .quality-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+
+    .summary-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+</style>
+
+<script>
+let currentStockPage = 1, totalStockPages = 1;
+let currentDataPage = 1, totalDataPages = 1;
+let selectedStock = null;
+let searchTimeout = null;
+
+// 页面加载
+document.addEventListener('DOMContentLoaded', function() {
+    loadDataQuality();
+    loadYears();
+
+    // 检查 URL 参数是否有指定股票
+    const urlParams = new URLSearchParams(window.location.search);
+    const stockParam = urlParams.get('stock');
+
+    if (stockParam) {
+        // 如果有指定股票，先设置搜索框并加载
+        document.getElementById('searchInput').value = stockParam;
+        loadStockList(1, function() {
+            // 加载完成后自动选中该股票
+            selectStock(stockParam);
+        });
+    } else {
+        loadStockList(1);
+    }
+
+    // 搜索框防抖
+    document.getElementById('searchInput').addEventListener('input', function() {
+        clearTimeout(searchTimeout);
+        searchTimeout = setTimeout(() => {
+            currentStockPage = 1;
+            loadStockList(1);
+        }, 300);
+    });
+});
+
+// 加载数据质量统计
+function loadDataQuality() {
+    fetch('{{ url_for("data_viewer.get_data_quality") }}')
+        .then(res => res.json())
+        .then(data => {
+            if (data.error) return;
+            document.getElementById('totalStocks').textContent = data.total_stocks;
+            document.getElementById('withData').textContent = data.with_data;
+            document.getElementById('upToDate').textContent = data.up_to_date;
+            document.getElementById('outdated').textContent = data.outdated;
+            document.getElementById('avgRecords').textContent = data.avg_records.toLocaleString();
+            document.getElementById('coverage').textContent = data.data_coverage + '%';
+        })
+        .catch(err => console.error('加载数据质量失败:', err));
+}
+
+// 加载年份列表
+function loadYears(stockCode = null, callback = null) {
+    let url = '{{ url_for("data_viewer.get_available_years") }}';
+    if (stockCode) {
+        url += `?stock_code=${encodeURIComponent(stockCode)}`;
+    }
+    fetch(url)
+        .then(res => res.json())
+        .then(data => {
+            if (data.years && data.years.length > 0) {
+                const select = document.getElementById('yearSelect');
+                const currentValue = select.value;
+                select.innerHTML = data.years.map(y =>
+                    `<option value="${y}">${y}年</option>`
+                ).join('');
+                // 尝试保持之前选择的年份，如果不存在则选择第一个
+                if (data.years.includes(parseInt(currentValue))) {
+                    select.value = currentValue;
+                }
+            }
+            if (callback) callback();
+        })
+        .catch(err => console.error('加载年份失败:', err));
+}
+
+// 加载股票列表
+function loadStockList(page = 1, callback = null) {
+    const search = document.getElementById('searchInput').value;
+    currentStockPage = page;
+
+    fetch(`{{ url_for("data_viewer.get_stocks_list") }}?page=${page}&per_page=50&search=${encodeURIComponent(search)}`)
+        .then(res => res.json())
+        .then(data => {
+            if (data.error) {
+                document.getElementById('stockList').innerHTML =
+                    `<div class="loading-message">加载失败: ${data.error}</div>`;
+                return;
+            }
+
+            totalStockPages = data.total_pages || 1;
+            document.getElementById('stockListInfo').textContent = `共 ${data.total} 只`;
+
+            if (data.stocks.length === 0) {
+                document.getElementById('stockList').innerHTML =
+                    '<div class="loading-message">暂无数据</div>';
+            } else {
+                document.getElementById('stockList').innerHTML = data.stocks.map(stock => `
+                    <div class="stock-item ${selectedStock === stock.code ? 'active' : ''}"
+                         onclick="selectStock('${stock.code}')">
+                        <div class="stock-info">
+                            <div class="stock-code">${stock.code}</div>
+                            <div class="stock-name">${stock.name}</div>
+                        </div>
+                        <div class="stock-meta">
+                            <div class="stock-records">${stock.records.toLocaleString()} 条</div>
+                            <div>${stock.end_date}</div>
+                        </div>
+                    </div>
+                `).join('');
+            }
+
+            // 更新分页
+            document.getElementById('stockPageInfo').textContent =
+                `第 ${currentStockPage} / ${totalStockPages} 页`;
+            document.getElementById('stockPrevBtn').disabled = currentStockPage <= 1;
+            document.getElementById('stockNextBtn').disabled = currentStockPage >= totalStockPages;
+
+            // 执行回调
+            if (callback && typeof callback === 'function') {
+                callback();
+            }
+        })
+        .catch(err => {
+            console.error('加载股票列表失败:', err);
+            document.getElementById('stockList').innerHTML =
+                `<div class="loading-message">加载失败</div>`;
+        });
+}
+
+// 选择股票
+function selectStock(code) {
+    selectedStock = code;
+    currentDataPage = 1;
+
+    // 更新选中状态
+    document.querySelectorAll('.stock-item').forEach(item => {
+        item.classList.remove('active');
+        if (item.querySelector('.stock-code').textContent === code) {
+            item.classList.add('active');
+        }
+    });
+
+    // 先加载该股票有数据的年份，再加载数据
+    loadYears(code, () => {
+        loadStockSummary(code);
+        loadStockData(1);
+    });
+}
+
+// 加载股票概要
+function loadStockSummary(code) {
+    const year = document.getElementById('yearSelect').value;
+
+    fetch(`{{ url_for("data_viewer.get_stock_summary", stock_code="PLACEHOLDER") }}`.replace('PLACEHOLDER', code) + `?year=${year}`)
+        .then(res => res.json())
+        .then(data => {
+            if (data.error) {
+                document.getElementById('stockSummary').innerHTML =
+                    `<div class="summary-placeholder">加载失败: ${data.error}</div>`;
+                return;
+            }
+
+            if (!data.has_data) {
+                document.getElementById('stockSummary').innerHTML =
+                    `<div class="summary-placeholder">${code} 在 ${year} 年暂无数据</div>`;
+                return;
+            }
+
+            document.getElementById('stockSummary').innerHTML = `
+                <div class="summary-grid">
+                    <div class="summary-item">
+                        <div class="summary-value">${data.total_records.toLocaleString()}</div>
+                        <div class="summary-label">总记录数</div>
+                    </div>
+                    <div class="summary-item">
+                        <div class="summary-value">${data.trading_days}</div>
+                        <div class="summary-label">交易天数</div>
+                    </div>
+                    <div class="summary-item">
+                        <div class="summary-value">${data.latest_close}</div>
+                        <div class="summary-label">最新收盘</div>
+                    </div>
+                    <div class="summary-item">
+                        <div class="summary-value">${data.avg_volume.toLocaleString()}</div>
+                        <div class="summary-label">平均成交量</div>
+                    </div>
+                </div>
+                <div style="margin-top: 0.75rem; font-size: 0.8rem; color: var(--text-secondary);">
+                    <span>日期范围: ${data.date_range}</span> |
+                    <span>价格区间: ${data.price_range}</span>
+                </div>
+            `;
+        })
+        .catch(err => {
+            console.error('加载股票概要失败:', err);
+            document.getElementById('stockSummary').innerHTML =
+                `<div class="summary-placeholder">加载失败</div>`;
+        });
+}
+
+// 加载股票数据
+function loadStockData(page = 1) {
+    if (!selectedStock) return;
+
+    currentDataPage = page;
+    const year = document.getElementById('yearSelect').value;
+
+    document.getElementById('dataTableBody').innerHTML =
+        '<tr><td colspan="7" class="empty-cell">加载中...</td></tr>';
+
+    fetch(`{{ url_for("data_viewer.get_stock_data", stock_code="PLACEHOLDER") }}`.replace('PLACEHOLDER', selectedStock) + `?year=${year}&page=${page}&per_page=100`)
+        .then(res => res.json())
+        .then(data => {
+            if (data.error) {
+                document.getElementById('dataTableBody').innerHTML =
+                    `<tr><td colspan="7" class="empty-cell">加载失败: ${data.error}</td></tr>`;
+                return;
+            }
+
+            totalDataPages = data.total_pages || 1;
+
+            if (data.data.length === 0) {
+                document.getElementById('dataTableBody').innerHTML =
+                    '<tr><td colspan="7" class="empty-cell">暂无数据</td></tr>';
+                document.getElementById('dataPagination').style.display = 'none';
+                return;
+            }
+
+            document.getElementById('dataTableBody').innerHTML = data.data.map(row => `
+                <tr>
+                    <td>${row.date}</td>
+                    <td>${row.open.toFixed(2)}</td>
+                    <td>${row.high.toFixed(2)}</td>
+                    <td>${row.low.toFixed(2)}</td>
+                    <td>${row.close.toFixed(2)}</td>
+                    <td>${row.volume.toLocaleString()}</td>
+                    <td>${row.money.toLocaleString()}</td>
+                </tr>
+            `).join('');
+
+            // 更新分页
+            document.getElementById('dataPagination').style.display = 'flex';
+            document.getElementById('dataPageInfo').textContent =
+                `第 ${currentDataPage} / ${totalDataPages} 页 (共 ${data.total} 条)`;
+            document.getElementById('dataPrevBtn').disabled = currentDataPage <= 1;
+            document.getElementById('dataNextBtn').disabled = currentDataPage >= totalDataPages;
+        })
+        .catch(err => {
+            console.error('加载股票数据失败:', err);
+            document.getElementById('dataTableBody').innerHTML =
+                `<tr><td colspan="7" class="empty-cell">加载失败</td></tr>`;
+        });
+
+    // 同时更新概要
+    loadStockSummary(selectedStock);
+}
+
+// 打开数据文件夹
+function openDataFolder() {
+    const year = document.getElementById('yearSelect').value;
+    let url = '{{ url_for("data_viewer.open_data_folder") }}';
+
+    // 如果有选中的股票，传递股票代码和年份
+    if (selectedStock) {
+        url += `?stock_code=${encodeURIComponent(selectedStock)}&year=${year}`;
+    }
+
+    fetch(url, { method: 'POST' })
+        .then(res => res.json())
+        .then(data => {
+            if (!data.success) {
+                alert(data.message || '打开文件夹失败');
+            }
+        })
+        .catch(err => {
+            console.error('打开文件夹失败:', err);
+            alert('打开文件夹失败');
+        });
+}
+
+// 刷新数据
+function refreshData() {
+    loadDataQuality();
+    loadStockList(currentStockPage);
+    if (selectedStock) {
+        loadStockSummary(selectedStock);
+        loadStockData(currentDataPage);
+    }
+}
+</script>
+{% endblock %}

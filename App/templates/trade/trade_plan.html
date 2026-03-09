@@ -1,0 +1,1068 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container">
+    <div class="header">
+        <h1>交易管理系统</h1>
+        <p>模拟交易 & 实盘交易 - 计划、执行、统计</p>
+    </div>
+
+    <!-- 统计卡片 -->
+    <div class="stats-grid" id="statsGrid">
+        <div class="stat-card simulate">
+            <h3>模拟交易</h3>
+            <div class="stat-content">
+                <div class="stat-item">
+                    <span class="label">总交易</span>
+                    <span class="value" id="simulateTotal">0</span>
+                </div>
+                <div class="stat-item">
+                    <span class="label">胜率</span>
+                    <span class="value win-rate" id="simulateWinRate">0%</span>
+                </div>
+                <div class="stat-item">
+                    <span class="label">持仓中</span>
+                    <span class="value" id="simulateActive">0</span>
+                </div>
+                <div class="stat-item">
+                    <span class="label">盈亏比</span>
+                    <span class="value" id="simulatePF">0</span>
+                </div>
+            </div>
+        </div>
+        <div class="stat-card real">
+            <h3>实盘交易</h3>
+            <div class="stat-content">
+                <div class="stat-item">
+                    <span class="label">总交易</span>
+                    <span class="value" id="realTotal">0</span>
+                </div>
+                <div class="stat-item">
+                    <span class="label">胜率</span>
+                    <span class="value win-rate" id="realWinRate">0%</span>
+                </div>
+                <div class="stat-item">
+                    <span class="label">持仓中</span>
+                    <span class="value" id="realActive">0</span>
+                </div>
+                <div class="stat-item">
+                    <span class="label">盈亏比</span>
+                    <span class="value" id="realPF">0</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 操作区 -->
+    <div class="action-bar">
+        <div class="mode-tabs">
+            <button class="mode-tab active" data-mode="">全部</button>
+            <button class="mode-tab" data-mode="simulate">模拟交易</button>
+            <button class="mode-tab" data-mode="real">实盘交易</button>
+        </div>
+        <div class="action-buttons">
+            <button class="btn btn-primary" onclick="showCreateModal()">+ 新建计划</button>
+            <button class="btn btn-secondary" onclick="loadPlans()">刷新</button>
+        </div>
+    </div>
+
+    <!-- 交易计划列表 -->
+    <div class="plans-section">
+        <h2>交易计划</h2>
+        <div class="status-filter">
+            <button class="status-btn active" data-status="">全部</button>
+            <button class="status-btn" data-status="planning">计划中</button>
+            <button class="status-btn" data-status="active">持仓中</button>
+            <button class="status-btn" data-status="completed">已完成</button>
+            <button class="status-btn" data-status="cancelled">已取消</button>
+        </div>
+        <div class="plans-table-wrapper">
+            <table class="plans-table">
+                <thead>
+                    <tr>
+                        <th>股票</th>
+                        <th>模式</th>
+                        <th>方向</th>
+                        <th>入场价</th>
+                        <th>止损</th>
+                        <th>止盈</th>
+                        <th>数量</th>
+                        <th>风险比</th>
+                        <th>状态</th>
+                        <th>盈亏</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody id="plansTableBody">
+                    <tr><td colspan="11" class="loading">加载中...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- 新建/编辑交易计划模态框 -->
+<div class="modal" id="planModal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3 id="modalTitle">新建交易计划</h3>
+            <button class="close-btn" onclick="closeModal()">&times;</button>
+        </div>
+        <form id="planForm">
+            <input type="hidden" id="planId">
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label>股票代码 *</label>
+                    <input type="text" id="stockCode" required placeholder="如: 000001">
+                </div>
+                <div class="form-group">
+                    <label>股票名称 *</label>
+                    <input type="text" id="stockName" required placeholder="如: 平安银行">
+                </div>
+            </div>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label>交易模式</label>
+                    <select id="tradeMode">
+                        <option value="simulate">模拟交易</option>
+                        <option value="real">实盘交易</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>交易方向</label>
+                    <select id="direction">
+                        <option value="long">做多</option>
+                        <option value="short">做空</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="form-section">
+                <h4>价格设置</h4>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>预期入场价 *</label>
+                        <input type="number" id="entryPrice" step="0.001" required>
+                    </div>
+                    <div class="form-group">
+                        <label>目标价格</label>
+                        <input type="number" id="targetPrice" step="0.001">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>止损价格</label>
+                        <input type="number" id="stopLossPrice" step="0.001">
+                    </div>
+                    <div class="form-group">
+                        <label>止盈价格</label>
+                        <input type="number" id="takeProfitPrice" step="0.001">
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label>交易数量 *</label>
+                    <input type="number" id="quantity" value="100" required>
+                </div>
+                <div class="form-group">
+                    <label>仓位比例 (%)</label>
+                    <input type="number" id="positionRatio" step="0.1" placeholder="如: 10">
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label>交易策略</label>
+                <input type="text" id="strategyName" placeholder="使用的策略名称">
+            </div>
+
+            <div class="form-group">
+                <label>入场理由</label>
+                <textarea id="entryReason" rows="3" placeholder="记录入场的技术/基本面理由"></textarea>
+            </div>
+
+            <div class="form-group">
+                <label>备注</label>
+                <textarea id="notes" rows="2" placeholder="其他备注信息"></textarea>
+            </div>
+
+            <!-- 风险指标预览 -->
+            <div class="risk-preview" id="riskPreview">
+                <h4>风险指标预览</h4>
+                <div class="risk-items">
+                    <div class="risk-item">
+                        <span>预期投入:</span>
+                        <span id="previewAmount">-</span>
+                    </div>
+                    <div class="risk-item">
+                        <span>最大亏损:</span>
+                        <span id="previewMaxLoss">-</span>
+                    </div>
+                    <div class="risk-item">
+                        <span>潜在盈利:</span>
+                        <span id="previewProfit">-</span>
+                    </div>
+                    <div class="risk-item">
+                        <span>风险收益比:</span>
+                        <span id="previewRatio">-</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-actions">
+                <button type="button" class="btn btn-secondary" onclick="closeModal()">取消</button>
+                <button type="submit" class="btn btn-primary">保存</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- 入场/出场模态框 -->
+<div class="modal" id="tradeActionModal">
+    <div class="modal-content modal-small">
+        <div class="modal-header">
+            <h3 id="actionModalTitle">执行入场</h3>
+            <button class="close-btn" onclick="closeActionModal()">&times;</button>
+        </div>
+        <form id="actionForm">
+            <input type="hidden" id="actionPlanId">
+            <input type="hidden" id="actionType">
+
+            <div class="form-group">
+                <label id="actionPriceLabel">实际入场价格</label>
+                <input type="number" id="actionPrice" step="0.001" required>
+            </div>
+            <div class="form-group" id="actionQuantityGroup">
+                <label>实际数量</label>
+                <input type="number" id="actionQuantity">
+            </div>
+            <div class="form-group" id="actionReasonGroup" style="display:none;">
+                <label>出场理由</label>
+                <textarea id="actionReason" rows="2"></textarea>
+            </div>
+
+            <div class="form-actions">
+                <button type="button" class="btn btn-secondary" onclick="closeActionModal()">取消</button>
+                <button type="submit" class="btn btn-primary">确认</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<style>
+.container {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 1rem 2rem;
+}
+
+.header {
+    text-align: center;
+    margin-bottom: 2rem;
+}
+
+.header h1 {
+    color: var(--primary-color);
+    margin-bottom: 0.5rem;
+}
+
+.header p {
+    color: var(--text-secondary);
+}
+
+/* 统计卡片 */
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 1.5rem;
+    margin-bottom: 2rem;
+}
+
+.stat-card {
+    background: var(--card-background);
+    border-radius: 1rem;
+    padding: 1.5rem;
+    box-shadow: var(--shadow-md);
+}
+
+.stat-card.simulate {
+    border-left: 4px solid #3b82f6;
+}
+
+.stat-card.real {
+    border-left: 4px solid #10b981;
+}
+
+.stat-card h3 {
+    margin-bottom: 1rem;
+    color: var(--text-primary);
+}
+
+.stat-content {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1rem;
+}
+
+.stat-item {
+    text-align: center;
+}
+
+.stat-item .label {
+    display: block;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    margin-bottom: 0.25rem;
+}
+
+.stat-item .value {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--primary-color);
+}
+
+.stat-item .win-rate {
+    color: #10b981;
+}
+
+/* 操作栏 */
+.action-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1.5rem;
+    flex-wrap: wrap;
+    gap: 1rem;
+}
+
+.mode-tabs {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.mode-tab {
+    padding: 0.5rem 1rem;
+    border: 2px solid var(--primary-color);
+    background: transparent;
+    color: var(--primary-color);
+    border-radius: 0.5rem;
+    cursor: pointer;
+    transition: all 0.3s;
+}
+
+.mode-tab.active, .mode-tab:hover {
+    background: var(--primary-color);
+    color: white;
+}
+
+.action-buttons {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.btn {
+    padding: 0.5rem 1rem;
+    border: none;
+    border-radius: 0.5rem;
+    cursor: pointer;
+    font-weight: 500;
+    transition: all 0.3s;
+}
+
+.btn-primary {
+    background: var(--primary-color);
+    color: white;
+}
+
+.btn-primary:hover {
+    background: var(--secondary-color);
+}
+
+.btn-secondary {
+    background: var(--background-color);
+    color: var(--text-primary);
+}
+
+.btn-success {
+    background: #10b981;
+    color: white;
+}
+
+.btn-danger {
+    background: #ef4444;
+    color: white;
+}
+
+.btn-warning {
+    background: #f59e0b;
+    color: white;
+}
+
+.btn-sm {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.85rem;
+}
+
+/* 交易计划表格 */
+.plans-section {
+    background: var(--card-background);
+    border-radius: 1rem;
+    padding: 1.5rem;
+    box-shadow: var(--shadow-md);
+}
+
+.plans-section h2 {
+    margin-bottom: 1rem;
+    color: var(--primary-color);
+}
+
+.status-filter {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
+}
+
+.status-btn {
+    padding: 0.35rem 0.75rem;
+    border: 1px solid #ddd;
+    background: white;
+    border-radius: 1rem;
+    cursor: pointer;
+    font-size: 0.85rem;
+    transition: all 0.3s;
+}
+
+.status-btn.active, .status-btn:hover {
+    background: var(--primary-color);
+    color: white;
+    border-color: var(--primary-color);
+}
+
+.plans-table-wrapper {
+    overflow-x: auto;
+}
+
+.plans-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.plans-table th, .plans-table td {
+    padding: 0.75rem;
+    text-align: left;
+    border-bottom: 1px solid #eee;
+}
+
+.plans-table th {
+    background: var(--background-color);
+    font-weight: 600;
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+}
+
+.plans-table tr:hover {
+    background: #f8fafc;
+}
+
+.plans-table .loading {
+    text-align: center;
+    color: var(--text-secondary);
+    padding: 2rem;
+}
+
+.badge {
+    display: inline-block;
+    padding: 0.2rem 0.5rem;
+    border-radius: 0.25rem;
+    font-size: 0.75rem;
+    font-weight: 500;
+}
+
+.badge-simulate { background: #dbeafe; color: #1d4ed8; }
+.badge-real { background: #d1fae5; color: #059669; }
+.badge-long { background: #fef3c7; color: #d97706; }
+.badge-short { background: #fce7f3; color: #db2777; }
+.badge-planning { background: #e5e7eb; color: #374151; }
+.badge-pending { background: #fef3c7; color: #d97706; }
+.badge-active { background: #dbeafe; color: #1d4ed8; }
+.badge-completed { background: #d1fae5; color: #059669; }
+.badge-cancelled { background: #fee2e2; color: #dc2626; }
+
+.profit-positive { color: #10b981; font-weight: 600; }
+.profit-negative { color: #ef4444; font-weight: 600; }
+
+.action-cell {
+    display: flex;
+    gap: 0.25rem;
+    flex-wrap: wrap;
+}
+
+/* 模态框 */
+.modal {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0,0,0,0.5);
+    z-index: 1000;
+    align-items: center;
+    justify-content: center;
+}
+
+.modal.active {
+    display: flex;
+}
+
+.modal-content {
+    background: white;
+    border-radius: 1rem;
+    width: 90%;
+    max-width: 600px;
+    max-height: 90vh;
+    overflow-y: auto;
+}
+
+.modal-small {
+    max-width: 400px;
+}
+
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid #eee;
+}
+
+.modal-header h3 {
+    margin: 0;
+    color: var(--primary-color);
+}
+
+.close-btn {
+    background: none;
+    border: none;
+    font-size: 1.5rem;
+    cursor: pointer;
+    color: var(--text-secondary);
+}
+
+#planForm {
+    padding: 1.5rem;
+}
+
+.form-row {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 1rem;
+}
+
+.form-group {
+    margin-bottom: 1rem;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 0.25rem;
+    font-weight: 500;
+    color: var(--text-primary);
+}
+
+.form-group input, .form-group select, .form-group textarea {
+    width: 100%;
+    padding: 0.5rem;
+    border: 1px solid #ddd;
+    border-radius: 0.5rem;
+    font-size: 1rem;
+}
+
+.form-group input:focus, .form-group select:focus, .form-group textarea:focus {
+    outline: none;
+    border-color: var(--primary-color);
+}
+
+.form-section {
+    background: #f8fafc;
+    padding: 1rem;
+    border-radius: 0.5rem;
+    margin-bottom: 1rem;
+}
+
+.form-section h4 {
+    margin-bottom: 1rem;
+    color: var(--text-secondary);
+}
+
+.risk-preview {
+    background: #fffbeb;
+    padding: 1rem;
+    border-radius: 0.5rem;
+    margin-bottom: 1rem;
+}
+
+.risk-preview h4 {
+    margin-bottom: 0.5rem;
+    color: #d97706;
+}
+
+.risk-items {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 0.5rem;
+}
+
+.risk-item {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.9rem;
+}
+
+.form-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
+    padding-top: 1rem;
+    border-top: 1px solid #eee;
+}
+
+@media (max-width: 768px) {
+    .stats-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .stat-content {
+        grid-template-columns: repeat(2, 1fr);
+    }
+
+    .form-row {
+        grid-template-columns: 1fr;
+    }
+
+    .action-bar {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .mode-tabs {
+        justify-content: center;
+    }
+
+    .action-buttons {
+        justify-content: center;
+    }
+}
+</style>
+
+<script>
+let currentMode = '';
+let currentStatus = '';
+let editingPlanId = null;
+
+// 页面加载
+document.addEventListener('DOMContentLoaded', function() {
+    loadStatistics();
+    loadPlans();
+    setupEventListeners();
+
+    // 设置默认模式
+    const urlMode = '{{ trade_mode|default("") }}';
+    if (urlMode) {
+        currentMode = urlMode;
+        document.querySelectorAll('.mode-tab').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.mode === urlMode);
+        });
+    }
+});
+
+function setupEventListeners() {
+    // 模式切换
+    document.querySelectorAll('.mode-tab').forEach(btn => {
+        btn.addEventListener('click', function() {
+            document.querySelectorAll('.mode-tab').forEach(b => b.classList.remove('active'));
+            this.classList.add('active');
+            currentMode = this.dataset.mode;
+            loadPlans();
+        });
+    });
+
+    // 状态筛选
+    document.querySelectorAll('.status-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            document.querySelectorAll('.status-btn').forEach(b => b.classList.remove('active'));
+            this.classList.add('active');
+            currentStatus = this.dataset.status;
+            loadPlans();
+        });
+    });
+
+    // 表单提交
+    document.getElementById('planForm').addEventListener('submit', handleFormSubmit);
+    document.getElementById('actionForm').addEventListener('submit', handleActionSubmit);
+
+    // 价格变化时更新风险预览
+    ['entryPrice', 'stopLossPrice', 'takeProfitPrice', 'quantity'].forEach(id => {
+        document.getElementById(id).addEventListener('input', updateRiskPreview);
+    });
+}
+
+// 加载统计数据
+async function loadStatistics() {
+    try {
+        const response = await fetch('/api/trade/statistics');
+        const data = await response.json();
+
+        if (data.success) {
+            // 模拟交易统计
+            document.getElementById('simulateTotal').textContent = data.simulate.total_trades;
+            document.getElementById('simulateWinRate').textContent = data.simulate.win_rate + '%';
+            document.getElementById('simulateActive').textContent = data.simulate.active_count;
+            document.getElementById('simulatePF').textContent = data.simulate.profit_factor;
+
+            // 实盘交易统计
+            document.getElementById('realTotal').textContent = data.real.total_trades;
+            document.getElementById('realWinRate').textContent = data.real.win_rate + '%';
+            document.getElementById('realActive').textContent = data.real.active_count;
+            document.getElementById('realPF').textContent = data.real.profit_factor;
+        }
+    } catch (error) {
+        console.error('加载统计失败:', error);
+    }
+}
+
+// 加载交易计划列表
+async function loadPlans() {
+    const tbody = document.getElementById('plansTableBody');
+    tbody.innerHTML = '<tr><td colspan="11" class="loading">加载中...</td></tr>';
+
+    try {
+        let url = '/api/trade/plans?limit=100';
+        if (currentMode) url += '&mode=' + currentMode;
+        if (currentStatus) url += '&status=' + currentStatus;
+
+        const response = await fetch(url);
+        const data = await response.json();
+
+        if (data.success && data.plans.length > 0) {
+            tbody.innerHTML = data.plans.map(plan => renderPlanRow(plan)).join('');
+        } else {
+            tbody.innerHTML = '<tr><td colspan="11" class="loading">暂无交易计划</td></tr>';
+        }
+    } catch (error) {
+        console.error('加载计划失败:', error);
+        tbody.innerHTML = '<tr><td colspan="11" class="loading">加载失败</td></tr>';
+    }
+}
+
+function renderPlanRow(plan) {
+    const profitClass = plan.profit_loss > 0 ? 'profit-positive' : (plan.profit_loss < 0 ? 'profit-negative' : '');
+    const profitDisplay = plan.profit_loss !== null ?
+        `<span class="${profitClass}">${plan.profit_loss > 0 ? '+' : ''}${plan.profit_loss.toFixed(2)}</span>` : '-';
+
+    let actionButtons = '';
+    if (plan.status === 'planning' || plan.status === 'pending') {
+        actionButtons = `
+            <button class="btn btn-success btn-sm" onclick="showEnterModal(${plan.id}, ${plan.entry_price})">入场</button>
+            <button class="btn btn-secondary btn-sm" onclick="editPlan(${plan.id})">编辑</button>
+            <button class="btn btn-danger btn-sm" onclick="cancelPlan(${plan.id})">取消</button>
+        `;
+    } else if (plan.status === 'active') {
+        actionButtons = `
+            <button class="btn btn-warning btn-sm" onclick="showExitModal(${plan.id})">出场</button>
+        `;
+    } else {
+        actionButtons = `
+            <button class="btn btn-secondary btn-sm" onclick="viewPlan(${plan.id})">详情</button>
+            <button class="btn btn-danger btn-sm" onclick="deletePlan(${plan.id})">删除</button>
+        `;
+    }
+
+    return `
+        <tr>
+            <td><strong>${plan.stock_code}</strong><br><small>${plan.stock_name}</small></td>
+            <td><span class="badge badge-${plan.trade_mode}">${plan.trade_mode === 'simulate' ? '模拟' : '实盘'}</span></td>
+            <td><span class="badge badge-${plan.direction}">${plan.direction === 'long' ? '做多' : '做空'}</span></td>
+            <td>${plan.entry_price || '-'}</td>
+            <td>${plan.stop_loss_price || '-'}</td>
+            <td>${plan.take_profit_price || '-'}</td>
+            <td>${plan.quantity}</td>
+            <td>${plan.risk_reward_ratio || '-'}</td>
+            <td><span class="badge badge-${plan.status}">${getStatusText(plan.status)}</span></td>
+            <td>${profitDisplay}</td>
+            <td class="action-cell">${actionButtons}</td>
+        </tr>
+    `;
+}
+
+function getStatusText(status) {
+    const map = {
+        'planning': '计划中',
+        'pending': '待执行',
+        'active': '持仓中',
+        'completed': '已完成',
+        'cancelled': '已取消',
+        'expired': '已过期'
+    };
+    return map[status] || status;
+}
+
+// 显示新建模态框
+function showCreateModal() {
+    editingPlanId = null;
+    document.getElementById('modalTitle').textContent = '新建交易计划';
+    document.getElementById('planForm').reset();
+    document.getElementById('planModal').classList.add('active');
+    updateRiskPreview();
+}
+
+// 编辑计划
+async function editPlan(planId) {
+    try {
+        const response = await fetch(`/api/trade/plans/${planId}`);
+        const data = await response.json();
+
+        if (data.success) {
+            editingPlanId = planId;
+            const plan = data.plan;
+
+            document.getElementById('modalTitle').textContent = '编辑交易计划';
+            document.getElementById('stockCode').value = plan.stock_code;
+            document.getElementById('stockName').value = plan.stock_name;
+            document.getElementById('tradeMode').value = plan.trade_mode;
+            document.getElementById('direction').value = plan.direction;
+            document.getElementById('entryPrice').value = plan.entry_price || '';
+            document.getElementById('targetPrice').value = plan.target_price || '';
+            document.getElementById('stopLossPrice').value = plan.stop_loss_price || '';
+            document.getElementById('takeProfitPrice').value = plan.take_profit_price || '';
+            document.getElementById('quantity').value = plan.quantity;
+            document.getElementById('positionRatio').value = plan.position_ratio || '';
+            document.getElementById('strategyName').value = plan.strategy_name || '';
+            document.getElementById('entryReason').value = plan.entry_reason || '';
+            document.getElementById('notes').value = plan.notes || '';
+
+            document.getElementById('planModal').classList.add('active');
+            updateRiskPreview();
+        }
+    } catch (error) {
+        console.error('加载计划详情失败:', error);
+        alert('加载计划详情失败');
+    }
+}
+
+// 关闭模态框
+function closeModal() {
+    document.getElementById('planModal').classList.remove('active');
+}
+
+// 更新风险预览
+function updateRiskPreview() {
+    const entryPrice = parseFloat(document.getElementById('entryPrice').value) || 0;
+    const stopLoss = parseFloat(document.getElementById('stopLossPrice').value) || 0;
+    const takeProfit = parseFloat(document.getElementById('takeProfitPrice').value) || 0;
+    const quantity = parseInt(document.getElementById('quantity').value) || 0;
+
+    const amount = entryPrice * quantity;
+    document.getElementById('previewAmount').textContent = amount > 0 ? '¥' + amount.toFixed(2) : '-';
+
+    if (stopLoss > 0 && entryPrice > 0) {
+        const maxLoss = Math.abs(entryPrice - stopLoss) * quantity;
+        document.getElementById('previewMaxLoss').textContent = '¥' + maxLoss.toFixed(2);
+    } else {
+        document.getElementById('previewMaxLoss').textContent = '-';
+    }
+
+    if (takeProfit > 0 && entryPrice > 0) {
+        const profit = Math.abs(takeProfit - entryPrice) * quantity;
+        document.getElementById('previewProfit').textContent = '¥' + profit.toFixed(2);
+    } else {
+        document.getElementById('previewProfit').textContent = '-';
+    }
+
+    if (stopLoss > 0 && takeProfit > 0 && entryPrice > 0) {
+        const risk = Math.abs(entryPrice - stopLoss);
+        const reward = Math.abs(takeProfit - entryPrice);
+        const ratio = risk > 0 ? (reward / risk).toFixed(2) : 0;
+        document.getElementById('previewRatio').textContent = '1:' + ratio;
+    } else {
+        document.getElementById('previewRatio').textContent = '-';
+    }
+}
+
+// 表单提交
+async function handleFormSubmit(e) {
+    e.preventDefault();
+
+    const formData = {
+        stock_code: document.getElementById('stockCode').value,
+        stock_name: document.getElementById('stockName').value,
+        trade_mode: document.getElementById('tradeMode').value,
+        direction: document.getElementById('direction').value,
+        entry_price: parseFloat(document.getElementById('entryPrice').value),
+        target_price: parseFloat(document.getElementById('targetPrice').value) || null,
+        stop_loss_price: parseFloat(document.getElementById('stopLossPrice').value) || null,
+        take_profit_price: parseFloat(document.getElementById('takeProfitPrice').value) || null,
+        quantity: parseInt(document.getElementById('quantity').value),
+        position_ratio: parseFloat(document.getElementById('positionRatio').value) || null,
+        strategy_name: document.getElementById('strategyName').value,
+        entry_reason: document.getElementById('entryReason').value,
+        notes: document.getElementById('notes').value
+    };
+
+    try {
+        const url = editingPlanId ? `/api/trade/plans/${editingPlanId}` : '/api/trade/plans';
+        const method = editingPlanId ? 'PUT' : 'POST';
+
+        const response = await fetch(url, {
+            method: method,
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(formData)
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            alert(data.message);
+            closeModal();
+            loadPlans();
+            loadStatistics();
+        } else {
+            alert('操作失败: ' + data.message);
+        }
+    } catch (error) {
+        console.error('提交失败:', error);
+        alert('提交失败');
+    }
+}
+
+// 入场模态框
+function showEnterModal(planId, entryPrice) {
+    document.getElementById('actionModalTitle').textContent = '执行入场';
+    document.getElementById('actionPriceLabel').textContent = '实际入场价格';
+    document.getElementById('actionPlanId').value = planId;
+    document.getElementById('actionType').value = 'enter';
+    document.getElementById('actionPrice').value = entryPrice || '';
+    document.getElementById('actionQuantityGroup').style.display = 'block';
+    document.getElementById('actionReasonGroup').style.display = 'none';
+    document.getElementById('tradeActionModal').classList.add('active');
+}
+
+// 出场模态框
+function showExitModal(planId) {
+    document.getElementById('actionModalTitle').textContent = '执行出场';
+    document.getElementById('actionPriceLabel').textContent = '实际出场价格';
+    document.getElementById('actionPlanId').value = planId;
+    document.getElementById('actionType').value = 'exit';
+    document.getElementById('actionPrice').value = '';
+    document.getElementById('actionQuantityGroup').style.display = 'none';
+    document.getElementById('actionReasonGroup').style.display = 'block';
+    document.getElementById('tradeActionModal').classList.add('active');
+}
+
+function closeActionModal() {
+    document.getElementById('tradeActionModal').classList.remove('active');
+}
+
+// 入场/出场提交
+async function handleActionSubmit(e) {
+    e.preventDefault();
+
+    const planId = document.getElementById('actionPlanId').value;
+    const actionType = document.getElementById('actionType').value;
+    const price = parseFloat(document.getElementById('actionPrice').value);
+
+    const url = actionType === 'enter' ?
+        `/api/trade/plans/${planId}/enter` :
+        `/api/trade/plans/${planId}/exit`;
+
+    const body = actionType === 'enter' ? {
+        actual_price: price,
+        actual_quantity: parseInt(document.getElementById('actionQuantity').value) || null
+    } : {
+        exit_price: price,
+        exit_reason: document.getElementById('actionReason').value
+    };
+
+    try {
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            alert(data.message);
+            closeActionModal();
+            loadPlans();
+            loadStatistics();
+        } else {
+            alert('操作失败: ' + data.message);
+        }
+    } catch (error) {
+        console.error('操作失败:', error);
+        alert('操作失败');
+    }
+}
+
+// 取消计划
+async function cancelPlan(planId) {
+    if (!confirm('确定要取消这个交易计划吗？')) return;
+
+    try {
+        const response = await fetch(`/api/trade/plans/${planId}/cancel`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            loadPlans();
+            loadStatistics();
+        } else {
+            alert('取消失败: ' + data.message);
+        }
+    } catch (error) {
+        console.error('取消失败:', error);
+    }
+}
+
+// 删除计划
+async function deletePlan(planId) {
+    if (!confirm('确定要删除这个交易计划吗？此操作不可恢复。')) return;
+
+    try {
+        const response = await fetch(`/api/trade/plans/${planId}`, {
+            method: 'DELETE'
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            loadPlans();
+            loadStatistics();
+        } else {
+            alert('删除失败: ' + data.message);
+        }
+    } catch (error) {
+        console.error('删除失败:', error);
+    }
+}
+
+// 查看详情
+async function viewPlan(planId) {
+    await editPlan(planId);
+    // 禁用编辑
+    document.querySelectorAll('#planForm input, #planForm select, #planForm textarea').forEach(el => {
+        el.disabled = true;
+    });
+    document.querySelector('#planForm .form-actions').style.display = 'none';
+}
+</script>
+{% endblock %}

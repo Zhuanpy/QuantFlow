@@ -1,30 +1,41 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="download-container">
-    <div class="download-card">
-        <div class="download-header">
-            <h2>批量下载1分钟数据</h2>
-        </div>
-        
-        <div class="download-content">
-            <!-- 控制按钮区域 -->
-            <div class="button-group">
-                <button id="startBtn" class="btn btn-primary">
-                    开始下载
-                </button>
-                <button id="stopBtn" class="btn btn-danger" disabled>
-                    暂停下载
-                </button>
-                <button id="resampleBtn" class="btn btn-success">
-                    重新采样为日线数据
-                </button>
-                <button id="openFolderBtn" class="btn btn-info">
-                    打开数据文件夹
-                </button>
+    <!-- 顶部标题和按钮 -->
+    <div class="download-header-bar">
+        <div class="header-left">
+            <h2>批量数据下载(日K + 1分钟 + 15分钟)</h2>
+            <div class="days-selector">
+                <label for="downloadDays">下载天数：</label>
+                <select id="downloadDays" class="days-select">
+                    <option value="1">最近1天</option>
+                    <option value="2">最近2天</option>
+                    <option value="3">最近3天</option>
+                    <option value="4">最近4天</option>
+                    <option value="5" selected>最近5天</option>
+                </select>
             </div>
-            
-            <!-- 统计数据区域 -->
-            <div class="stats-section">
+            <label class="force-check" title="勾选后会重置当天已下载成功的记录，重新下载全部股票">
+                <input type="checkbox" id="forceDownload"> 强制重下
+            </label>
+        </div>
+        <div class="button-group">
+            <button id="startBtn" class="btn btn-primary">开始下载</button>
+            <button id="stopBtn" class="btn btn-danger" disabled>暂停下载</button>
+            <button id="setDateBtn" class="btn btn-warning">设置下载日期</button>
+            <button id="resampleBtn" class="btn btn-success">重新采样</button>
+            <button id="openFolderBtn" class="btn btn-info">打开文件夹</button>
+            <a href="{{ url_for('download_data_bp.download_records_editor') }}" class="btn btn-edit">编辑记录</a>
+            <a href="/data_analysis" class="btn btn-analysis">数据分析</a>
+        </div>
+    </div>
+
+    <!-- 主要内容区域：双栏布局 -->
+    <div class="main-content">
+        <!-- 左侧面板 -->
+        <div class="left-panel">
+            <!-- 统计数据 -->
+            <div class="panel-card">
                 <h3>下载统计</h3>
                 <div class="stats-grid">
                     <div class="stat-item">
@@ -49,103 +60,156 @@
                     </div>
                 </div>
             </div>
-            
-            <!-- 进度显示区域 -->
-            <div class="progress-section">
+
+            <!-- 进度信息 -->
+            <div class="panel-card">
                 <h3>下载进度</h3>
                 <div class="progress-info">
-                    <div class="progress-item">
-                        <strong>任务状态：</strong>
-                        <span id="statusText">未开始</span>
+                    <div class="progress-item"><strong>任务状态：</strong><span id="statusText">未开始</span></div>
+                    <div class="progress-item"><strong>总进度：</strong><span id="progressText">0%</span></div>
+                    <div class="progress-item"><strong>当前股票：</strong><span id="currentStock">-</span>
+                        <span id="stockIndex" class="stock-index"></span>
                     </div>
-                    <div class="progress-item">
-                        <strong>进度：</strong>
-                        <span id="progressText">0%</span>
+                    <div class="progress-item"><strong>当前步骤：</strong><span id="currentStep">-</span></div>
+                </div>
+                <!-- 流水线步骤指示器 -->
+                <div class="pipeline-steps" id="pipelineSteps" style="display:none;">
+                    <div class="pipeline-step" id="pipeStep1">
+                        <div class="step-indicator">1</div>
+                        <div class="step-label">日K数据</div>
                     </div>
-                    <div class="progress-item">
-                        <strong>当前股票：</strong>
-                        <span id="currentStock">-</span>
+                    <div class="pipeline-connector"></div>
+                    <div class="pipeline-step" id="pipeStep2">
+                        <div class="step-indicator">2</div>
+                        <div class="step-label">1分钟数据</div>
+                    </div>
+                    <div class="pipeline-connector"></div>
+                    <div class="pipeline-step" id="pipeStep3">
+                        <div class="step-indicator">3</div>
+                        <div class="step-label">15分钟处理</div>
                     </div>
                 </div>
                 <div class="progress-bar-container">
                     <div id="progressBar" class="progress-bar-fill"></div>
                 </div>
             </div>
-            
-            <!-- 下载详情区域 -->
-            <div class="details-section">
-                <h3>下载详情</h3>
-                <div class="details-tabs">
-                    <button class="tab-button active" onclick="showTab('success')">成功列表</button>
-                    <button class="tab-button" onclick="showTab('failed')">失败列表</button>
-                    <button class="tab-button" onclick="showTab('logs')">实时日志</button>
+
+            <!-- 当前状态 -->
+            <div class="panel-card status-card">
+                <h3>📊 当前状态</h3>
+                <div class="status-grid">
+                    <div class="status-item"><strong>网络：</strong><span id="networkStatus">检测中...</span></div>
+                    <div class="status-item"><strong>数据源：</strong><span id="dataSourceStatus">检测中...</span></div>
+                    <div class="status-item"><strong>下载：</strong><span id="downloadStatusText">准备就绪</span></div>
                 </div>
-                
+            </div>
+
+            <!-- 今日数据状态 -->
+            <div class="panel-card task-status-card">
+                <h3>今日数据状态 <span id="taskDate" class="task-date"></span></h3>
+                <div class="task-grid" id="taskGrid">
+                    <div class="task-row">
+                        <span class="task-name">日K数据</span>
+                        <span class="task-bar-wrap"><span class="task-bar task-bar-daily" id="barDaily"></span></span>
+                        <span class="task-count" id="countDaily">-</span>
+                    </div>
+                    <div class="task-row">
+                        <span class="task-name">1m下载</span>
+                        <span class="task-bar-wrap"><span class="task-bar task-bar-1m" id="bar1m"></span></span>
+                        <span class="task-count" id="count1m">-</span>
+                    </div>
+                    <div class="task-row">
+                        <span class="task-name">15m生成</span>
+                        <span class="task-bar-wrap"><span class="task-bar task-bar-15m" id="bar15m"></span></span>
+                        <span class="task-count" id="count15m">-</span>
+                    </div>
+                    <div class="task-row">
+                        <span class="task-name">MACD</span>
+                        <span class="task-bar-wrap"><span class="task-bar task-bar-macd" id="barMacd"></span></span>
+                        <span class="task-count" id="countMacd">-</span>
+                    </div>
+                    <div class="task-row">
+                        <span class="task-name">1m清洗</span>
+                        <span class="task-bar-wrap"><span class="task-bar task-bar-clean" id="barClean"></span></span>
+                        <span class="task-count" id="countClean">-</span>
+                    </div>
+                    <div class="task-row">
+                        <span class="task-name">量能</span>
+                        <span class="task-bar-wrap"><span class="task-bar task-bar-vol" id="barVol"></span></span>
+                        <span class="task-count" id="countVol">-</span>
+                    </div>
+                    <div class="task-row">
+                        <span class="task-name">特征</span>
+                        <span class="task-bar-wrap"><span class="task-bar task-bar-feat" id="barFeat"></span></span>
+                        <span class="task-count" id="countFeat">-</span>
+                    </div>
+                    <div class="task-row">
+                        <span class="task-name">RNN</span>
+                        <span class="task-bar-wrap"><span class="task-bar task-bar-rnn" id="barRnn"></span></span>
+                        <span class="task-count" id="countRnn">-</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 右侧面板：下载详情 -->
+        <div class="right-panel">
+            <div class="panel-card details-card">
+                <div class="details-header">
+                    <h3>下载详情</h3>
+                    <div class="details-tabs">
+                        <button class="tab-button" onclick="showTab('pending')">等待下载</button>
+                        <button class="tab-button active" onclick="showTab('success')">成功列表</button>
+                        <button class="tab-button" onclick="showTab('failed')">失败列表</button>
+                        <button class="tab-button" onclick="showTab('logs')">实时日志</button>
+                    </div>
+                </div>
+
+                <div id="pendingTab" class="tab-content">
+                    <div class="pending-header">
+                        <span id="pendingInfo">加载中...</span>
+                        <div class="pending-pagination">
+                            <button id="prevPageBtn" class="btn-small" onclick="loadPendingStocks(currentPendingPage - 1)" disabled>上一页</button>
+                            <span id="pageInfo">第 1 页</span>
+                            <button id="nextPageBtn" class="btn-small" onclick="loadPendingStocks(currentPendingPage + 1)" disabled>下一页</button>
+                        </div>
+                    </div>
+                    <div class="stock-list" id="pendingList">
+                        <div class="empty-message">加载中...</div>
+                    </div>
+                </div>
+
                 <div id="successTab" class="tab-content active">
+                    <div class="pending-header">
+                        <span id="successInfo">加载中...</span>
+                        <div class="pending-pagination">
+                            <button id="successPrevBtn" class="btn-small" onclick="loadSuccessStocks(currentSuccessPage - 1)" disabled>上一页</button>
+                            <span id="successPageInfo">第 1 页</span>
+                            <button id="successNextBtn" class="btn-small" onclick="loadSuccessStocks(currentSuccessPage + 1)" disabled>下一页</button>
+                        </div>
+                    </div>
                     <div class="stock-list" id="successList">
-                        <div class="empty-message">暂无成功下载的股票</div>
+                        <div class="empty-message">加载中...</div>
                     </div>
                 </div>
-                
+
                 <div id="failedTab" class="tab-content">
+                    <div class="pending-header">
+                        <span id="failedInfo">加载中...</span>
+                        <div class="pending-pagination">
+                            <button id="failedPrevBtn" class="btn-small" onclick="loadFailedStocks(currentFailedPage - 1)" disabled>上一页</button>
+                            <span id="failedPageInfo">第 1 页</span>
+                            <button id="failedNextBtn" class="btn-small" onclick="loadFailedStocks(currentFailedPage + 1)" disabled>下一页</button>
+                        </div>
+                    </div>
                     <div class="stock-list" id="failedList">
-                        <div class="empty-message">暂无下载失败的股票</div>
+                        <div class="empty-message">加载中...</div>
                     </div>
                 </div>
-                
+
                 <div id="logsTab" class="tab-content">
                     <div class="log-container" id="logContainer">
                         <div class="empty-message">暂无日志信息</div>
-                    </div>
-                </div>
-            </div>
-            
-            <!-- 数据保存信息 -->
-            <div class="info-section">
-                <h3>数据保存信息</h3>
-                <div class="info-content">
-                    <div class="info-item">
-                        <strong>保存位置：</strong>
-                        <span>本地CSV文件</span>
-                    </div>
-                    <div class="info-item">
-                        <strong>文件格式：</strong>
-                        <span>按季度保存，股票代码.csv</span>
-                    </div>
-                    <div class="info-item">
-                        <strong>保存路径：</strong>
-                        <span>data/data/quarters/年份/季度/</span>
-                    </div>
-                    <div class="info-item">
-                        <strong>数据来源：</strong>
-                        <span>东方财富网</span>
-                    </div>
-                    <div class="info-item">
-                        <strong>数据频率：</strong>
-                        <span>1分钟</span>
-                    </div>
-                </div>
-            </div>
-            
-            <!-- 当前状态 -->
-            <div class="warning-section">
-                <h3>📊 当前状态</h3>
-                <div class="warning-content">
-                    <div class="warning-item">
-                        <strong>网络状态：</strong>
-                        <span id="networkStatus">检测中...</span>
-                    </div>
-                    <div class="warning-item">
-                        <strong>数据源：</strong>
-                        <span id="dataSourceStatus">东方财富网（检测中...）</span>
-                    </div>
-                    <div class="warning-item">
-                        <strong>下载状态：</strong>
-                        <span id="downloadStatusText">准备就绪</span>
-                    </div>
-                    <div class="warning-item">
-                        <strong>说明：</strong>
-                        <span>系统已优化，支持Brotli压缩数据解析</span>
                     </div>
                 </div>
             </div>
@@ -155,51 +219,156 @@
 
 <style>
 .download-container {
-    max-width: 800px;
+    max-width: 1400px;
     margin: 0 auto;
-    padding: 0 1rem;
+    padding: 1rem;
 }
 
-.download-card {
-    background-color: var(--card-background);
-    border-radius: 1rem;
-    box-shadow: var(--shadow-md);
-    overflow: hidden;
-}
-
-.download-header {
-    background-color: var(--primary-color);
+/* 顶部标题栏 */
+.download-header-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
     color: white;
-    padding: 1.5rem;
-    text-align: center;
+    padding: 1rem 1.5rem;
+    border-radius: 0.75rem;
+    margin-bottom: 1rem;
+    box-shadow: var(--shadow-md);
 }
 
-.download-header h2 {
+.download-header-bar h2 {
     margin: 0;
-    font-size: 1.5rem;
+    font-size: 1.25rem;
     font-weight: 600;
 }
 
-.download-content {
-    padding: 2rem;
+.header-left {
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+    flex-wrap: wrap;
 }
 
+.days-selector {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    background: rgba(255, 255, 255, 0.15);
+    padding: 0.4rem 0.75rem;
+    border-radius: 0.5rem;
+}
+
+.days-selector label {
+    font-size: 0.875rem;
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+.days-select {
+    padding: 0.35rem 0.75rem;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    border-radius: 0.375rem;
+    background: rgba(255, 255, 255, 0.2);
+    color: white;
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.days-select:focus {
+    outline: none;
+    border-color: rgba(255, 255, 255, 0.5);
+    background: rgba(255, 255, 255, 0.25);
+}
+
+.days-select option {
+    background: #4a5568;
+    color: white;
+}
+
+.force-check {
+    display: flex; align-items: center; gap: 4px;
+    font-size: 0.82rem; color: rgba(255,255,255,0.9);
+    cursor: pointer; margin-left: 0.5rem;
+}
+.force-check input { cursor: pointer; }
+
+/* 主内容区：双栏布局 */
+.main-content {
+    display: grid;
+    grid-template-columns: 320px 1fr;
+    gap: 1rem;
+    align-items: start;
+}
+
+/* 左侧面板 */
+.left-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+/* 右侧面板 */
+.right-panel {
+    min-height: 500px;
+}
+
+/* 通用卡片样式 */
+.panel-card {
+    background-color: var(--card-background);
+    border-radius: 0.75rem;
+    padding: 1rem;
+    box-shadow: var(--shadow-sm);
+}
+
+.panel-card h3 {
+    margin: 0 0 0.75rem 0;
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    border-bottom: 1px solid var(--border-color, #e5e7eb);
+    padding-bottom: 0.5rem;
+}
+
+/* 详情卡片特殊样式 */
+.details-card {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+}
+
+.details-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.75rem;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.details-header h3 {
+    margin: 0;
+    border: none;
+    padding: 0;
+}
+
+/* 按钮组 */
 .button-group {
     display: flex;
-    gap: 1rem;
-    justify-content: center;
-    margin-bottom: 2rem;
+    gap: 0.5rem;
+    flex-wrap: wrap;
 }
 
 .btn {
-    padding: 0.75rem 1.5rem;
+    padding: 0.5rem 1rem;
     border: none;
     border-radius: 0.5rem;
     font-weight: 500;
-    font-size: 1rem;
+    font-size: 0.875rem;
     cursor: pointer;
-    transition: all 0.3s ease;
-    min-width: 120px;
+    transition: all 0.2s ease;
 }
 
 .btn:disabled {
@@ -208,12 +377,13 @@
 }
 
 .btn-primary {
-    background-color: var(--primary-color);
+    background-color: rgba(255,255,255,0.2);
     color: white;
+    border: 1px solid rgba(255,255,255,0.3);
 }
 
 .btn-primary:hover:not(:disabled) {
-    background-color: var(--secondary-color);
+    background-color: rgba(255,255,255,0.3);
 }
 
 .btn-danger {
@@ -226,48 +396,64 @@
 }
 
 .btn-info {
-    background-color: #0891b2;
+    background-color: rgba(255,255,255,0.15);
     color: white;
+    border: 1px solid rgba(255,255,255,0.2);
 }
 
 .btn-info:hover:not(:disabled) {
-    background-color: #0e7490;
+    background-color: rgba(255,255,255,0.25);
 }
 
-.stats-section {
-    margin-bottom: 2rem;
+.btn-edit {
+    background: linear-gradient(135deg, #06b6d4 0%, #0891b2 100%);
+    color: white;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
 }
 
-.stats-section h3 {
-    margin-bottom: 1rem;
-    color: var(--text-primary);
-    font-size: 1.25rem;
-    font-weight: 600;
+.btn-edit:hover {
+    background: linear-gradient(135deg, #0891b2 0%, #0e7490 100%);
+    transform: translateY(-1px);
 }
 
+.btn-analysis {
+    background: linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%);
+    color: white;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+}
+
+.btn-analysis:hover {
+    background: linear-gradient(135deg, #7c3aed 0%, #5b21b6 100%);
+    transform: translateY(-1px);
+}
+
+/* 统计网格 */
 .stats-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-    gap: 1rem;
-    background-color: var(--background-color);
-    padding: 1.5rem;
-    border-radius: 0.75rem;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 0.5rem;
 }
 
 .stat-item {
     text-align: center;
-    padding: 1rem 0.5rem;
+    padding: 0.5rem 0.25rem;
+    background-color: var(--background-color);
+    border-radius: 0.5rem;
 }
 
 .stat-number {
-    font-size: 2rem;
+    font-size: 1.25rem;
     font-weight: 700;
     display: block;
-    margin-bottom: 0.5rem;
+    margin-bottom: 0.25rem;
 }
 
 .stat-label {
-    font-size: 0.875rem;
+    font-size: 0.7rem;
     color: var(--text-secondary);
     font-weight: 500;
 }
@@ -278,20 +464,107 @@
 .stat-failed { color: #dc2626; }
 .stat-processing { color: #0891b2; }
 
-.progress-section h3 {
-    margin-bottom: 1rem;
-    color: var(--text-primary);
-    font-size: 1.25rem;
-    font-weight: 600;
+/* 状态网格 */
+.status-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
 }
 
+.status-item {
+    font-size: 0.8rem;
+    color: var(--text-primary);
+}
+
+.status-item strong {
+    color: var(--text-secondary);
+}
+
+/* 信息网格 */
+.info-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.info-grid .info-item {
+    font-size: 0.8rem;
+    color: var(--text-primary);
+}
+
+.info-grid .info-item strong {
+    color: var(--text-secondary);
+}
+
+/* 状态卡片 */
+.status-card {
+    background-color: #fef3cd;
+    border: 1px solid #fecba1;
+}
+
+.status-card h3 {
+    color: #856404;
+    border-color: #fecba1;
+}
+
+.info-card {
+    background-color: #e8f4fd;
+    border: 1px solid #b8daff;
+}
+
+.info-card h3 {
+    color: #004085;
+    border-color: #b8daff;
+}
+
+/* 今日数据状态卡片 */
+.task-status-card {
+    background: #f0fdf4;
+    border: 1px solid #bbf7d0;
+}
+.task-status-card h3 {
+    color: #166534;
+    border-color: #bbf7d0;
+    display: flex; align-items: center; gap: 0.5rem;
+}
+.task-date { font-size: 0.75rem; font-weight: 400; color: #4ade80; }
+.task-grid { display: flex; flex-direction: column; gap: 0.35rem; }
+.task-row {
+    display: flex; align-items: center; gap: 0.4rem; font-size: 0.78rem;
+}
+.task-name {
+    width: 58px; flex-shrink: 0; color: #374151; font-weight: 500; text-align: right;
+}
+.task-bar-wrap {
+    flex: 1; height: 16px; background: #e5e7eb; border-radius: 3px; overflow: hidden;
+}
+.task-bar {
+    height: 100%; display: block; border-radius: 3px;
+    transition: width 0.5s ease; width: 0%;
+    font-size: 0; line-height: 16px;
+}
+.task-bar-daily { background: #3b82f6; }
+.task-bar-1m    { background: #8b5cf6; }
+.task-bar-15m   { background: #06b6d4; }
+.task-bar-macd  { background: #f59e0b; }
+.task-bar-clean { background: #10b981; }
+.task-bar-vol   { background: #ef4444; }
+.task-bar-feat  { background: #ec4899; }
+.task-bar-rnn   { background: #6366f1; }
+.task-count {
+    width: 62px; flex-shrink: 0; text-align: right;
+    font-size: 0.72rem; color: #6b7280; font-variant-numeric: tabular-nums;
+}
+
+/* 进度信息 */
 .progress-info {
-    margin-bottom: 1rem;
+    margin-bottom: 0.75rem;
 }
 
 .progress-item {
-    margin-bottom: 0.5rem;
+    margin-bottom: 0.25rem;
     color: var(--text-primary);
+    font-size: 0.85rem;
 }
 
 .progress-item strong {
@@ -300,129 +573,59 @@
 
 .progress-bar-container {
     width: 100%;
-    height: 1.5rem;
+    height: 1.25rem;
     background-color: var(--background-color);
-    border-radius: 0.75rem;
+    border-radius: 0.5rem;
     overflow: hidden;
-    position: relative;
 }
 
 .progress-bar-fill {
     height: 100%;
     background: linear-gradient(90deg, var(--primary-color), var(--secondary-color));
-    border-radius: 0.75rem;
+    border-radius: 0.5rem;
     transition: width 0.3s ease;
     display: flex;
     align-items: center;
     justify-content: center;
     color: white;
     font-weight: 600;
-    font-size: 0.875rem;
-    min-width: 2rem;
-}
-
-.info-section {
-    background-color: var(--background-color);
-    padding: 1.5rem;
-    border-radius: 0.75rem;
-}
-
-.info-section h3 {
-    margin-bottom: 1rem;
-    color: var(--text-primary);
-    font-size: 1.25rem;
-    font-weight: 600;
-}
-
-.info-content {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-}
-
-.info-item {
-    color: var(--text-primary);
-    font-size: 0.875rem;
-}
-
-.info-item strong {
-    color: var(--text-secondary);
-    margin-right: 0.5rem;
-}
-
-.warning-section {
-    background-color: #fef3cd;
-    border: 1px solid #fecba1;
-    padding: 1.5rem;
-    border-radius: 0.75rem;
-    margin-top: 1rem;
-}
-
-.warning-section h3 {
-    margin-bottom: 1rem;
-    color: #856404;
-    font-size: 1.25rem;
-    font-weight: 600;
-}
-
-.warning-content {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-}
-
-.warning-item {
-    color: #856404;
-    font-size: 0.875rem;
-}
-
-.warning-item strong {
-    color: #856404;
-    margin-right: 0.5rem;
-}
-
-.details-section {
-    margin-bottom: 2rem;
-}
-
-.details-section h3 {
-    margin-bottom: 1rem;
-    color: var(--text-primary);
-    font-size: 1.25rem;
-    font-weight: 600;
+    font-size: 0.75rem;
+    min-width: 1.5rem;
 }
 
 .details-tabs {
     display: flex;
-    gap: 0.5rem;
-    margin-bottom: 1rem;
-    border-bottom: 2px solid var(--background-color);
+    gap: 0.25rem;
+    flex-wrap: wrap;
 }
 
 .tab-button {
-    padding: 0.75rem 1.5rem;
+    padding: 0.4rem 0.75rem;
     border: none;
-    background-color: transparent;
+    background-color: var(--background-color);
     color: var(--text-secondary);
     font-weight: 500;
+    font-size: 0.8rem;
     cursor: pointer;
-    border-bottom: 2px solid transparent;
-    transition: all 0.3s ease;
+    border-radius: 0.375rem;
+    transition: all 0.2s ease;
 }
 
 .tab-button.active {
-    color: var(--primary-color);
-    border-bottom-color: var(--primary-color);
+    background-color: var(--primary-color);
+    color: white;
 }
 
 .tab-button:hover:not(.active) {
+    background-color: #e5e7eb;
     color: var(--text-primary);
 }
 
 .tab-content {
     display: none;
-    min-height: 200px;
-    max-height: 400px;
+    flex: 1;
+    min-height: 350px;
+    max-height: calc(100vh - 300px);
     overflow-y: auto;
 }
 
@@ -431,49 +634,73 @@
 }
 
 .stock-list {
-    display: flex;
-    flex-direction: column;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
     gap: 0.5rem;
+    padding: 0.5rem 0;
 }
 
 .stock-item {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 0.75rem;
+    padding: 0.5rem 0.75rem;
     background-color: var(--background-color);
-    border-radius: 0.5rem;
-    border-left: 4px solid var(--success-color);
+    border-radius: 0.375rem;
+    border-left: 3px solid var(--success-color);
+    font-size: 0.85rem;
 }
 
 .stock-item.failed {
     border-left-color: #dc2626;
 }
 
+.stock-item.pending {
+    border-left-color: #f59e0b;
+}
+
+.stock-item.clickable {
+    cursor: pointer;
+    transition: transform 0.1s, box-shadow 0.1s;
+}
+
+.stock-item.clickable:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
 .stock-code {
     font-weight: 600;
     color: var(--text-primary);
+    font-size: 0.9rem;
 }
 
 .stock-status {
-    font-size: 0.875rem;
+    font-size: 0.75rem;
     color: var(--text-secondary);
 }
 
 .stock-time {
-    font-size: 0.75rem;
+    font-size: 0.7rem;
     color: var(--text-secondary);
+}
+
+.stock-days {
+    font-size: 0.7rem;
+    color: #f59e0b;
+    font-weight: 500;
 }
 
 .log-container {
     background-color: #1a1a1a;
     color: #00ff00;
-    padding: 1rem;
+    padding: 0.75rem;
     border-radius: 0.5rem;
     font-family: 'Courier New', monospace;
-    font-size: 0.875rem;
-    line-height: 1.4;
-    max-height: 300px;
+    font-size: 0.75rem;
+    line-height: 1.3;
+    min-height: 350px;
+    max-height: calc(100vh - 300px);
     overflow-y: auto;
 }
 
@@ -502,35 +729,168 @@
     color: var(--text-secondary);
     font-style: italic;
     padding: 2rem;
+    grid-column: 1 / -1;
+}
+
+.pending-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.5rem 0.75rem;
+    background-color: var(--background-color);
+    border-radius: 0.375rem;
+    margin-bottom: 0.5rem;
+    font-size: 0.85rem;
+}
+
+.pending-pagination {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.btn-small {
+    padding: 0.25rem 0.5rem;
+    border: none;
+    border-radius: 0.25rem;
+    font-size: 0.7rem;
+    cursor: pointer;
+    background-color: var(--primary-color);
+    color: white;
+    transition: all 0.2s ease;
+}
+
+.btn-small:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.btn-small:hover:not(:disabled) {
+    background-color: var(--secondary-color);
+}
+
+.btn-success {
+    background-color: #10b981;
+    color: white;
+}
+
+.btn-success:hover:not(:disabled) {
+    background-color: #059669;
+}
+
+.btn-warning {
+    background-color: #f59e0b;
+    color: white;
+}
+
+.btn-warning:hover:not(:disabled) {
+    background-color: #d97706;
+}
+
+/* 流水线步骤 */
+.pipeline-steps {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 12px 0;
+    gap: 8px;
+}
+.pipeline-step {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+}
+.step-indicator {
+    width: 32px; height: 32px;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: bold; font-size: 14px;
+    background: var(--background-color, #f3f4f6); color: #9ca3af;
+    border: 2px solid #d1d5db;
+    transition: all 0.3s;
+}
+.pipeline-step.active .step-indicator {
+    background: #3b82f6; color: white; border-color: #3b82f6;
+    animation: stepPulse 1.5s infinite;
+}
+.pipeline-step.completed .step-indicator {
+    background: #10b981; color: white; border-color: #10b981;
+}
+.step-label { font-size: 11px; color: var(--text-secondary, #6b7280); }
+.pipeline-connector {
+    width: 30px; height: 2px; background: #d1d5db; margin-bottom: 18px;
+}
+.stock-index { font-size: 12px; color: var(--text-secondary, #6b7280); margin-left: 8px; }
+@keyframes stepPulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(59,130,246,0.4); }
+    50% { box-shadow: 0 0 0 6px rgba(59,130,246,0); }
+}
+
+/* 响应式布局 */
+@media (max-width: 1024px) {
+    .main-content {
+        grid-template-columns: 1fr;
+    }
+
+    .left-panel {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 1rem;
+    }
+
+    .left-panel .panel-card:first-child {
+        grid-column: 1 / -1;
+    }
 }
 
 @media (max-width: 768px) {
-    .download-content {
-        padding: 1rem;
-    }
-    
-    .button-group {
+    .download-header-bar {
         flex-direction: column;
-        align-items: center;
+        gap: 1rem;
+        text-align: center;
     }
-    
-    .btn {
+
+    .header-left {
+        flex-direction: column;
+        gap: 0.75rem;
+    }
+
+    .days-selector {
         width: 100%;
-        max-width: 200px;
+        justify-content: center;
     }
-    
+
+    .button-group {
+        justify-content: center;
+    }
+
+    .left-panel {
+        grid-template-columns: 1fr;
+    }
+
+    .stats-grid {
+        grid-template-columns: repeat(3, 1fr);
+    }
+
+    .stock-list {
+        grid-template-columns: 1fr;
+    }
+
+    .details-header {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+}
+
+@media (max-width: 480px) {
     .stats-grid {
         grid-template-columns: repeat(2, 1fr);
-        gap: 0.75rem;
-        padding: 1rem;
     }
-    
-    .stat-number {
-        font-size: 1.5rem;
-    }
-    
-    .info-content {
-        font-size: 0.8rem;
+
+    .btn {
+        padding: 0.4rem 0.75rem;
+        font-size: 0.75rem;
     }
 }
 </style>
@@ -541,10 +901,17 @@ let detailsPolling = null;
 let networkPolling = null;
 let dataSourcePolling = null;
 let statusDisplayPolling = null;
+let taskStatusPolling = null;
 let successStocks = [];
 let failedStocks = [];
+let pendingStocks = [];
 let downloadLogs = [];
-let lastDownloadStatus = {status: '未开始', progress: 0}; // 缓存最后的下载状态
+let lastDownloadStatus = {status: '未开始', progress: 0};
+
+// 分页状态
+let currentPendingPage = 1, totalPendingPages = 1, totalPendingCount = 0;
+let currentSuccessPage = 1, totalSuccessPages = 1, totalSuccessCount = 0;
+let currentFailedPage = 1, totalFailedPages = 1, totalFailedCount = 0;
 
 // 标签页切换功能
 function showTab(tabName) {
@@ -565,35 +932,101 @@ function showTab(tabName) {
     event.target.classList.add('active');
 }
 
-// 更新成功股票列表
+// 加载成功下载的股票列表
+function loadSuccessStocks(page = 1) {
+    if (page < 1) page = 1;
+    if (page > totalSuccessPages && totalSuccessPages > 0) page = totalSuccessPages;
+    currentSuccessPage = page;
+
+    fetch(`{{ url_for("download_data_bp.get_success_stocks") }}?page=${page}&per_page=50`)
+        .then(res => res.json())
+        .then(data => {
+            if (data.error) {
+                document.getElementById('successList').innerHTML =
+                    `<div class="empty-message">加载失败: ${data.error}</div>`;
+                return;
+            }
+            successStocks = data.success || [];
+            totalSuccessCount = data.total || 0;
+            totalSuccessPages = data.total_pages || 1;
+            currentSuccessPage = data.page || 1;
+            updateSuccessList();
+            updateSuccessPagination();
+        })
+        .catch(error => {
+            console.error('获取成功下载列表失败:', error);
+            document.getElementById('successList').innerHTML =
+                `<div class="empty-message">加载失败: ${error.message}</div>`;
+        });
+}
+
+// 更新成功股票列表显示
 function updateSuccessList() {
     const container = document.getElementById('successList');
     if (successStocks.length === 0) {
-        container.innerHTML = '<div class="empty-message">暂无成功下载的股票</div>';
+        container.innerHTML = '<div class="empty-message">暂无数据最新的股票</div>';
         return;
     }
-    
+
     container.innerHTML = successStocks.map(stock => `
-        <div class="stock-item">
+        <div class="stock-item clickable" onclick="viewStockData('${stock.code}')">
             <div>
                 <div class="stock-code">${stock.code}</div>
-                <div class="stock-status">${stock.records} 条记录</div>
+                <div class="stock-status">更新至: ${stock.end_date} | ${stock.records} 条</div>
             </div>
             <div class="stock-time">${stock.time}</div>
         </div>
     `).join('');
 }
 
-// 更新失败股票列表
+// 更新成功列表分页控件
+function updateSuccessPagination() {
+    document.getElementById('successInfo').textContent =
+        `共 ${totalSuccessCount} 只股票数据最新`;
+    document.getElementById('successPageInfo').textContent =
+        `第 ${currentSuccessPage} / ${totalSuccessPages} 页`;
+    document.getElementById('successPrevBtn').disabled = currentSuccessPage <= 1;
+    document.getElementById('successNextBtn').disabled = currentSuccessPage >= totalSuccessPages;
+}
+
+// 加载失败的股票列表
+function loadFailedStocks(page = 1) {
+    if (page < 1) page = 1;
+    if (page > totalFailedPages && totalFailedPages > 0) page = totalFailedPages;
+    currentFailedPage = page;
+
+    fetch(`{{ url_for("download_data_bp.get_failed_stocks") }}?page=${page}&per_page=50`)
+        .then(res => res.json())
+        .then(data => {
+            if (data.error) {
+                document.getElementById('failedList').innerHTML =
+                    `<div class="empty-message">加载失败: ${data.error}</div>`;
+                return;
+            }
+            failedStocks = data.failed || [];
+            totalFailedCount = data.total || 0;
+            totalFailedPages = data.total_pages || 1;
+            currentFailedPage = data.page || 1;
+            updateFailedList();
+            updateFailedPagination();
+        })
+        .catch(error => {
+            console.error('获取失败下载列表失败:', error);
+            document.getElementById('failedList').innerHTML =
+                `<div class="empty-message">加载失败: ${error.message}</div>`;
+        });
+}
+
+// 更新失败股票列表显示
 function updateFailedList() {
     const container = document.getElementById('failedList');
     if (failedStocks.length === 0) {
         container.innerHTML = '<div class="empty-message">暂无下载失败的股票</div>';
         return;
     }
-    
+
     container.innerHTML = failedStocks.map(stock => `
-        <div class="stock-item failed">
+        <div class="stock-item failed clickable" onclick="viewStockData('${stock.code}')">
             <div>
                 <div class="stock-code">${stock.code}</div>
                 <div class="stock-status">${stock.error}</div>
@@ -601,6 +1034,89 @@ function updateFailedList() {
             <div class="stock-time">${stock.time}</div>
         </div>
     `).join('');
+}
+
+// 更新失败列表分页控件
+function updateFailedPagination() {
+    document.getElementById('failedInfo').textContent =
+        `共 ${totalFailedCount} 只股票下载失败`;
+    document.getElementById('failedPageInfo').textContent =
+        `第 ${currentFailedPage} / ${totalFailedPages} 页`;
+    document.getElementById('failedPrevBtn').disabled = currentFailedPage <= 1;
+    document.getElementById('failedNextBtn').disabled = currentFailedPage >= totalFailedPages;
+}
+
+// 加载等待下载的股票列表
+function loadPendingStocks(page = 1) {
+    if (page < 1) page = 1;
+    if (page > totalPendingPages && totalPendingPages > 0) page = totalPendingPages;
+
+    currentPendingPage = page;
+
+    fetch(`{{ url_for("download_data_bp.get_pending_stocks") }}?page=${page}&per_page=50`)
+        .then(res => res.json())
+        .then(data => {
+            if (data.error) {
+                document.getElementById('pendingList').innerHTML =
+                    `<div class="empty-message">加载失败: ${data.error}</div>`;
+                return;
+            }
+
+            pendingStocks = data.pending || [];
+            totalPendingCount = data.total || 0;
+            totalPendingPages = data.total_pages || 1;
+            currentPendingPage = data.page || 1;
+
+            updatePendingList();
+            updatePendingPagination();
+        })
+        .catch(error => {
+            console.error('获取等待下载列表失败:', error);
+            document.getElementById('pendingList').innerHTML =
+                `<div class="empty-message">加载失败: ${error.message}</div>`;
+        });
+}
+
+// 跳转到数据查看页面
+function viewStockData(code) {
+    window.open(`{{ url_for("data_viewer.data_viewer_page") }}?stock=${code}`, '_blank');
+}
+
+// 更新等待下载列表显示
+function updatePendingList() {
+    const container = document.getElementById('pendingList');
+
+    if (pendingStocks.length === 0) {
+        container.innerHTML = '<div class="empty-message">所有股票数据已是最新，无需下载</div>';
+        return;
+    }
+
+    container.innerHTML = pendingStocks.map(stock => {
+        // 根据状态设置不同的样式类
+        let statusClass = 'pending';
+        if (stock.status === 'failed') statusClass = 'failed';
+
+        return `
+            <div class="stock-item ${statusClass} clickable" onclick="viewStockData('${stock.code}')">
+                <div>
+                    <div class="stock-code">${stock.code}</div>
+                    <div class="stock-status">最后更新: ${stock.end_date} | ${stock.status_text}</div>
+                </div>
+                <div class="stock-days">${stock.days_behind > 0 ? '落后 ' + stock.days_behind + ' 天' : '今日'}</div>
+            </div>
+        `;
+    }).join('');
+}
+
+// 更新分页控件
+function updatePendingPagination() {
+    document.getElementById('pendingInfo').textContent =
+        `共 ${totalPendingCount} 只股票等待下载`;
+    document.getElementById('pageInfo').textContent =
+        `第 ${currentPendingPage} / ${totalPendingPages} 页`;
+
+    document.getElementById('prevPageBtn').disabled = currentPendingPage <= 1;
+    document.getElementById('nextPageBtn').disabled = currentPendingPage >= totalPendingPages;
 }
 
 // 更新日志显示
@@ -682,27 +1198,52 @@ function updateDownloadDetails() {
 
 function updateStatus() {
     console.log('[DEBUG] updateStatus() 被调用');
-    fetch('{{ url_for("download_data_bp.get_download_status") }}')
+    fetch('{{ url_for("download_data_bp.get_pipeline_status") }}')
         .then(res => res.json())
         .then(data => {
             // 更新缓存的状态
             lastDownloadStatus = {status: data.status, progress: data.progress};
-            
+
             document.getElementById('statusText').innerText = data.status;
             document.getElementById('progressText').innerText = data.progress + '%';
-            
+
             // 更新进度条
             const progressBar = document.getElementById('progressBar');
             progressBar.style.width = data.progress + '%';
             progressBar.innerText = data.progress + '%';
-            
+
+            // 更新流水线显示
+            const pipelineDiv = document.getElementById('pipelineSteps');
+            if (data.current_step > 0) {
+                pipelineDiv.style.display = 'flex';
+                document.getElementById('currentStock').innerText = data.current_stock || '-';
+                document.getElementById('stockIndex').innerText =
+                    data.stock_index ? '(' + data.stock_index + '/' + data.total_stocks + ')' : '';
+                document.getElementById('currentStep').innerText =
+                    'Step ' + data.current_step + '/3: ' + data.step_name;
+
+                // 更新步骤指示器
+                for (let s = 1; s <= 3; s++) {
+                    const stepEl = document.getElementById('pipeStep' + s);
+                    stepEl.className = 'pipeline-step';
+                    if (s < data.current_step) stepEl.classList.add('completed');
+                    else if (s === data.current_step) stepEl.classList.add('active');
+                }
+            } else {
+                document.getElementById('currentStep').innerText = '-';
+                for (let s = 1; s <= 3; s++) {
+                    document.getElementById('pipeStep' + s).className = 'pipeline-step';
+                }
+            }
+
             // 同时更新下载状态显示（避免重复调用API）
             updateDownloadStatusDisplayFromCache();
-            
+
             if (data.status === '已完成' || data.status === '已停止' || data.status === '无数据下载') {
                 console.log('[DEBUG] 下载已完成/停止，清理polling定时器');
                 document.getElementById('startBtn').disabled = false;
                 document.getElementById('stopBtn').disabled = true;
+                pipelineDiv.style.display = 'none';
                 if (polling) {
                     clearInterval(polling);
                     polling = null;
@@ -713,6 +1254,29 @@ function updateStatus() {
         .catch(error => {
             console.error('获取状态失败:', error);
         });
+}
+
+// 加载今日数据状态
+function loadTodayTaskStatus() {
+    fetch('{{ url_for("download_data_bp.get_today_task_status") }}')
+        .then(r => r.json())
+        .then(d => {
+            if (d.error) return;
+            document.getElementById('taskDate').textContent = d.date;
+            const total = d.total || 1; // 避免除零
+            const items = [
+                ['Daily', d.daily], ['1m', d.dl_1m], ['15m', d.gen_15m], ['Macd', d.macd],
+                ['Clean', d.cleaned], ['Vol', d.volume], ['Feat', d.feature], ['Rnn', d.rnn],
+            ];
+            items.forEach(([key, val]) => {
+                const pct = total > 0 ? Math.round(val / total * 100) : 0;
+                const bar = document.getElementById('bar' + key);
+                const cnt = document.getElementById('count' + key);
+                if (bar) bar.style.width = pct + '%';
+                if (cnt) cnt.textContent = val + '/' + d.total + ' (' + pct + '%)';
+            });
+        })
+        .catch(e => console.error('获取今日任务状态失败:', e));
 }
 
 // 检测网络状态
@@ -763,12 +1327,12 @@ function updateDownloadStatusDisplayFromCache() {
     const statusElement = document.getElementById('downloadStatusText');
     const status = lastDownloadStatus.status;
     const progress = lastDownloadStatus.progress;
-    
+
     if (status === '未开始') {
         statusElement.textContent = '准备就绪';
         statusElement.style.color = '#6b7280';
-    } else if (status === '进行中') {
-        statusElement.textContent = `下载中 (${progress}%)`;
+    } else if (status.startsWith('进行中')) {
+        statusElement.textContent = `${status} (${progress}%)`;
         statusElement.style.color = '#3b82f6';
     } else if (status === '已完成') {
         statusElement.textContent = '下载完成';
@@ -823,13 +1387,13 @@ function startBasicPolling() {
     console.log('[DEBUG] 准备启动基础轮询...');
     
     // 每5秒更新一次统计数据（低频）
-    if (statsPolling) {
-        clearInterval(statsPolling);
-        console.log('[DEBUG] 清理现有的统计数据轮询');
-    }
+    if (statsPolling) clearInterval(statsPolling);
+    if (taskStatusPolling) clearInterval(taskStatusPolling);
     statsPolling = setInterval(updateStatistics, 5000);
-    console.log('[DEBUG] 启动低频统计数据轮询，间隔5秒');
-    
+
+    // 每10秒更新今日任务状态
+    taskStatusPolling = setInterval(loadTodayTaskStatus, 10000);
+
     // 每10秒检测一次网络状态
     if (networkPolling) {
         clearInterval(networkPolling);
@@ -874,10 +1438,10 @@ function startHighFrequencyPolling() {
     console.log('[DEBUG] 启动高频详细信息轮询，间隔1秒');
     
     statsPolling = setInterval(updateStatistics, 1000);
-    console.log('[DEBUG] 启动高频统计数据轮询，间隔1秒');
-    
-    // statusDisplayPolling 不再需要，因为状态显示已合并到updateStatus中
-    console.log('[DEBUG] 状态显示已合并到updateStatus，不再需要单独轮询');
+
+    // 下载中每3秒更新今日任务状态
+    if (taskStatusPolling) clearInterval(taskStatusPolling);
+    taskStatusPolling = setInterval(loadTodayTaskStatus, 3000);
 }
 
 // 重置失败的股票为待下载状态
@@ -905,13 +1469,16 @@ function resetFailedStocks() {
 // 页面加载时获取统计数据
 document.addEventListener('DOMContentLoaded', function() {
     console.log('[DEBUG] 页面加载完成，开始初始化...');
-    
+
     // 页面加载时重置失败的股票
     resetFailedStocks();
-    
+
     // 立即执行一次更新
     updateStatistics();
-    updateDownloadDetails();
+    loadTodayTaskStatus();
+    loadPendingStocks(1);   // 加载等待下载的股票列表
+    loadSuccessStocks(1);   // 加载成功下载的股票列表
+    loadFailedStocks(1);    // 加载失败下载的股票列表
     checkNetworkStatus();
     checkDataSourceStatus();
     updateDownloadStatusDisplay();
@@ -938,13 +1505,20 @@ document.getElementById('startBtn').onclick = function() {
     updateSuccessList();
     updateFailedList();
     updateLogs();
-    
-    addLog('开始下载任务...', 'info');
-    
+
+    // 获取用户选择的下载天数和强制重下
+    const downloadDays = document.getElementById('downloadDays').value;
+    const forceDownload = document.getElementById('forceDownload').checked;
+    addLog(`开始下载任务（最近${downloadDays}天数据${forceDownload ? '，强制重下' : ''}）...`, 'info');
+
     // 开始下载前先重置失败的股票
     resetFailedStocks();
-    
-    fetch('{{ url_for("download_data_bp.start_download") }}', {method: 'POST'})
+
+    fetch('{{ url_for("download_data_bp.start_download") }}', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({days: parseInt(downloadDays), force: forceDownload})
+    })
         .then(res => res.json())
         .then(data => {
             document.getElementById('startBtn').disabled = true;
@@ -955,7 +1529,10 @@ document.getElementById('startBtn').onclick = function() {
             updateStatus();
             updateStatistics();
             updateDownloadDetails();
-            
+            loadPendingStocks(currentPendingPage);
+            loadSuccessStocks(currentSuccessPage);
+            loadFailedStocks(currentFailedPage);
+
             // 启动高频轮询（下载时使用）
             console.log('[DEBUG] 启动高频轮询...');
             startHighFrequencyPolling();
@@ -978,7 +1555,10 @@ document.getElementById('stopBtn').onclick = function() {
             // 立即更新一次状态
             updateStatistics();
             updateDownloadDetails();
-            
+            loadPendingStocks(currentPendingPage);
+            loadSuccessStocks(currentSuccessPage);
+            loadFailedStocks(currentFailedPage);
+
             // 清理高频轮询，回到基础轮询
             console.log('[DEBUG] 清理高频轮询，回到基础轮询...');
             clearInterval(polling);
@@ -1039,6 +1619,61 @@ document.getElementById('openFolderBtn').onclick = function() {
         .catch(error => {
             console.error('打开文件夹失败:', error);
             alert('打开文件夹失败: ' + error.message);
+        });
+};
+
+document.getElementById('setDateBtn').onclick = function() {
+    // 默认日期设置为2025-12-24
+    const defaultDate = '2025-12-24';
+    const userDate = prompt('请输入下载结束日期（格式：YYYY-MM-DD）\n\n设置后所有股票将从该日期开始重新下载最新数据。', defaultDate);
+
+    if (!userDate) {
+        return; // 用户取消
+    }
+
+    // 验证日期格式
+    const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+    if (!dateRegex.test(userDate)) {
+        alert('日期格式错误，请使用 YYYY-MM-DD 格式');
+        return;
+    }
+
+    const btn = document.getElementById('setDateBtn');
+    const originalText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = '设置中...';
+    addLog(`正在将所有股票的结束日期设置为 ${userDate}...`, 'info');
+
+    fetch('{{ url_for("download_data_bp.set_download_end_date") }}', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({end_date: userDate})
+    })
+        .then(res => res.json())
+        .then(data => {
+            if (data.success) {
+                addLog(data.message, 'success');
+                alert(data.message);
+                // 刷新统计数据和列表
+                updateStatistics();
+                loadPendingStocks(1);
+                loadSuccessStocks(1);
+                loadFailedStocks(1);
+            } else {
+                addLog('设置失败: ' + data.message, 'error');
+                alert('设置失败: ' + data.message);
+            }
+        })
+        .catch(error => {
+            console.error('设置日期失败:', error);
+            addLog('设置日期失败: ' + error.message, 'error');
+            alert('设置日期失败: ' + error.message);
+        })
+        .finally(() => {
+            btn.disabled = false;
+            btn.textContent = originalText;
         });
 };
 </script>

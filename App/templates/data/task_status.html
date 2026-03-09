@@ -1,0 +1,553 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container">
+    <div class="page-header">
+        <h1>每日任务状态看板</h1>
+        <p>跟踪每只股票每日数据处理流水线的完成情况</p>
+    </div>
+
+    <!-- 筛选栏 -->
+    <div class="filter-bar">
+        <div class="filter-group">
+            <label>日期</label>
+            <input type="date" id="filterDate" />
+        </div>
+        <div class="filter-group">
+            <label>股票代码</label>
+            <input type="text" id="filterStock" placeholder="输入代码搜索" />
+        </div>
+        <div class="filter-group">
+            <label>状态</label>
+            <select id="filterStatus">
+                <option value="all">全部</option>
+                <option value="incomplete">未完成</option>
+                <option value="complete">已完成</option>
+            </select>
+        </div>
+        <button class="btn btn-primary" onclick="loadData()">查询</button>
+        <button class="btn btn-secondary" onclick="loadSummary()">刷新统计</button>
+    </div>
+
+    <!-- 统计概览 -->
+    <div class="summary-cards" id="summaryCards">
+        <div class="summary-card">
+            <div class="card-value" id="sumTotal">-</div>
+            <div class="card-label">总记录数</div>
+        </div>
+        <div class="summary-card card-success">
+            <div class="card-value" id="sumCoreDone">-</div>
+            <div class="card-label">核心任务完成</div>
+        </div>
+        <div class="summary-card card-warning">
+            <div class="card-value" id="sumCoreRate">-</div>
+            <div class="card-label">完成率</div>
+        </div>
+    </div>
+
+    <!-- 任务进度条 -->
+    <div class="progress-section" id="progressSection" style="display:none;">
+        <h3>各任务完成进度</h3>
+        <div class="progress-grid" id="progressGrid"></div>
+    </div>
+
+    <!-- 数据表格 -->
+    <div class="table-section">
+        <div class="table-wrapper">
+            <table id="taskTable">
+                <thead>
+                    <tr>
+                        <th>股票代码</th>
+                        <th>日期</th>
+                        <th class="task-col">1m下载</th>
+                        <th class="task-col">1m清洗</th>
+                        <th class="task-col">15m生成</th>
+                        <th class="task-col">MACD</th>
+                        <th class="task-col">成交量</th>
+                        <th class="task-col">日K</th>
+                        <th class="task-col">特征</th>
+                        <th class="task-col">RNN</th>
+                        <th class="task-col">板块</th>
+                        <th class="task-col">基金</th>
+                        <th>完成率</th>
+                        <th>趋势</th>
+                        <th>评分</th>
+                        <th>交易</th>
+                    </tr>
+                </thead>
+                <tbody id="taskTableBody">
+                    <tr><td colspan="16" class="empty-msg">请选择日期后点击查询</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- 分页 -->
+        <div class="pagination" id="pagination"></div>
+    </div>
+</div>
+
+<style>
+    .container {
+        max-width: 1400px;
+        margin: 0 auto;
+        padding: 1rem;
+    }
+
+    .page-header {
+        margin-bottom: 1.5rem;
+    }
+
+    .page-header h1 {
+        font-size: 1.8rem;
+        color: var(--primary-color);
+        margin-bottom: 0.3rem;
+    }
+
+    .page-header p {
+        color: var(--text-secondary);
+        font-size: 0.95rem;
+    }
+
+    /* 筛选栏 */
+    .filter-bar {
+        display: flex;
+        align-items: flex-end;
+        gap: 1rem;
+        flex-wrap: wrap;
+        padding: 1rem 1.5rem;
+        background: var(--card-background);
+        border-radius: 0.75rem;
+        box-shadow: var(--shadow-sm);
+        margin-bottom: 1.5rem;
+    }
+
+    .filter-group {
+        display: flex;
+        flex-direction: column;
+        gap: 0.3rem;
+    }
+
+    .filter-group label {
+        font-size: 0.8rem;
+        color: var(--text-secondary);
+        font-weight: 500;
+    }
+
+    .filter-group input,
+    .filter-group select {
+        padding: 0.5rem 0.75rem;
+        border: 1px solid #d1d5db;
+        border-radius: 0.4rem;
+        font-size: 0.9rem;
+        outline: none;
+        transition: border-color 0.2s;
+    }
+
+    .filter-group input:focus,
+    .filter-group select:focus {
+        border-color: var(--primary-color);
+    }
+
+    .btn {
+        padding: 0.5rem 1.2rem;
+        border: none;
+        border-radius: 0.4rem;
+        font-size: 0.9rem;
+        font-weight: 500;
+        cursor: pointer;
+        transition: opacity 0.2s;
+    }
+
+    .btn:hover { opacity: 0.85; }
+
+    .btn-primary {
+        background: var(--primary-color);
+        color: white;
+    }
+
+    .btn-secondary {
+        background: #6b7280;
+        color: white;
+    }
+
+    /* 统计卡片 */
+    .summary-cards {
+        display: flex;
+        gap: 1rem;
+        margin-bottom: 1.5rem;
+    }
+
+    .summary-card {
+        flex: 1;
+        background: var(--card-background);
+        border-radius: 0.75rem;
+        padding: 1.2rem 1.5rem;
+        box-shadow: var(--shadow-sm);
+        border-left: 4px solid var(--primary-color);
+    }
+
+    .summary-card.card-success { border-left-color: var(--success-color); }
+    .summary-card.card-warning { border-left-color: var(--warning-color); }
+
+    .card-value {
+        font-size: 1.8rem;
+        font-weight: 700;
+        color: var(--text-primary);
+    }
+
+    .card-label {
+        font-size: 0.85rem;
+        color: var(--text-secondary);
+        margin-top: 0.2rem;
+    }
+
+    /* 进度条 */
+    .progress-section {
+        background: var(--card-background);
+        border-radius: 0.75rem;
+        padding: 1.2rem 1.5rem;
+        box-shadow: var(--shadow-sm);
+        margin-bottom: 1.5rem;
+    }
+
+    .progress-section h3 {
+        font-size: 1rem;
+        margin-bottom: 1rem;
+        color: var(--text-primary);
+    }
+
+    .progress-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+        gap: 0.8rem;
+    }
+
+    .progress-item {
+        display: flex;
+        flex-direction: column;
+        gap: 0.3rem;
+    }
+
+    .progress-label {
+        display: flex;
+        justify-content: space-between;
+        font-size: 0.8rem;
+        color: var(--text-secondary);
+    }
+
+    .progress-bar-bg {
+        height: 8px;
+        background: #e5e7eb;
+        border-radius: 4px;
+        overflow: hidden;
+    }
+
+    .progress-bar-fill {
+        height: 100%;
+        border-radius: 4px;
+        transition: width 0.5s ease;
+    }
+
+    /* 表格 */
+    .table-section {
+        background: var(--card-background);
+        border-radius: 0.75rem;
+        box-shadow: var(--shadow-sm);
+        overflow: hidden;
+    }
+
+    .table-wrapper {
+        overflow-x: auto;
+    }
+
+    table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.85rem;
+    }
+
+    th {
+        background: #f8fafc;
+        padding: 0.7rem 0.5rem;
+        text-align: center;
+        font-weight: 600;
+        color: var(--text-secondary);
+        border-bottom: 2px solid #e2e8f0;
+        white-space: nowrap;
+    }
+
+    td {
+        padding: 0.6rem 0.5rem;
+        text-align: center;
+        border-bottom: 1px solid #f1f5f9;
+        white-space: nowrap;
+    }
+
+    tr:hover td {
+        background: #f8fafc;
+    }
+
+    .task-col { min-width: 50px; }
+
+    .tag-done {
+        display: inline-block;
+        width: 20px;
+        height: 20px;
+        line-height: 20px;
+        border-radius: 50%;
+        background: var(--success-color);
+        color: white;
+        font-size: 0.7rem;
+        font-weight: 700;
+    }
+
+    .tag-pending {
+        display: inline-block;
+        width: 20px;
+        height: 20px;
+        line-height: 20px;
+        border-radius: 50%;
+        background: #e5e7eb;
+        color: #9ca3af;
+        font-size: 0.7rem;
+    }
+
+    .rate-bar {
+        display: inline-block;
+        width: 50px;
+        height: 6px;
+        background: #e5e7eb;
+        border-radius: 3px;
+        overflow: hidden;
+        vertical-align: middle;
+        margin-right: 4px;
+    }
+
+    .rate-bar-fill {
+        height: 100%;
+        border-radius: 3px;
+    }
+
+    .signal-up { color: #dc2626; font-weight: 600; }
+    .signal-down { color: #16a34a; font-weight: 600; }
+
+    .trade-buy { color: #dc2626; font-weight: 600; }
+    .trade-sell { color: #16a34a; font-weight: 600; }
+
+    .empty-msg {
+        padding: 2rem !important;
+        color: var(--text-secondary);
+    }
+
+    /* 分页 */
+    .pagination {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 1rem;
+    }
+
+    .pagination button {
+        padding: 0.4rem 0.8rem;
+        border: 1px solid #d1d5db;
+        background: white;
+        border-radius: 0.3rem;
+        cursor: pointer;
+        font-size: 0.85rem;
+    }
+
+    .pagination button.active {
+        background: var(--primary-color);
+        color: white;
+        border-color: var(--primary-color);
+    }
+
+    .pagination button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+
+    @media (max-width: 768px) {
+        .summary-cards { flex-direction: column; }
+        .filter-bar { flex-direction: column; align-items: stretch; }
+    }
+</style>
+
+<script>
+    let currentPage = 1;
+    let totalPages = 1;
+
+    // 初始化：设置默认日期为今天
+    document.addEventListener('DOMContentLoaded', function() {
+        const today = new Date().toISOString().split('T')[0];
+        document.getElementById('filterDate').value = today;
+        loadData();
+        loadSummary();
+    });
+
+    function loadData() {
+        const dateVal = document.getElementById('filterDate').value;
+        const stockVal = document.getElementById('filterStock').value;
+        const statusVal = document.getElementById('filterStatus').value;
+
+        let url = `/api/task_status/list?page=${currentPage}&per_page=50`;
+        if (dateVal) url += `&date=${dateVal}`;
+        if (stockVal) url += `&stock_code=${stockVal}`;
+        if (statusVal) url += `&status=${statusVal}`;
+
+        fetch(url)
+            .then(r => r.json())
+            .then(data => {
+                if (data.error) {
+                    alert('查询失败: ' + data.error);
+                    return;
+                }
+                totalPages = data.total_pages;
+                renderTable(data.data);
+                renderPagination(data.page, data.total_pages, data.total);
+            })
+            .catch(e => console.error('加载失败:', e));
+
+        loadSummary();
+    }
+
+    function loadSummary() {
+        const dateVal = document.getElementById('filterDate').value;
+        if (!dateVal) return;
+
+        fetch(`/api/task_status/summary?date=${dateVal}`)
+            .then(r => r.json())
+            .then(data => {
+                document.getElementById('sumTotal').textContent = data.total;
+                document.getElementById('sumCoreDone').textContent = data.all_core_done || 0;
+                document.getElementById('sumCoreRate').textContent = (data.core_rate || 0) + '%';
+
+                // 渲染进度条
+                if (data.total > 0 && data.tasks) {
+                    document.getElementById('progressSection').style.display = 'block';
+                    renderProgress(data.tasks);
+                } else {
+                    document.getElementById('progressSection').style.display = 'none';
+                }
+            })
+            .catch(e => console.error('统计加载失败:', e));
+    }
+
+    function renderProgress(tasks) {
+        const grid = document.getElementById('progressGrid');
+        grid.innerHTML = '';
+
+        for (const [key, info] of Object.entries(tasks)) {
+            const color = info.rate >= 100 ? '#10b981' :
+                          info.rate >= 50  ? '#f59e0b' : '#ef4444';
+            grid.innerHTML += `
+                <div class="progress-item">
+                    <div class="progress-label">
+                        <span>${info.label}</span>
+                        <span>${info.done}/${info.total} (${info.rate}%)</span>
+                    </div>
+                    <div class="progress-bar-bg">
+                        <div class="progress-bar-fill" style="width:${info.rate}%; background:${color};"></div>
+                    </div>
+                </div>
+            `;
+        }
+    }
+
+    function renderTable(rows) {
+        const tbody = document.getElementById('taskTableBody');
+
+        if (!rows || rows.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="16" class="empty-msg">暂无数据</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = rows.map(r => {
+            const taskFields = [
+                'is_1m_downloaded', 'is_1m_cleaned', 'is_15m_generated',
+                'is_macd_calculated', 'is_volume_processed', 'is_daily_processed',
+                'is_feature_generated', 'is_rnn_predicted', 'is_board_downloaded',
+                'is_fund_analyzed'
+            ];
+
+            const taskCells = taskFields.map(f =>
+                `<td>${r[f] ? '<span class="tag-done">V</span>' : '<span class="tag-pending">-</span>'}</td>`
+            ).join('');
+
+            // 完成率
+            const rate = r.core_rate || 0;
+            const rateColor = rate >= 100 ? '#10b981' : rate >= 50 ? '#f59e0b' : '#ef4444';
+            const rateCell = `<td>
+                <span class="rate-bar"><span class="rate-bar-fill" style="width:${rate}%;background:${rateColor};"></span></span>
+                ${rate}%
+            </td>`;
+
+            // 趋势
+            let signalCell = '<td>-</td>';
+            if (r.signal_name) {
+                const cls = r.signal === 1 ? 'signal-up' : 'signal-down';
+                signalCell = `<td class="${cls}">${r.signal_name}</td>`;
+            }
+
+            // 评分
+            const scoreCell = `<td>${r.trend_score != null ? r.trend_score : '-'}</td>`;
+
+            // 交易动作
+            let tradeCell = '<td>-</td>';
+            if (r.trade_action === 1) {
+                tradeCell = '<td class="trade-buy">买入</td>';
+            } else if (r.trade_action === -1) {
+                tradeCell = '<td class="trade-sell">卖出</td>';
+            }
+
+            return `<tr>
+                <td><strong>${r.stock_code}</strong></td>
+                <td>${r.date}</td>
+                ${taskCells}
+                ${rateCell}
+                ${signalCell}
+                ${scoreCell}
+                ${tradeCell}
+            </tr>`;
+        }).join('');
+    }
+
+    function renderPagination(page, total, totalRecords) {
+        const div = document.getElementById('pagination');
+
+        if (total <= 1) {
+            div.innerHTML = totalRecords > 0 ? `<span style="color:var(--text-secondary);font-size:0.85rem;">共 ${totalRecords} 条记录</span>` : '';
+            return;
+        }
+
+        let html = `<span style="color:var(--text-secondary);font-size:0.85rem;margin-right:1rem;">共 ${totalRecords} 条</span>`;
+        html += `<button ${page <= 1 ? 'disabled' : ''} onclick="goPage(${page - 1})">上一页</button>`;
+
+        const start = Math.max(1, page - 2);
+        const end = Math.min(total, page + 2);
+        for (let i = start; i <= end; i++) {
+            html += `<button class="${i === page ? 'active' : ''}" onclick="goPage(${i})">${i}</button>`;
+        }
+
+        html += `<button ${page >= total ? 'disabled' : ''} onclick="goPage(${page + 1})">下一页</button>`;
+        div.innerHTML = html;
+    }
+
+    function goPage(p) {
+        currentPage = p;
+        loadData();
+    }
+
+    // 回车搜索
+    document.getElementById('filterStock').addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') loadData();
+    });
+
+    // 日期变化自动查询
+    document.getElementById('filterDate').addEventListener('change', function() {
+        currentPage = 1;
+        loadData();
+    });
+</script>
+{% endblock %}

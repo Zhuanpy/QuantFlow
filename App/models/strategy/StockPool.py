@@ -15,14 +15,14 @@ class StockPool(db.Model):
     股票池管理表
     基于record_stock_minute表建立，用于管理模型训练所需的股票池
     """
-    __tablename__ = 'stock_pool'
+    __tablename__ = 'strategy_stock_pool'
     __bind_key__ = 'quanttradingsystem'
 
     # 主键
     id = db.Column(db.BigInteger, primary_key=True, autoincrement=True, comment='主键ID')
     
-    # 关联到record_stock_minute表
-    record_id = db.Column(db.BigInteger, db.ForeignKey('record_stock_minute.id', ondelete='CASCADE'), 
+    # 关联到data_download_records表
+    record_id = db.Column(db.BigInteger, db.ForeignKey('data_download_records.id', ondelete='CASCADE'),
                          nullable=False, comment='关联的下载记录ID')
     
     # 股票基本信息

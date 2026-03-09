@@ -166,15 +166,23 @@ def api_process_15m_data():
                 'message': f'未找到1分钟数据文件: {file_path_1m}'
             }), 404
         
-        # 读取1分钟数据（当前季度 + 前一季度）
+        # 读取1分钟数据（当前季度 + 前一季度），支持Parquet和CSV
         try:
-            df_1m_current = pd.read_csv(file_path_1m, parse_dates=['date'])
+            if file_path_1m.endswith('.parquet'):
+                df_1m_current = pd.read_parquet(file_path_1m)
+                df_1m_current['date'] = pd.to_datetime(df_1m_current['date'])
+            else:
+                df_1m_current = pd.read_csv(file_path_1m, parse_dates=['date'])
             logger.info(f"成功读取当前季度1分钟数据: {len(df_1m_current)} 条记录")
-            
+
             # 尝试读取前一个季度的数据（用于MACD计算的历史数据）
             file_path_1m_prev = get_stock_data_path(stock_code, data_type='1m', year=str(prev_year), quarter=prev_quarter)
             if os.path.exists(file_path_1m_prev):
-                df_1m_prev = pd.read_csv(file_path_1m_prev, parse_dates=['date'])
+                if file_path_1m_prev.endswith('.parquet'):
+                    df_1m_prev = pd.read_parquet(file_path_1m_prev)
+                    df_1m_prev['date'] = pd.to_datetime(df_1m_prev['date'])
+                else:
+                    df_1m_prev = pd.read_csv(file_path_1m_prev, parse_dates=['date'])
                 logger.info(f"成功读取前一季度1分钟数据: {len(df_1m_prev)} 条记录")
                 # 合并前一季度和当前季度的数据
                 df_1m_full = pd.concat([df_1m_prev, df_1m_current]).sort_values('date').reset_index(drop=True)
@@ -237,8 +245,12 @@ def api_process_15m_data():
         try:
             # 统一使用追加模式，去重以最新数据为准
             if os.path.exists(file_path_15m):
-                # 读取现有数据并合并
-                existing_data = pd.read_csv(file_path_15m, parse_dates=['date'])
+                # 读取现有数据并合并（支持parquet和csv）
+                if file_path_15m.endswith('.parquet'):
+                    existing_data = pd.read_parquet(file_path_15m)
+                    existing_data['date'] = pd.to_datetime(existing_data['date'])
+                else:
+                    existing_data = pd.read_csv(file_path_15m, parse_dates=['date'])
                 # 清理旧数据中的 SignalTimes 列
                 if 'SignalTimes' in existing_data.columns:
                     existing_data = existing_data.drop(columns=['SignalTimes'])
@@ -247,8 +259,11 @@ def api_process_15m_data():
                 combined_data = combined_data.sort_values('date')
                 df_15m = combined_data
                 logger.info(f"合并现有15分钟数据，保留最新记录")
-            
-            df_15m.to_csv(file_path_15m, index=False)
+
+            if file_path_15m.endswith('.parquet'):
+                df_15m.to_parquet(file_path_15m, index=False, engine='pyarrow')
+            else:
+                df_15m.to_csv(file_path_15m, index=False)
             logger.info(f"成功保存15分钟普通数据（含信号）: {file_path_15m}")
         except Exception as e:
             return jsonify({
@@ -544,21 +559,31 @@ def api_check_15m_data():
         stats = {}
         if has_1m_data:
             try:
-                df_1m = pd.read_csv(file_path_1m, parse_dates=['date'])
+                if file_path_1m.endswith('.parquet'):
+                    df_1m = pd.read_parquet(file_path_1m)
+                    df_1m['date'] = pd.to_datetime(df_1m['date'])
+                else:
+                    df_1m = pd.read_csv(file_path_1m, parse_dates=['date'])
                 stats['records_1m'] = int(len(df_1m))  # 转换为Python int
             except:
                 stats['records_1m'] = '读取失败'
         
         if has_15m_data:
             try:
-                df_15m = pd.read_csv(file_path_15m, parse_dates=['date'])
+                if file_path_15m.endswith('.parquet'):
+                    df_15m = pd.read_parquet(file_path_15m)
+                else:
+                    df_15m = pd.read_csv(file_path_15m, parse_dates=['date'])
                 stats['records_15m'] = int(len(df_15m))  # 转换为Python int
             except:
                 stats['records_15m'] = '读取失败'
-        
+
         if has_standardized_data:
             try:
-                df_std = pd.read_csv(file_path_standardized, parse_dates=['date'])
+                if file_path_standardized.endswith('.parquet'):
+                    df_std = pd.read_parquet(file_path_standardized)
+                else:
+                    df_std = pd.read_csv(file_path_standardized, parse_dates=['date'])
                 stats['records_standardized'] = int(len(df_std))  # 转换为Python int
                 # 检查是否包含信号数据
                 if Signal in df_std.columns:

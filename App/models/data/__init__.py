@@ -2,27 +2,40 @@
 data 子模块
 
 包含所有基础数据相关模型：
-- StockBasicInformationOthersCode
-- StockBasicInformationStock
+- StockInfo (原 StockCodes)
+- StockClassification
+- MyStockMarket (我的股票市场)
 - StockDaily
-- Stock1m
-- Stock15m
-- FundsAwkward
-- RecordStockMinute
-- data_summary
+- DownloadRecord (原 RecordStockMinute)
+- DataSummary
 """
 
-from .basic_info import StockCodes, StockClassification
-from .Stock1m import RecordStockMinute
-from .StockDaily import StockDaily, save_daily_stock_data_to_sql, get_daily_stock_data, get_multiple_stocks_data, get_stock_list, get_market_overview, update_fund_holdings_data
-# from .Stock15m import Stock15m
-# from .FundsAwkward import FundsAwkward
-# from .summary import data_summary
+from .basic_info import StockInfo, StockCodes, StockClassification
+from .MyStockMarket import MyStockMarket
+from .Stock1m import DownloadRecord, RecordStockMinute
+from .StockDaily import (
+    StockDaily,
+    save_daily_stock_data_to_sql,
+    get_daily_stock_data,
+    get_multiple_stocks_data,
+    get_stock_list,
+    get_market_overview,
+    update_fund_holdings_data
+)
+from .summary import DataSummary
+from .DailyTaskStatus import DailyTaskStatus
 
 __all__ = [
+    # 新类名
+    'StockInfo',
+    'MyStockMarket',
+    'DownloadRecord',
+    'DataSummary',
+    # 向后兼容别名
     'StockCodes',
-    'StockClassification', 
     'RecordStockMinute',
+    # 其他
+    'StockClassification',
     'StockDaily',
     'save_daily_stock_data_to_sql',
     'get_daily_stock_data',
@@ -30,8 +43,5 @@ __all__ = [
     'get_stock_list',
     'get_market_overview',
     'update_fund_holdings_data',
-    'Stock15m',
-    'FundsAwkward',
-    #'data_summary'
+    'DailyTaskStatus',
 ]
-

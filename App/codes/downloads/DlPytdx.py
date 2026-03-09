@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-使用 pytdx 下载股票数据
+使用 pytdx 下载股票和板块数据
 作为东方财富API的可靠替代方案
 """
 
@@ -223,7 +223,28 @@ class PytdxDownloader:
         
         # 去重并排序
         df = df.drop_duplicates(subset=['date']).sort_values('date').reset_index(drop=True)
-        
+
+        # 过滤掉非交易时间的数据（9:15-9:29 集合竞价数据）
+        # A股交易时间：上午 9:30-11:30，下午 13:00-15:00
+        from datetime import time as dt_time
+        original_len = len(df)
+        df_time = df['date'].dt.time
+
+        morning_start = dt_time(9, 30)
+        morning_end = dt_time(11, 30)
+        afternoon_start = dt_time(13, 0)
+        afternoon_end = dt_time(15, 0)
+
+        valid_time_mask = (
+            ((df_time >= morning_start) & (df_time <= morning_end)) |
+            ((df_time >= afternoon_start) & (df_time <= afternoon_end))
+        )
+        df = df[valid_time_mask].reset_index(drop=True)
+
+        filtered_count = original_len - len(df)
+        if filtered_count > 0:
+            logging.info(f"过滤掉 {filtered_count} 条非交易时间数据（集合竞价等）")
+
         return df
     
     def __enter__(self):
@@ -239,16 +260,209 @@ class PytdxDownloader:
 def download_stock_1m_pytdx(stock_code, days=5):
     """
     便捷函数：使用 pytdx 下载股票1分钟数据
-    
+
     Parameters:
     stock_code: 股票代码
     days: 获取天数
-    
+
     Returns:
     tuple: (DataFrame, end_date)
     """
     with PytdxDownloader() as downloader:
         return downloader.get_1m_data(stock_code, days)
+
+
+class PytdxBoardDownloader:
+    """pytdx 板块数据下载器（使用标准行情接口的指数方法）"""
+
+    def __init__(self):
+        self.api = None
+        self.current_server = None
+
+    def connect(self):
+        """连接到标准行情服务器"""
+        for server_ip, server_port in AVAILABLE_SERVERS:
+            try:
+                self.api = TdxHq_API()
+                if self.api.connect(server_ip, server_port, time_out=5):
+                    self.current_server = (server_ip, server_port)
+                    logging.info(f"✓ 板块下载器成功连接到服务器: {server_ip}:{server_port}")
+                    return True
+            except Exception as e:
+                logging.debug(f"连接 {server_ip}:{server_port} 失败: {e}")
+                continue
+
+        logging.error("❌ 无法连接到任何行情服务器")
+        return False
+
+    def disconnect(self):
+        """断开连接"""
+        if self.api:
+            try:
+                self.api.disconnect()
+                logging.debug("行情服务器连接已断开")
+            except:
+                pass
+
+    def get_1m_data(self, board_code, days=5):
+        """
+        获取板块1分钟K线数据
+
+        Parameters:
+        board_code: 板块代码，如 'BK0422'
+        days: 获取天数，默认5天
+
+        Returns:
+        tuple: (DataFrame, end_date) - 数据和最后日期
+        """
+        try:
+            # 如果未连接，尝试连接
+            if not self.api or not self.current_server:
+                if not self.connect():
+                    return pd.DataFrame(), None
+
+            # 转换板块代码格式：BK0422 -> 880422
+            # 东方财富 BK 开头，通达信板块指数 88 开头
+            if board_code.startswith('BK'):
+                tdx_code = '88' + board_code[2:]
+            else:
+                tdx_code = board_code
+
+            # 计算需要获取的K线数量（每天约240根1分钟线）
+            bars_needed = days * 240
+
+            logging.info(f"正在获取板块 {board_code} (通达信代码: {tdx_code}) 的 {days} 天数据...")
+
+            # 分批获取数据（每次最多800根）
+            all_data = []
+            batch_size = 800
+            batches_needed = (bars_needed + batch_size - 1) // batch_size
+
+            for i in range(batches_needed):
+                start_pos = i * batch_size
+                count = min(batch_size, bars_needed - start_pos)
+
+                # 使用标准行情接口的 get_index_bars 获取板块指数K线
+                # market=1 表示上海（板块指数在上海市场）
+                # category=8 表示1分钟线
+                data = self.api.get_index_bars(
+                    8,      # 1分钟线
+                    1,      # 市场（1=上海）
+                    tdx_code,
+                    start_pos,
+                    count
+                )
+
+                if data:
+                    all_data.extend(data)
+                    logging.debug(f"  批次 {i+1}/{batches_needed} 获取 {len(data)} 条")
+                else:
+                    logging.warning(f"  批次 {i+1}/{batches_needed} 返回空数据")
+                    break
+
+                # 添加小延迟
+                if i < batches_needed - 1:
+                    import time
+                    time.sleep(0.1)
+
+            if not all_data:
+                logging.warning(f"板块 {board_code} 返回空数据")
+                return pd.DataFrame(), None
+
+            # 转换为DataFrame
+            df = self._process_dataframe(all_data)
+
+            # 获取最后日期
+            end_date = df['date'].max().date() if not df.empty else None
+
+            logging.info(f"✓ 成功获取板块 {board_code} 的 {len(df)} 条记录")
+
+            return df, end_date
+
+        except Exception as e:
+            logging.error(f"获取板块 {board_code} 数据失败: {e}")
+            import traceback
+            logging.debug(traceback.format_exc())
+            return pd.DataFrame(), None
+
+    def _process_dataframe(self, data):
+        """处理原始数据为标准DataFrame"""
+        df = pd.DataFrame(data)
+
+        if df.empty:
+            return df
+
+        # 重命名列
+        df = df.rename(columns={
+            'datetime': 'date',
+            'open': 'open',
+            'high': 'high',
+            'low': 'low',
+            'close': 'close',
+            'vol': 'volume',
+            'amount': 'money'
+        })
+
+        # 转换日期格式
+        df['date'] = pd.to_datetime(df['date'])
+
+        # 确保包含所有必需的列
+        if 'money' not in df.columns:
+            df['money'] = 0
+
+        # 只保留必需的列
+        required_cols = ['date', 'open', 'close', 'high', 'low', 'volume', 'money']
+        for col in required_cols:
+            if col not in df.columns:
+                df[col] = 0
+        df = df[required_cols]
+
+        # 去重并排序
+        df = df.drop_duplicates(subset=['date']).sort_values('date').reset_index(drop=True)
+
+        # 过滤非交易时间
+        from datetime import time as dt_time
+        original_len = len(df)
+        df_time = df['date'].dt.time
+
+        morning_start = dt_time(9, 30)
+        morning_end = dt_time(11, 30)
+        afternoon_start = dt_time(13, 0)
+        afternoon_end = dt_time(15, 0)
+
+        valid_time_mask = (
+            ((df_time >= morning_start) & (df_time <= morning_end)) |
+            ((df_time >= afternoon_start) & (df_time <= afternoon_end))
+        )
+        df = df[valid_time_mask].reset_index(drop=True)
+
+        filtered_count = original_len - len(df)
+        if filtered_count > 0:
+            logging.info(f"过滤掉 {filtered_count} 条非交易时间数据")
+
+        return df
+
+    def __enter__(self):
+        self.connect()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.disconnect()
+
+
+def download_board_1m_pytdx(board_code, days=5):
+    """
+    便捷函数：使用 pytdx 下载板块1分钟数据
+
+    Parameters:
+    board_code: 板块代码，如 'BK0422'
+    days: 获取天数
+
+    Returns:
+    tuple: (DataFrame, end_date)
+    """
+    with PytdxBoardDownloader() as downloader:
+        return downloader.get_1m_data(board_code, days)
 
 
 # 测试代码

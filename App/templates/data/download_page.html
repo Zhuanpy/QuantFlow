@@ -58,6 +58,18 @@
                 15分钟数据处理：重采样 → 标准化 → 信号计算
             </p>
         </div>
+
+        <div class="card">
+            <h2>📡 通达信数据</h2>
+            <div class="button-group">
+                <a href="/tdx" class="button button-warning">
+                    <span>通达信数据管理</span>
+                </a>
+            </div>
+            <p class="card-description">
+                使用 pytdx 下载数据或读取本地通达信软件数据
+            </p>
+        </div>
     </div>
 </div>
 
@@ -149,6 +161,16 @@
 
     .button-highlight:hover {
         background: linear-gradient(135deg, #5a6fd8 0%, #6a4190 100%);
+    }
+
+    .button-warning {
+        background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+        color: white;
+        font-weight: bold;
+    }
+
+    .button-warning:hover {
+        background: linear-gradient(135deg, #d97706 0%, #b45309 100%);
     }
 
     @keyframes pulse {

@@ -9,14 +9,13 @@ import re
 import os
 from bs4 import BeautifulSoup
 
-from flask import Blueprint, render_template, jsonify, copy_current_request_context, current_app
+from flask import Blueprint, render_template, jsonify, copy_current_request_context, current_app, request
 import threading
 from datetime import date
 from App.exts import db
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from App.models.strategy.StockRecordModels import Top500FundRecord
-from App.models.data.FundsAwkward import save_funds_holdings_to_csv as funds_holdings_to_csv
 
 # 下载配置参数 - 可根据需要调整以降低对第三方网站的压力
 DOWNLOAD_CONFIG = {
@@ -265,79 +264,6 @@ def download_single_fund_data(fund_code):
         return None
 
 
-def funds_holdings_to_csv(data, download_date):
-    """将基金持仓数据保存到CSV文件"""
-    try:
-        # 创建下载目录 - 使用统一的路径计算方式
-        from App.models.data.FundsAwkward import get_funds_data_directory
-        csv_dir = get_funds_data_directory()
-        os.makedirs(csv_dir, exist_ok=True)
-        
-        # 生成文件名
-        csv_filename = f"funds_holdings_{download_date.strftime('%Y%m%d')}.csv"
-        csv_path = os.path.join(csv_dir, csv_filename)
-        
-        # 确保数据格式正确
-        if not data.empty:
-            # 确保所有字符串字段都是UTF-8编码
-            for col in data.select_dtypes(include=['object']).columns:
-                data[col] = data[col].astype(str).str.encode('utf-8').str.decode('utf-8')
-            
-            # 使用线程锁来确保线程安全
-            import tempfile
-            import threading
-            
-            # 创建线程锁（全局变量，确保所有线程共享同一个锁）
-            if not hasattr(funds_holdings_to_csv, '_file_lock'):
-                funds_holdings_to_csv._file_lock = threading.Lock()
-            
-            # 创建临时文件来写入数据
-            temp_file = tempfile.NamedTemporaryFile(mode='w', delete=False, encoding='utf-8-sig')
-            temp_path = temp_file.name
-            
-            try:
-                # 写入数据到临时文件
-                data.to_csv(temp_path, index=False, encoding='utf-8-sig')
-                temp_file.close()
-                
-                # 使用线程锁来安全地追加到目标文件
-                with funds_holdings_to_csv._file_lock:
-                    # 检查文件是否为空（是否需要写入header）
-                    file_exists = os.path.exists(csv_path) and os.path.getsize(csv_path) > 0
-                    
-                    if not file_exists:
-                        # 文件不存在或为空，写入完整数据（包括header）
-                        with open(temp_path, 'r', encoding='utf-8-sig') as temp_read:
-                            with open(csv_path, 'w', encoding='utf-8-sig') as target_file:
-                                target_file.write(temp_read.read())
-                        logging.info(f"基金持仓数据已保存到新文件: {csv_path}")
-                    else:
-                        # 文件存在且不为空，只写入数据行（不包括header）
-                        with open(temp_path, 'r', encoding='utf-8-sig') as temp_read:
-                            lines = temp_read.readlines()
-                            # 跳过header行，只写入数据行
-                            with open(csv_path, 'a', encoding='utf-8-sig') as target_file:
-                                for line in lines[1:]:
-                                    target_file.write(line)
-                        logging.info(f"基金持仓数据已追加到现有文件: {csv_path}")
-                
-                logging.info(f"本次保存 {len(data)} 条记录")
-                return True
-                        
-            finally:
-                # 清理临时文件
-                if os.path.exists(temp_path):
-                    os.unlink(temp_path)
-                    
-        else:
-            logging.warning("没有数据需要保存")
-            return False
-        
-    except Exception as e:
-        logging.error(f"保存基金持仓数据到CSV时出错: {e}")
-        return False
-
-
 def download_fund_data():
     """
     下载基金持仓数据任务（优化版本）。
@@ -365,152 +291,146 @@ def download_fund_data():
     # 初始化 Flask 应用的上下文，并获取下载任务的锁，确保多线程操作安全
     logging.info("[FUND_DOWNLOAD] 准备进入应用上下文")
     print("[FUND_DOWNLOAD] 准备进入应用上下文")
-    
-    with app.app_context(), download_lock:
-        task_state.reset()  # 重置任务状态
-        task_state.status = "进行中"  # 设置初始状态为"进行中"
-        logging.info(f"[FUND_DOWNLOAD] 任务状态已设置为: {task_state.status}")
-        print(f"[FUND_DOWNLOAD] 任务状态已设置为: {task_state.status}")
 
-    # 从数据库查询所有需要下载的基金记录（15天间隔逻辑）
-    logging.info("[FUND_DOWNLOAD] 开始查询基金记录")
-    print("[FUND_DOWNLOAD] 开始查询基金记录")
-    all_funds = Top500FundRecord.query.all()
-    logging.info(f"[FUND_DOWNLOAD] 查询到 {len(all_funds)} 个基金记录")
-    print(f"[FUND_DOWNLOAD] 查询到 {len(all_funds)} 个基金记录")
-    records_to_process = []
-    
-    for fund in all_funds:
-        if should_download_fund(fund):
-            records_to_process.append(fund)
-    
-    total_count = len(records_to_process)  # 记录总数
-    
-    with download_lock:
-        task_state.total_funds = total_count
-        task_state.waiting_count = total_count
-
-    # 如果没有需要处理的记录，记录日志并更新任务状态
-    if not records_to_process:
-        logging.info("没有需要下载的基金数据。")
+    with app.app_context():
         with download_lock:
-            task_state.status = "无数据下载"  # 更新状态为"无数据下载"
-        return
+            task_state.reset()  # 重置任务状态
+            task_state.status = "进行中"  # 设置初始状态为"进行中"
+            logging.info(f"[FUND_DOWNLOAD] 任务状态已设置为: {task_state.status}")
+            print(f"[FUND_DOWNLOAD] 任务状态已设置为: {task_state.status}")
 
-    # 记录需要处理的基金记录总数
-    logging.info(f"需要下载 {total_count} 条基金数据...")
+        # 从数据库查询所有需要下载的基金记录（15天间隔逻辑）
+        logging.info("[FUND_DOWNLOAD] 开始查询基金记录")
+        print("[FUND_DOWNLOAD] 开始查询基金记录")
+        all_funds = Top500FundRecord.query.all()
+        logging.info(f"[FUND_DOWNLOAD] 查询到 {len(all_funds)} 个基金记录")
+        print(f"[FUND_DOWNLOAD] 查询到 {len(all_funds)} 个基金记录")
 
-    def process_single_fund(record):
+        # 提取需要处理的基金ID列表（而不是对象，避免跨线程会话问题）
+        records_to_process_ids = []
+        for fund in all_funds:
+            if should_download_fund(fund):
+                records_to_process_ids.append(fund.id)
+
+        total_count = len(records_to_process_ids)  # 记录总数
+
+        with download_lock:
+            task_state.total_funds = total_count
+            task_state.waiting_count = total_count
+
+        # 如果没有需要处理的记录，记录日志并更新任务状态
+        if not records_to_process_ids:
+            logging.info("没有需要下载的基金数据。")
+            with download_lock:
+                task_state.status = "无数据下载"  # 更新状态为"无数据下载"
+            return
+
+        # 记录需要处理的基金记录总数
+        logging.info(f"需要下载 {total_count} 条基金数据...")
+
+    def process_single_fund(fund_id):
         """处理单个基金的下载任务"""
         try:
-            print(f"正在下载基金: {record.name} ({record.code})")
+            # 在工作线程中重新查询记录，避免跨线程会话问题
+            with app.app_context():
+                record = Top500FundRecord.query.get(fund_id)
+                if not record:
+                    logging.error(f"未找到基金记录 ID: {fund_id}")
+                    return {'status': 'failed', 'fund_id': fund_id, 'reason': '记录不存在'}
 
-            # 下载基金持仓数据
-            stocks_data = download_single_fund_data(record.code)
-            
-            # 检查数据完整性
-            if stocks_data is None or len(stocks_data) == 0:
-                logging.warning(f"基金 {record.name} ({record.code}) 无数据")
-                # 确保在Flask应用上下文中更新数据库
-                try:
-                    with app.app_context():
-                        record.update_download_status(status_failure, download_date)
-                except Exception as db_error:
-                    logging.error(f"更新数据库状态失败: {record.name} ({record.code}), 错误: {db_error}")
-                return {'status': 'failed', 'record': record, 'reason': '无数据'}
-            
-            # 将数据转换为DataFrame
-            import pandas as pd
-            data = pd.DataFrame(stocks_data)
-            
-            # 添加基金信息到数据中
-            data['fund_name'] = record.name
-            data['fund_code'] = record.code
-            data['download_date'] = download_date.strftime('%Y-%m-%d')
-            
-            # 重命名列以匹配原有格式
-            data = data.rename(columns={
-                'stock_code': 'stock_code',
-                'stock_name': 'stock_name', 
-                'position': 'holdings_ratio',
-                'change': 'change_percent'
-            })
-            
-            # 添加缺失的字段
-            data['market_value'] = 'N/A'
-            data['shares'] = 'N/A'
-            
-            # 确保数据格式正确
-            data = data[['stock_name', 'stock_code', 'fund_name', 'fund_code', 'download_date', 'holdings_ratio', 'market_value', 'shares']]
-            
-            print(f"下载数据: {len(data)} 条记录")
-            
-            # 将下载数据存入本地CSV文件
-            save_success = funds_holdings_to_csv(data, download_date)
-            
-            if save_success:
-                # 更新记录状态为成功，并记录下载日期
-                try:
-                    with app.app_context():
-                        success = record.update_download_status(status_success, download_date)
-                        if success:
-                            logging.info(f"成功下载并更新数据库状态: {record.name} ({record.code}) -> {status_success}")
-                        else:
-                            logging.error(f"更新数据库状态失败: {record.name} ({record.code})")
-                except Exception as db_error:
-                    logging.error(f"更新数据库状态失败: {record.name} ({record.code}), 错误: {db_error}")
-                    # 即使数据库更新失败，数据已经保存成功，所以返回成功状态
-                return {'status': 'success', 'record': record}
-            else:
-                # 保存失败
-                try:
-                    with app.app_context():
-                        failure = record.update_download_status(status_failure, download_date)
-                        if failure:
-                            logging.error(f"保存基金数据失败并更新数据库状态: {record.name} ({record.code}) -> {status_failure}")
-                        else:
-                            logging.error(f"保存失败且更新数据库状态也失败: {record.name} ({record.code})")
-                except Exception as db_error:
-                    logging.error(f"更新数据库状态失败: {record.name} ({record.code}), 错误: {db_error}")
-                return {'status': 'failed', 'record': record, 'reason': '保存失败'}
+                fund_name = record.name
+                fund_code = record.code
+
+                print(f"正在下载基金: {fund_name} ({fund_code})")
+
+                # 下载基金持仓数据
+                stocks_data = download_single_fund_data(fund_code)
+
+                # 检查数据完整性
+                if stocks_data is None or len(stocks_data) == 0:
+                    logging.warning(f"基金 {fund_name} ({fund_code}) 无数据")
+                    record.update_download_status(status_failure, download_date)
+                    return {'status': 'failed', 'fund_id': fund_id, 'reason': '无数据'}
+
+                # 将数据转换为DataFrame
+                import pandas as pd
+                data = pd.DataFrame(stocks_data)
+
+                # 添加基金信息到数据中
+                data['fund_name'] = fund_name
+                data['fund_code'] = fund_code
+                data['download_date'] = download_date.strftime('%Y-%m-%d')
+
+                # 重命名列以匹配原有格式
+                data = data.rename(columns={
+                    'stock_code': 'stock_code',
+                    'stock_name': 'stock_name',
+                    'position': 'holdings_ratio',
+                    'change': 'change_percent'
+                })
+
+                # 添加缺失的字段
+                data['market_value'] = 'N/A'
+                data['shares'] = 'N/A'
+
+                # 确保数据格式正确
+                data = data[['stock_name', 'stock_code', 'fund_name', 'fund_code', 'download_date', 'holdings_ratio', 'market_value', 'shares']]
+
+                print(f"下载数据: {len(data)} 条记录")
+
+                # 将下载数据存入本地CSV文件（使用导入的函数）
+                from App.models.data.FundsAwkward import save_funds_holdings_to_csv
+                save_success = save_funds_holdings_to_csv(data, download_date)
+
+                if save_success:
+                    # 更新记录状态为成功，并记录下载日期
+                    success = record.update_download_status(status_success, download_date)
+                    if success:
+                        logging.info(f"成功下载并更新数据库状态: {fund_name} ({fund_code}) -> {status_success}")
+                    else:
+                        logging.error(f"更新数据库状态失败: {fund_name} ({fund_code})")
+                    return {'status': 'success', 'fund_id': fund_id}
+                else:
+                    # 保存失败
+                    record.update_download_status(status_failure, download_date)
+                    logging.error(f"保存基金数据失败: {fund_name} ({fund_code})")
+                    return {'status': 'failed', 'fund_id': fund_id, 'reason': '保存失败'}
 
         except Exception as e:
             # 捕获下载或存储过程中发生的异常，记录日志并更新状态为失败
-            logging.error(f"下载失败: {record.name}, {record.code}, 错误: {e}")
+            logging.error(f"下载失败: fund_id={fund_id}, 错误: {e}")
             try:
                 with app.app_context():
-                    failure = record.update_download_status(status_failure, download_date)
-                    if failure:
-                        logging.error(f"异常处理中更新数据库状态成功: {record.name} ({record.code}) -> {status_failure}")
-                    else:
-                        logging.error(f"异常处理中更新数据库状态失败: {record.name} ({record.code})")
+                    record = Top500FundRecord.query.get(fund_id)
+                    if record:
+                        record.update_download_status(status_failure, download_date)
             except Exception as db_error:
-                logging.error(f"异常处理中更新数据库状态失败: {record.name} ({record.code}), 错误: {db_error}")
-            return {'status': 'failed', 'record': record, 'reason': str(e)}
-        
+                logging.error(f"异常处理中更新数据库状态失败: fund_id={fund_id}, 错误: {db_error}")
+            return {'status': 'failed', 'fund_id': fund_id, 'reason': str(e)}
+
         finally:
             # 每个基金处理完成后增加短暂延时，进一步降低对第三方网站的压力
             time.sleep(DOWNLOAD_CONFIG['post_process_delay'])
 
     # 使用线程池并发处理 - 减少并发数以降低对第三方网站的压力
-    max_workers = min(DOWNLOAD_CONFIG['max_concurrent_workers'], len(records_to_process))
+    max_workers = min(DOWNLOAD_CONFIG['max_concurrent_workers'], len(records_to_process_ids))
     processed_count = 0
-    
+
     logging.info(f"使用 {max_workers} 个并发线程进行下载，降低对第三方网站的压力")
-    
+
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        # 提交所有任务
-        future_to_record = {executor.submit(process_single_fund, record): record for record in records_to_process}
+        # 提交所有任务（传递基金ID而不是对象）
+        future_to_fund_id = {executor.submit(process_single_fund, fund_id): fund_id for fund_id in records_to_process_ids}
         
         # 处理完成的任务
-        for future in as_completed(future_to_record):
+        for future in as_completed(future_to_fund_id):
             # 检查是否需要停止
             with download_lock:
                 if task_state.stop:
                     task_state.status = "已停止"
                     logging.info("下载任务被用户中止，取消剩余任务。")
                     # 取消所有未完成的任务
-                    for remaining_future in future_to_record:
+                    for remaining_future in future_to_fund_id:
                         if not remaining_future.done():
                             remaining_future.cancel()
                     return
@@ -635,7 +555,7 @@ def reset_fund_status():
         for fund in funds:
             fund.status = None
             fund.date = None
-        
+
         db.session.commit()
         logging.info("成功重置所有基金下载状态")
         return jsonify({"message": "成功重置基金下载状态"}), 200
@@ -643,6 +563,42 @@ def reset_fund_status():
         logging.error(f"重置基金下载状态时发生错误: {e}")
         db.session.rollback()
         return jsonify({"error": str(e)}), 500
+
+
+@dl_funds_awkward_bp.route("/reset_failed_funds", methods=["POST"])
+def reset_failed_funds():
+    """重置下载失败的基金状态，允许重新下载。"""
+    try:
+        # 查找所有下载失败的基金
+        failed_funds = Top500FundRecord.query.filter(
+            Top500FundRecord.status.like('failure-%')
+        ).all()
+
+        failed_count = len(failed_funds)
+
+        if failed_count == 0:
+            return jsonify({
+                "success": True,
+                "message": "没有下载失败的基金需要重置",
+                "reset_count": 0
+            }), 200
+
+        # 重置失败基金的状态
+        for fund in failed_funds:
+            fund.status = None
+            fund.date = None
+
+        db.session.commit()
+        logging.info(f"成功重置 {failed_count} 个下载失败的基金状态")
+        return jsonify({
+            "success": True,
+            "message": f"成功重置 {failed_count} 个下载失败的基金，可以重新下载",
+            "reset_count": failed_count
+        }), 200
+    except Exception as e:
+        logging.error(f"重置失败基金状态时发生错误: {e}")
+        db.session.rollback()
+        return jsonify({"success": False, "error": str(e)}), 500
 
 
 @dl_funds_awkward_bp.route("/open_funds_data_folder", methods=["POST"])
@@ -677,7 +633,778 @@ def open_funds_data_folder():
         
         logging.info(f"成功打开数据文件夹: {data_folder}")
         return jsonify({"success": True, "message": "数据文件夹已打开"}), 200
-        
+
     except Exception as e:
         logging.error(f"打开数据文件夹时发生错误: {e}")
         return jsonify({"success": False, "message": str(e)}), 500
+
+
+# ==================== 基金列表管理 API ====================
+
+@dl_funds_awkward_bp.route("/api/funds", methods=["GET"])
+def api_get_funds():
+    """获取基金列表（带分页和搜索）"""
+    try:
+        page = request.args.get('page', 1, type=int)
+        per_page = request.args.get('per_page', 20, type=int)
+        search = request.args.get('search', '', type=str)
+        status_filter = request.args.get('status', '', type=str)
+
+        per_page = min(per_page, 100)
+
+        query = Top500FundRecord.query
+
+        # 搜索
+        if search:
+            from sqlalchemy import or_
+            query = query.filter(
+                or_(
+                    Top500FundRecord.code.like(f'%{search}%'),
+                    Top500FundRecord.name.like(f'%{search}%')
+                )
+            )
+
+        # 状态筛选
+        if status_filter == 'success':
+            query = query.filter(Top500FundRecord.status.like('success-%'))
+        elif status_filter == 'failed':
+            query = query.filter(Top500FundRecord.status.like('failure-%'))
+        elif status_filter in ('pending', 'waiting'):
+            # 等待下载：status为空或不是success开头
+            query = query.filter(
+                (Top500FundRecord.status == None) |
+                ((~Top500FundRecord.status.like('success-%')) & (~Top500FundRecord.status.like('failure-%')))
+            )
+
+        # 排序
+        query = query.order_by(Top500FundRecord.id.desc())
+
+        # 分页
+        total = query.count()
+        total_pages = (total + per_page - 1) // per_page if total > 0 else 1
+        funds = query.offset((page - 1) * per_page).limit(per_page).all()
+
+        # 转换为前端期望的格式
+        funds_data = []
+        for f in funds:
+            funds_data.append({
+                'id': f.id,
+                'fund_code': f.code,
+                'fund_name': f.name,
+                'selection': f.selection if f.selection is not None else 1,
+                'status': f.status,
+                'last_download_time': f.date.strftime('%Y-%m-%d') if f.date else None
+            })
+
+        return jsonify({
+            'success': True,
+            'data': funds_data,
+            'pagination': {
+                'page': page,
+                'per_page': per_page,
+                'total': total,
+                'pages': total_pages,
+                'has_prev': page > 1,
+                'has_next': page < total_pages
+            }
+        })
+
+    except Exception as e:
+        logging.error(f"获取基金列表失败: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@dl_funds_awkward_bp.route("/api/funds/<int:fund_id>", methods=["GET"])
+def api_get_fund(fund_id):
+    """获取单个基金详情"""
+    try:
+        fund = Top500FundRecord.query.get(fund_id)
+        if not fund:
+            return jsonify({'success': False, 'message': '基金不存在'}), 404
+        return jsonify({
+            'success': True,
+            'data': {
+                'id': fund.id,
+                'fund_code': fund.code,
+                'fund_name': fund.name,
+                'status': fund.status,
+                'last_download_time': fund.date.strftime('%Y-%m-%d') if fund.date else None
+            }
+        })
+    except Exception as e:
+        logging.error(f"获取基金详情失败: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@dl_funds_awkward_bp.route("/api/funds", methods=["POST"])
+def api_add_fund():
+    """添加基金"""
+    try:
+        data = request.get_json()
+        # 支持两种字段名格式
+        code = data.get('fund_code', data.get('code', '')).strip()
+        name = data.get('fund_name', data.get('name', '')).strip()
+
+        if not code:
+            return jsonify({'success': False, 'message': '基金代码不能为空'}), 400
+        if not name:
+            return jsonify({'success': False, 'message': '基金名称不能为空'}), 400
+
+        # 检查是否已存在
+        existing = Top500FundRecord.query.filter_by(code=code).first()
+        if existing:
+            return jsonify({'success': False, 'message': f'基金 {code} 已存在'}), 400
+
+        # 创建新记录
+        new_fund = Top500FundRecord(
+            code=code,
+            name=name,
+            selection=data.get('selection', 1),
+            status=None,
+            date=None
+        )
+
+        db.session.add(new_fund)
+        db.session.commit()
+
+        logging.info(f"成功添加基金: {name} ({code})")
+        return jsonify({
+            'success': True,
+            'message': f'成功添加基金 {name}'
+        })
+
+    except Exception as e:
+        db.session.rollback()
+        logging.error(f"添加基金失败: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@dl_funds_awkward_bp.route("/api/funds/<int:fund_id>", methods=["PUT"])
+def api_update_fund(fund_id):
+    """更新基金信息"""
+    try:
+        fund = Top500FundRecord.query.get(fund_id)
+        if not fund:
+            return jsonify({'success': False, 'message': '基金不存在'}), 404
+
+        data = request.get_json()
+
+        # 支持两种字段名格式
+        if 'fund_name' in data or 'name' in data:
+            fund.name = data.get('fund_name', data.get('name', '')).strip()
+        if 'fund_code' in data or 'code' in data:
+            # 检查新代码是否与其他基金冲突
+            new_code = data.get('fund_code', data.get('code', '')).strip()
+            if new_code and new_code != fund.code:
+                existing = Top500FundRecord.query.filter_by(code=new_code).first()
+                if existing:
+                    return jsonify({'success': False, 'message': f'基金代码 {new_code} 已被使用'}), 400
+                fund.code = new_code
+        if 'selection' in data:
+            fund.selection = int(data['selection'])
+
+        from datetime import datetime
+        fund.updated_at = datetime.utcnow()
+        db.session.commit()
+
+        logging.info(f"成功更新基金: {fund.name} ({fund.code})")
+        return jsonify({
+            'success': True,
+            'message': f'成功更新基金 {fund.name}'
+        })
+
+    except Exception as e:
+        db.session.rollback()
+        logging.error(f"更新基金失败: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@dl_funds_awkward_bp.route("/api/funds/<int:fund_id>", methods=["DELETE"])
+def api_delete_fund(fund_id):
+    """删除基金"""
+    try:
+        fund = Top500FundRecord.query.get(fund_id)
+        if not fund:
+            return jsonify({'success': False, 'message': '基金不存在'}), 404
+
+        fund_name = fund.name
+        fund_code = fund.code
+
+        db.session.delete(fund)
+        db.session.commit()
+
+        logging.info(f"成功删除基金: {fund_name} ({fund_code})")
+        return jsonify({
+            'success': True,
+            'message': f'成功删除基金 {fund_name}'
+        })
+
+    except Exception as e:
+        db.session.rollback()
+        logging.error(f"删除基金失败: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@dl_funds_awkward_bp.route("/api/funds/batch_delete", methods=["POST"])
+def api_batch_delete_funds():
+    """批量删除基金"""
+    try:
+        data = request.get_json()
+        ids = data.get('ids', [])
+
+        if not ids:
+            return jsonify({'success': False, 'message': '请选择要删除的基金'}), 400
+
+        deleted_count = Top500FundRecord.query.filter(
+            Top500FundRecord.id.in_(ids)
+        ).delete(synchronize_session=False)
+        db.session.commit()
+
+        logging.info(f"批量删除了 {deleted_count} 个基金")
+        return jsonify({
+            'success': True,
+            'message': f'成功删除 {deleted_count} 个基金',
+            'deleted_count': deleted_count
+        })
+
+    except Exception as e:
+        db.session.rollback()
+        logging.error(f"批量删除基金失败: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@dl_funds_awkward_bp.route("/api/funds/batch_add", methods=["POST"])
+def api_batch_add_funds():
+    """批量添加基金"""
+    try:
+        data = request.get_json()
+        funds_data = data.get('funds', [])
+
+        if not funds_data:
+            return jsonify({'success': False, 'message': '请提供基金数据'}), 400
+
+        added_count = 0
+        skipped_count = 0
+        errors = []
+
+        for fund_info in funds_data:
+            # 支持两种字段名格式
+            code = fund_info.get('fund_code', fund_info.get('code', '')).strip()
+            name = fund_info.get('fund_name', fund_info.get('name', '')).strip()
+
+            if not code or not name:
+                skipped_count += 1
+                continue
+
+            # 检查是否已存在
+            existing = Top500FundRecord.query.filter_by(code=code).first()
+            if existing:
+                skipped_count += 1
+                continue
+
+            try:
+                new_fund = Top500FundRecord(
+                    code=code,
+                    name=name,
+                    selection=1,
+                    status=None,
+                    date=None
+                )
+                db.session.add(new_fund)
+                added_count += 1
+            except Exception as e:
+                errors.append(f"{code}: {str(e)}")
+                skipped_count += 1
+
+        db.session.commit()
+
+        logging.info(f"批量添加基金: 成功 {added_count}, 跳过 {skipped_count}")
+        return jsonify({
+            'success': True,
+            'message': f'成功添加 {added_count} 个基金，跳过 {skipped_count} 个',
+            'added_count': added_count,
+            'skipped_count': skipped_count,
+            'errors': errors[:5]  # 只返回前5个错误
+        })
+
+    except Exception as e:
+        db.session.rollback()
+        logging.error(f"批量添加基金失败: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+# ==================== 基金重仓分析 API ====================
+
+@dl_funds_awkward_bp.route("/api/analysis/files", methods=["GET"])
+def api_get_analysis_files():
+    """获取可用的基金持仓数据文件列表"""
+    try:
+        import glob
+        from config import Config
+
+        # 获取基金持仓数据目录
+        project_root = Config.get_project_root()
+        data_dir = os.path.join(project_root, 'data', 'funds_holdings')
+        files = glob.glob(os.path.join(data_dir, "funds_holdings_*.csv"))
+
+        file_list = []
+        for f in sorted(files, reverse=True):
+            filename = os.path.basename(f)
+            # 解析日期
+            date_str = filename.replace("funds_holdings_", "").replace(".csv", "")
+            file_list.append({
+                'filename': filename,
+                'date': date_str,
+                'path': f
+            })
+
+        return jsonify({
+            'success': True,
+            'data': file_list
+        })
+    except Exception as e:
+        logging.error(f"获取分析文件列表失败: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@dl_funds_awkward_bp.route("/api/analysis/funds_selection", methods=["GET"])
+def api_get_funds_selection():
+    """获取基金选择状态统计"""
+    try:
+        total = Top500FundRecord.query.count()
+        selected = Top500FundRecord.query.filter_by(selection=1).count()
+
+        return jsonify({
+            'success': True,
+            'data': {
+                'total': total,
+                'selected': selected,
+                'unselected': total - selected
+            }
+        })
+    except Exception as e:
+        logging.error(f"获取基金选择状态失败: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@dl_funds_awkward_bp.route("/api/analysis/select_top", methods=["POST"])
+def api_select_top_funds():
+    """选择前N只基金用于分析"""
+    try:
+        data = request.get_json()
+        top_n = data.get('top_n', 500)
+        action = data.get('action', 'select')  # 'select', 'select_all', 'unselect_all'
+
+        if action == 'unselect_all':
+            # 取消全选
+            Top500FundRecord.query.update({Top500FundRecord.selection: 0})
+            db.session.commit()
+            return jsonify({
+                'success': True,
+                'message': '已取消全部选择',
+                'selected_count': 0
+            })
+
+        if action == 'select_all':
+            # 全选所有基金
+            Top500FundRecord.query.update({Top500FundRecord.selection: 1})
+            db.session.commit()
+            total = Top500FundRecord.query.count()
+            return jsonify({
+                'success': True,
+                'message': f'已选择全部 {total} 只基金',
+                'selected_count': total
+            })
+
+        # 选择前N只基金
+        # 先重置所有selection为0
+        Top500FundRecord.query.update({Top500FundRecord.selection: 0})
+
+        # 获取前N只基金（按id排序，即按添加顺序）
+        top_funds = Top500FundRecord.query.order_by(Top500FundRecord.id.asc()).limit(top_n).all()
+
+        for fund in top_funds:
+            fund.selection = 1
+
+        db.session.commit()
+
+        return jsonify({
+            'success': True,
+            'message': f'已选择前 {len(top_funds)} 只基金',
+            'selected_count': len(top_funds)
+        })
+    except Exception as e:
+        db.session.rollback()
+        logging.error(f"选择基金失败: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@dl_funds_awkward_bp.route("/api/analysis/toggle_selection/<int:fund_id>", methods=["POST"])
+def api_toggle_fund_selection(fund_id):
+    """切换单个基金的选择状态"""
+    try:
+        fund = Top500FundRecord.query.get(fund_id)
+        if not fund:
+            return jsonify({'success': False, 'message': '基金不存在'}), 404
+
+        fund.selection = 1 if fund.selection == 0 else 0
+        db.session.commit()
+
+        return jsonify({
+            'success': True,
+            'selection': fund.selection
+        })
+    except Exception as e:
+        db.session.rollback()
+        logging.error(f"切换基金选择状态失败: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@dl_funds_awkward_bp.route("/api/analysis/holdings", methods=["POST"])
+def api_analyze_holdings():
+    """分析基金重仓股票"""
+    try:
+        import pandas as pd
+        from config import Config
+
+        data = request.get_json()
+        date_str = data.get('date')  # 格式: YYYYMMDD
+        use_selected = data.get('use_selected', True)  # 是否只使用选中的基金
+        min_holdings = data.get('min_holdings', 1)  # 最少被持仓次数
+
+        if not date_str:
+            return jsonify({'success': False, 'message': '请选择数据日期'}), 400
+
+        # 构建文件路径
+        project_root = Config.get_project_root()
+        data_dir = os.path.join(project_root, 'data', 'funds_holdings')
+        file_path = os.path.join(data_dir, f"funds_holdings_{date_str}.csv")
+
+        if not os.path.exists(file_path):
+            return jsonify({'success': False, 'message': f'数据文件不存在: {date_str}'}), 404
+
+        # 读取CSV数据
+        df = pd.read_csv(file_path, encoding='utf-8-sig')
+
+        # 如果只使用选中的基金，进行过滤
+        if use_selected:
+            selected_funds = Top500FundRecord.query.filter_by(selection=1).all()
+            if not selected_funds:
+                return jsonify({
+                    'success': False,
+                    'message': '请先选择要分析的基金（点击"选择前500只"按钮）'
+                }), 400
+            selected_codes = [f.code for f in selected_funds]
+            df = df[df['fund_code'].astype(str).isin([str(c) for c in selected_codes])]
+
+        if df.empty:
+            return jsonify({
+                'success': True,
+                'data': [],
+                'summary': {
+                    'total_stocks': 0,
+                    'total_funds': 0,
+                    'total_records': 0,
+                    'date': date_str
+                }
+            })
+
+        # 统计每只股票被多少基金持仓
+        stock_stats = df.groupby(['stock_code', 'stock_name']).agg({
+            'fund_code': 'nunique',  # 持有该股票的基金数量
+            'holdings_ratio': lambda x: x[x != 'N/A'].astype(float).mean() if any(x != 'N/A') else 0  # 平均持仓比例
+        }).reset_index()
+
+        stock_stats.columns = ['stock_code', 'stock_name', 'fund_count', 'avg_ratio']
+
+        # 过滤最少持仓次数
+        stock_stats = stock_stats[stock_stats['fund_count'] >= min_holdings]
+
+        # 按基金持仓数量排序
+        stock_stats = stock_stats.sort_values('fund_count', ascending=False)
+
+        # 转换为列表
+        result = []
+        for _, row in stock_stats.iterrows():
+            result.append({
+                'stock_code': str(row['stock_code']),
+                'stock_name': row['stock_name'],
+                'fund_count': int(row['fund_count']),
+                'avg_ratio': round(float(row['avg_ratio']), 2) if row['avg_ratio'] else 0
+            })
+
+        # 统计信息
+        total_funds = df['fund_code'].nunique()
+        total_stocks = len(result)
+
+        return jsonify({
+            'success': True,
+            'data': result,
+            'summary': {
+                'total_stocks': total_stocks,
+                'total_funds': total_funds,
+                'total_records': len(df),
+                'date': date_str
+            }
+        })
+
+    except Exception as e:
+        logging.error(f"分析基金重仓失败: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@dl_funds_awkward_bp.route("/api/analysis/stock_detail/<stock_code>", methods=["POST"])
+def api_get_stock_detail(stock_code):
+    """获取某只股票被哪些基金持仓的详情"""
+    try:
+        import pandas as pd
+        from config import Config
+
+        data = request.get_json()
+        date_str = data.get('date')
+
+        if not date_str:
+            return jsonify({'success': False, 'message': '请选择数据日期'}), 400
+
+        # 构建文件路径
+        project_root = Config.get_project_root()
+        data_dir = os.path.join(project_root, 'data', 'funds_holdings')
+        file_path = os.path.join(data_dir, f"funds_holdings_{date_str}.csv")
+
+        if not os.path.exists(file_path):
+            return jsonify({'success': False, 'message': f'数据文件不存在'}), 404
+
+        # 读取CSV数据
+        df = pd.read_csv(file_path, encoding='utf-8-sig')
+
+        # 筛选该股票
+        stock_df = df[df['stock_code'].astype(str) == str(stock_code)]
+
+        if stock_df.empty:
+            return jsonify({'success': False, 'message': '未找到该股票的持仓信息'}), 404
+
+        result = []
+        for _, row in stock_df.iterrows():
+            result.append({
+                'fund_code': str(row['fund_code']),
+                'fund_name': row['fund_name'],
+                'holdings_ratio': row['holdings_ratio'] if row['holdings_ratio'] != 'N/A' else None,
+                'market_value': row['market_value'] if row['market_value'] != 'N/A' else None,
+                'shares': row['shares'] if row['shares'] != 'N/A' else None
+            })
+
+        stock_name = stock_df.iloc[0]['stock_name']
+
+        return jsonify({
+            'success': True,
+            'stock_code': stock_code,
+            'stock_name': stock_name,
+            'data': result
+        })
+
+    except Exception as e:
+        logging.error(f"获取股票持仓详情失败: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+# ==================== 高级分析 API ====================
+
+@dl_funds_awkward_bp.route("/api/adv/hot_stocks", methods=["GET"])
+def api_adv_hot_stocks():
+    """获取热门股票分析（被最多基金持有的股票）"""
+    try:
+        import pandas as pd
+        from config import Config
+
+        date_str = request.args.get('date')
+        if not date_str:
+            return jsonify({'success': False, 'message': '请指定日期'}), 400
+
+        # 构建文件路径
+        project_root = Config.get_project_root()
+        data_dir = os.path.join(project_root, 'data', 'funds_holdings')
+        file_path = os.path.join(data_dir, f"funds_holdings_{date_str}.csv")
+
+        if not os.path.exists(file_path):
+            return jsonify({'success': False, 'message': f'数据文件不存在: {date_str}'}), 404
+
+        # 读取CSV数据
+        df = pd.read_csv(file_path, encoding='utf-8-sig')
+
+        if df.empty:
+            return jsonify({
+                'success': True,
+                'total_funds': 0,
+                'total_stocks': 0,
+                'total_records': 0,
+                'top_stocks': []
+            })
+
+        # 统计每只股票被多少基金持有
+        stock_fund_count = df.groupby(['stock_code', 'stock_name']).agg({
+            'fund_code': 'count',
+            'holdings_ratio': ['mean', 'sum', 'max']
+        }).round(2)
+
+        stock_fund_count.columns = ['fund_count', 'avg_ratio', 'total_ratio', 'max_ratio']
+        stock_fund_count = stock_fund_count.reset_index()
+        stock_fund_count = stock_fund_count.sort_values('fund_count', ascending=False)
+
+        # 取前20名
+        top_stocks = stock_fund_count.head(20).to_dict('records')
+
+        return jsonify({
+            'success': True,
+            'date': date_str,
+            'total_stocks': len(stock_fund_count),
+            'total_funds': df['fund_code'].nunique(),
+            'total_records': len(df),
+            'top_stocks': top_stocks
+        })
+
+    except Exception as e:
+        logging.error(f"获取热门股票分析失败: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@dl_funds_awkward_bp.route("/api/adv/fund_distribution", methods=["GET"])
+def api_adv_fund_distribution():
+    """获取基金分布分析（基金持仓股票数量分布）"""
+    try:
+        import pandas as pd
+        from config import Config
+
+        date_str = request.args.get('date')
+        if not date_str:
+            return jsonify({'success': False, 'message': '请指定日期'}), 400
+
+        project_root = Config.get_project_root()
+        data_dir = os.path.join(project_root, 'data', 'funds_holdings')
+        file_path = os.path.join(data_dir, f"funds_holdings_{date_str}.csv")
+
+        if not os.path.exists(file_path):
+            return jsonify({'success': False, 'message': f'数据文件不存在'}), 404
+
+        df = pd.read_csv(file_path, encoding='utf-8-sig')
+
+        if df.empty:
+            return jsonify({
+                'success': True,
+                'distribution_stats': {},
+                'top_funds': []
+            })
+
+        # 统计每个基金持有的股票数量
+        fund_stock_count = df.groupby(['fund_code', 'fund_name']).size().reset_index(name='stock_count')
+
+        # 计算分布统计
+        distribution_stats = fund_stock_count['stock_count'].describe().to_dict()
+
+        # 获取持仓股票最多的基金
+        top_funds = fund_stock_count.sort_values('stock_count', ascending=False).head(10).to_dict('records')
+
+        return jsonify({
+            'success': True,
+            'date': date_str,
+            'distribution_stats': distribution_stats,
+            'top_funds': top_funds
+        })
+
+    except Exception as e:
+        logging.error(f"获取基金分布分析失败: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@dl_funds_awkward_bp.route("/api/adv/industry_analysis", methods=["GET"])
+def api_adv_industry_analysis():
+    """获取行业/市场分析"""
+    try:
+        import pandas as pd
+        from config import Config
+
+        date_str = request.args.get('date')
+        if not date_str:
+            return jsonify({'success': False, 'message': '请指定日期'}), 400
+
+        project_root = Config.get_project_root()
+        data_dir = os.path.join(project_root, 'data', 'funds_holdings')
+        file_path = os.path.join(data_dir, f"funds_holdings_{date_str}.csv")
+
+        if not os.path.exists(file_path):
+            return jsonify({'success': False, 'message': f'数据文件不存在'}), 404
+
+        df = pd.read_csv(file_path, encoding='utf-8-sig')
+
+        if df.empty:
+            return jsonify({
+                'success': True,
+                'market_stats': []
+            })
+
+        # 根据股票代码判断市场
+        def get_market(stock_code):
+            stock_code = str(stock_code)
+            if stock_code.startswith('6'):
+                return '沪市主板'
+            elif stock_code.startswith('0'):
+                return '深市主板'
+            elif stock_code.startswith('3'):
+                return '创业板'
+            elif stock_code.startswith('8'):
+                return '北交所'
+            elif stock_code.startswith('BK'):
+                return '板块指数'
+            else:
+                return '其他'
+
+        df['market'] = df['stock_code'].apply(get_market)
+
+        # 按市场统计
+        market_stats = df.groupby('market').agg({
+            'stock_code': 'nunique',
+            'fund_code': 'nunique',
+            'holdings_ratio': ['mean', 'sum']
+        }).round(2)
+
+        market_stats.columns = ['stock_count', 'fund_count', 'avg_ratio', 'total_ratio']
+        market_stats = market_stats.reset_index()
+        market_stats = market_stats.sort_values('total_ratio', ascending=False)
+
+        return jsonify({
+            'success': True,
+            'date': date_str,
+            'market_stats': market_stats.to_dict('records')
+        })
+
+    except Exception as e:
+        logging.error(f"获取市场分析失败: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@dl_funds_awkward_bp.route("/api/adv/save_to_daily", methods=["POST"])
+def api_adv_save_to_daily():
+    """将基金持仓分析结果保存到daily_stock_data表"""
+    try:
+        from App.models.data.StockDaily import update_fund_holdings_data
+
+        data = request.get_json()
+        analysis_date = data.get('date') if data else None
+
+        success = update_fund_holdings_data(analysis_date)
+
+        if success:
+            return jsonify({
+                'success': True,
+                'message': '基金持仓数据已成功保存到daily_stock_data表'
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'message': '保存基金持仓数据失败'
+            }), 500
+
+    except Exception as e:
+        logging.error(f"保存基金持仓数据失败: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500

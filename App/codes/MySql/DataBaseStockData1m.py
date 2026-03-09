@@ -67,28 +67,43 @@ class StockData1m:
             except Exception as e:
                 logger.warning(f"从数据库加载失败，尝试从文件加载: {e}")
         
-        # 如果数据库加载失败，尝试从CSV文件加载
+        # 如果数据库加载失败，尝试从本地Parquet/CSV文件加载
         try:
             if FLASK_AVAILABLE:
-                # 使用 StockDataPath 获取文件路径
-                file_path = StockDataPath.get_stock_data_directory() / '1m' / f'{stock_code}.csv'
+                base_dir = Path(StockDataPath.get_stock_data_directory())
             else:
-                # 如果没有 Flask，尝试从默认路径加载
                 from config import Config
-                project_root = Path(Config.get_project_root())
-                file_path = project_root / 'data' / 'data' / '1m' / f'{stock_code}.csv'
-            
-            if file_path.exists():
-                data = pd.read_csv(file_path, parse_dates=['date'])
-                # 过滤指定年份的数据
-                data = data[data['date'].dt.year == year_int]
+                base_dir = Path(Config.get_project_root()) / 'data' / 'data'
+
+            # 从季度目录加载该年份所有季度的parquet/csv文件
+            quarters_dir = base_dir / 'quarters' / year
+            all_data = []
+
+            if quarters_dir.exists():
+                for quarter_dir in sorted(quarters_dir.iterdir()):
+                    if not quarter_dir.is_dir():
+                        continue
+                    # 优先读取parquet
+                    parquet_file = quarter_dir / f'{stock_code}.parquet'
+                    csv_file = quarter_dir / f'{stock_code}.csv'
+                    if parquet_file.exists():
+                        df = pd.read_parquet(parquet_file)
+                        df['date'] = pd.to_datetime(df['date'])
+                        all_data.append(df)
+                    elif csv_file.exists():
+                        df = pd.read_csv(csv_file, parse_dates=['date'])
+                        all_data.append(df)
+
+            if all_data:
+                data = pd.concat(all_data, ignore_index=True)
+                data = data.drop_duplicates(subset=['date']).sort_values('date').reset_index(drop=True)
                 logger.info(f"成功从文件加载股票 {stock_code} {year}年1分钟数据，共 {len(data)} 条记录")
                 return data
             else:
-                logger.warning(f"文件不存在: {file_path}")
+                logger.warning(f"未找到 {stock_code} {year}年的本地1分钟数据文件")
         except Exception as e:
             logger.error(f"从文件加载失败: {e}")
-        
+
         logger.error(f"无法加载股票 {stock_code} {year}年1分钟数据")
         return pd.DataFrame()
     

@@ -65,25 +65,27 @@ def load_1m_by_local_file(code_: str, year: str, file_path: str) -> pd.DataFrame
     try:
         logger.info(f"开始从本地文件加载1分钟数据: {code_}, 年份: {year}")
         
-        # 构建完整的文件路径
-        full_path = os.path.join(file_path, year, f"{code_}.csv")
-        
-        if not os.path.exists(full_path):
-            raise FileNotFoundError(f"找不到文件: {full_path}")
+        # 构建完整的文件路径（优先parquet，兼容CSV）
+        parquet_path = os.path.join(file_path, year, f"{code_}.parquet")
+        csv_path = os.path.join(file_path, year, f"{code_}.csv")
 
-            
-        # 读取CSV文件
-        df = pd.read_csv(full_path, 
-                        parse_dates=['date'],  # 将date列解析为日期类型
-                        dtype={
-                            'code': str,
-                            'open': float,
-                            'high': float,
-                            'low': float,
-                            'close': float,
-                            'volume': float,
-                            'amount': float
-                        })
+        if os.path.exists(parquet_path):
+            df = pd.read_parquet(parquet_path)
+            df['date'] = pd.to_datetime(df['date'])
+        elif os.path.exists(csv_path):
+            df = pd.read_csv(csv_path,
+                            parse_dates=['date'],
+                            dtype={
+                                'code': str,
+                                'open': float,
+                                'high': float,
+                                'low': float,
+                                'close': float,
+                                'volume': float,
+                                'amount': float
+                            })
+        else:
+            raise FileNotFoundError(f"找不到文件: {parquet_path} 或 {csv_path}")
         
         # 检查必要的列是否存在
         required_columns = ['date', 'code', 'open', 'high', 'low', 'close', 'volume']

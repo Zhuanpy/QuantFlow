@@ -1,0 +1,936 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="editor-container">
+    <!-- 顶部标题栏 -->
+    <div class="editor-header">
+        <div class="header-left">
+            <h2>下载记录管理</h2>
+            <span class="record-count" id="recordCount">共 0 条记录</span>
+        </div>
+        <div class="header-actions">
+            <a href="{{ url_for('download_data_bp.download_minute_data_page') }}" class="btn btn-secondary">返回下载页</a>
+            <button class="btn btn-primary" onclick="showAddModal()">添加记录</button>
+        </div>
+    </div>
+
+    <!-- 工具栏 -->
+    <div class="toolbar">
+        <div class="toolbar-left">
+            <div class="search-box">
+                <input type="text" id="searchInput" placeholder="搜索股票代码..." onkeyup="handleSearch(event)">
+                <button class="btn btn-search" onclick="loadRecords(1)">搜索</button>
+            </div>
+            <div class="filter-box">
+                <select id="statusFilter" onchange="loadRecords(1)">
+                    <option value="">全部状态</option>
+                    <option value="pending">待下载</option>
+                    <option value="processing">下载中</option>
+                    <option value="success">已完成</option>
+                    <option value="failed">失败</option>
+                </select>
+            </div>
+        </div>
+        <div class="toolbar-right">
+            <button class="btn btn-warning" onclick="batchUpdateStatus('pending')" id="batchPendingBtn" disabled>批量重置</button>
+            <button class="btn btn-danger" onclick="batchDelete()" id="batchDeleteBtn" disabled>批量删除</button>
+        </div>
+    </div>
+
+    <!-- 数据表格 -->
+    <div class="table-container">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th class="checkbox-col">
+                        <input type="checkbox" id="selectAll" onchange="toggleSelectAll()">
+                    </th>
+                    <th>股票代码</th>
+                    <th>状态</th>
+                    <th>进度</th>
+                    <th>结束日期</th>
+                    <th>记录日期</th>
+                    <th>下载记录数</th>
+                    <th>最后下载时间</th>
+                    <th>操作</th>
+                </tr>
+            </thead>
+            <tbody id="recordsBody">
+                <tr>
+                    <td colspan="9" class="loading-cell">加载中...</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <!-- 分页 -->
+    <div class="pagination">
+        <button class="btn btn-page" id="prevBtn" onclick="loadRecords(currentPage - 1)" disabled>上一页</button>
+        <span class="page-info" id="pageInfo">第 1 / 1 页</span>
+        <button class="btn btn-page" id="nextBtn" onclick="loadRecords(currentPage + 1)" disabled>下一页</button>
+        <select id="perPageSelect" onchange="loadRecords(1)">
+            <option value="20">每页 20 条</option>
+            <option value="50">每页 50 条</option>
+            <option value="100">每页 100 条</option>
+        </select>
+    </div>
+</div>
+
+<!-- 添加记录模态框 -->
+<div class="modal" id="addModal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>添加下载记录</h3>
+            <button class="modal-close" onclick="closeAddModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div class="form-group">
+                <label>股票代码</label>
+                <div class="stock-search">
+                    <input type="text" id="stockCodeInput" placeholder="输入股票代码搜索..." oninput="searchStocks()">
+                    <div class="stock-suggestions" id="stockSuggestions"></div>
+                </div>
+            </div>
+            <div class="form-group">
+                <label>结束日期</label>
+                <input type="date" id="endDateInput">
+            </div>
+            <div class="form-group">
+                <label>初始状态</label>
+                <select id="initialStatusInput">
+                    <option value="pending">待下载</option>
+                    <option value="success">已完成</option>
+                </select>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeAddModal()">取消</button>
+            <button class="btn btn-primary" onclick="addRecord()">添加</button>
+        </div>
+    </div>
+</div>
+
+<!-- 编辑记录模态框 -->
+<div class="modal" id="editModal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>编辑下载记录</h3>
+            <button class="modal-close" onclick="closeEditModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <input type="hidden" id="editRecordId">
+            <div class="form-group">
+                <label>股票代码</label>
+                <input type="text" id="editStockCode" readonly class="readonly-input">
+            </div>
+            <div class="form-group">
+                <label>下载状态</label>
+                <select id="editStatus">
+                    <option value="pending">待下载</option>
+                    <option value="processing">下载中</option>
+                    <option value="success">已完成</option>
+                    <option value="failed">失败</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>结束日期</label>
+                <input type="date" id="editEndDate">
+            </div>
+            <div class="form-group">
+                <label>错误信息</label>
+                <textarea id="editErrorMessage" rows="3" placeholder="可选"></textarea>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeEditModal()">取消</button>
+            <button class="btn btn-primary" onclick="updateRecord()">保存</button>
+        </div>
+    </div>
+</div>
+
+<style>
+.editor-container {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 1rem;
+}
+
+.editor-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+    color: white;
+    padding: 1rem 1.5rem;
+    border-radius: 0.75rem;
+    margin-bottom: 1rem;
+}
+
+.editor-header h2 {
+    margin: 0;
+    font-size: 1.25rem;
+}
+
+.header-left {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.record-count {
+    background: rgba(255,255,255,0.2);
+    padding: 0.25rem 0.75rem;
+    border-radius: 1rem;
+    font-size: 0.875rem;
+}
+
+.header-actions {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: var(--card-background);
+    padding: 1rem;
+    border-radius: 0.5rem;
+    margin-bottom: 1rem;
+    box-shadow: var(--shadow-sm);
+    flex-wrap: wrap;
+    gap: 0.75rem;
+}
+
+.toolbar-left, .toolbar-right {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.search-box {
+    display: flex;
+    gap: 0.25rem;
+}
+
+.search-box input {
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--border-color, #e5e7eb);
+    border-radius: 0.375rem;
+    font-size: 0.875rem;
+    width: 200px;
+}
+
+.filter-box select {
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--border-color, #e5e7eb);
+    border-radius: 0.375rem;
+    font-size: 0.875rem;
+    background: white;
+}
+
+.btn {
+    padding: 0.5rem 1rem;
+    border: none;
+    border-radius: 0.375rem;
+    font-weight: 500;
+    font-size: 0.875rem;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+}
+
+.btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.btn-primary {
+    background: var(--primary-color);
+    color: white;
+}
+
+.btn-primary:hover:not(:disabled) {
+    background: var(--secondary-color);
+}
+
+.btn-secondary {
+    background: #6b7280;
+    color: white;
+}
+
+.btn-secondary:hover:not(:disabled) {
+    background: #4b5563;
+}
+
+.btn-warning {
+    background: #f59e0b;
+    color: white;
+}
+
+.btn-warning:hover:not(:disabled) {
+    background: #d97706;
+}
+
+.btn-danger {
+    background: #dc2626;
+    color: white;
+}
+
+.btn-danger:hover:not(:disabled) {
+    background: #b91c1c;
+}
+
+.btn-search {
+    background: var(--primary-color);
+    color: white;
+}
+
+.btn-sm {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.75rem;
+}
+
+.table-container {
+    background: var(--card-background);
+    border-radius: 0.5rem;
+    overflow: hidden;
+    box-shadow: var(--shadow-sm);
+}
+
+.data-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.data-table th, .data-table td {
+    padding: 0.75rem;
+    text-align: left;
+    border-bottom: 1px solid var(--border-color, #e5e7eb);
+    font-size: 0.875rem;
+}
+
+.data-table th {
+    background: var(--background-color);
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+
+.data-table tr:hover {
+    background: rgba(0,0,0,0.02);
+}
+
+.checkbox-col {
+    width: 40px;
+    text-align: center;
+}
+
+.loading-cell {
+    text-align: center;
+    color: var(--text-secondary);
+    padding: 2rem !important;
+}
+
+.status-badge {
+    display: inline-block;
+    padding: 0.25rem 0.5rem;
+    border-radius: 0.25rem;
+    font-size: 0.75rem;
+    font-weight: 500;
+}
+
+.status-pending {
+    background: #fef3c7;
+    color: #92400e;
+}
+
+.status-processing {
+    background: #dbeafe;
+    color: #1e40af;
+}
+
+.status-success {
+    background: #d1fae5;
+    color: #065f46;
+}
+
+.status-failed {
+    background: #fee2e2;
+    color: #991b1b;
+}
+
+.action-btns {
+    display: flex;
+    gap: 0.25rem;
+}
+
+.pagination {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 1rem;
+    padding: 1rem;
+    background: var(--card-background);
+    border-radius: 0.5rem;
+    margin-top: 1rem;
+}
+
+.btn-page {
+    background: var(--background-color);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color, #e5e7eb);
+}
+
+.btn-page:hover:not(:disabled) {
+    background: var(--primary-color);
+    color: white;
+}
+
+.page-info {
+    color: var(--text-secondary);
+    font-size: 0.875rem;
+}
+
+#perPageSelect {
+    padding: 0.5rem;
+    border: 1px solid var(--border-color, #e5e7eb);
+    border-radius: 0.375rem;
+    background: white;
+}
+
+/* Modal styles */
+.modal {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0,0,0,0.5);
+    z-index: 1000;
+    justify-content: center;
+    align-items: center;
+}
+
+.modal.show {
+    display: flex;
+}
+
+.modal-content {
+    background: var(--card-background);
+    border-radius: 0.75rem;
+    width: 90%;
+    max-width: 500px;
+    max-height: 90vh;
+    overflow-y: auto;
+    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
+}
+
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid var(--border-color, #e5e7eb);
+}
+
+.modal-header h3 {
+    margin: 0;
+    font-size: 1.125rem;
+}
+
+.modal-close {
+    background: none;
+    border: none;
+    font-size: 1.5rem;
+    cursor: pointer;
+    color: var(--text-secondary);
+    line-height: 1;
+}
+
+.modal-close:hover {
+    color: var(--text-primary);
+}
+
+.modal-body {
+    padding: 1.5rem;
+}
+
+.modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
+    padding: 1rem 1.5rem;
+    border-top: 1px solid var(--border-color, #e5e7eb);
+}
+
+.form-group {
+    margin-bottom: 1rem;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 0.5rem;
+    font-weight: 500;
+    color: var(--text-primary);
+}
+
+.form-group input, .form-group select, .form-group textarea {
+    width: 100%;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--border-color, #e5e7eb);
+    border-radius: 0.375rem;
+    font-size: 0.875rem;
+}
+
+.form-group input:focus, .form-group select:focus, .form-group textarea:focus {
+    outline: none;
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
+}
+
+.readonly-input {
+    background: var(--background-color);
+    color: var(--text-secondary);
+}
+
+.stock-search {
+    position: relative;
+}
+
+.stock-suggestions {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    background: white;
+    border: 1px solid var(--border-color, #e5e7eb);
+    border-radius: 0.375rem;
+    max-height: 200px;
+    overflow-y: auto;
+    z-index: 10;
+    display: none;
+    box-shadow: var(--shadow-md);
+}
+
+.stock-suggestions.show {
+    display: block;
+}
+
+.stock-suggestion-item {
+    padding: 0.5rem 0.75rem;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+}
+
+.stock-suggestion-item:hover {
+    background: var(--background-color);
+}
+
+.stock-suggestion-item .code {
+    font-weight: 600;
+}
+
+.stock-suggestion-item .name {
+    color: var(--text-secondary);
+    font-size: 0.875rem;
+}
+
+.empty-message {
+    text-align: center;
+    color: var(--text-secondary);
+    padding: 2rem;
+}
+
+@media (max-width: 768px) {
+    .editor-header {
+        flex-direction: column;
+        gap: 1rem;
+        text-align: center;
+    }
+
+    .toolbar {
+        flex-direction: column;
+    }
+
+    .table-container {
+        overflow-x: auto;
+    }
+
+    .data-table {
+        min-width: 800px;
+    }
+}
+</style>
+
+<script>
+let currentPage = 1;
+let totalPages = 1;
+let selectedIds = new Set();
+
+// 页面加载时初始化
+document.addEventListener('DOMContentLoaded', function() {
+    loadRecords(1);
+
+    // 设置默认日期为今天
+    const today = new Date().toISOString().split('T')[0];
+    document.getElementById('endDateInput').value = today;
+});
+
+// 加载记录
+function loadRecords(page) {
+    if (page < 1) page = 1;
+    if (page > totalPages && totalPages > 0) page = totalPages;
+    currentPage = page;
+
+    const search = document.getElementById('searchInput').value;
+    const status = document.getElementById('statusFilter').value;
+    const perPage = document.getElementById('perPageSelect').value;
+
+    const url = new URL('{{ url_for("download_data_bp.api_get_download_records") }}', window.location.origin);
+    url.searchParams.append('page', page);
+    url.searchParams.append('per_page', perPage);
+    if (search) url.searchParams.append('search', search);
+    if (status) url.searchParams.append('status', status);
+
+    document.getElementById('recordsBody').innerHTML = '<tr><td colspan="9" class="loading-cell">加载中...</td></tr>';
+
+    fetch(url)
+        .then(res => res.json())
+        .then(data => {
+            if (data.error) {
+                document.getElementById('recordsBody').innerHTML =
+                    `<tr><td colspan="9" class="loading-cell">加载失败: ${data.error}</td></tr>`;
+                return;
+            }
+
+            totalPages = data.total_pages;
+            updateTable(data.records);
+            updatePagination(data);
+            document.getElementById('recordCount').textContent = `共 ${data.total} 条记录`;
+        })
+        .catch(err => {
+            document.getElementById('recordsBody').innerHTML =
+                `<tr><td colspan="9" class="loading-cell">加载失败: ${err.message}</td></tr>`;
+        });
+}
+
+// 更新表格
+function updateTable(records) {
+    const tbody = document.getElementById('recordsBody');
+
+    if (records.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="9" class="loading-cell">暂无数据</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = records.map(record => `
+        <tr data-id="${record.id}">
+            <td class="checkbox-col">
+                <input type="checkbox" class="row-checkbox" value="${record.id}" onchange="toggleRowSelection(${record.id})">
+            </td>
+            <td><strong>${record.stock_code}</strong></td>
+            <td><span class="status-badge status-${record.download_status}">${getStatusText(record.download_status)}</span></td>
+            <td>${record.download_progress ? record.download_progress.toFixed(1) + '%' : '0%'}</td>
+            <td>${record.end_date || '-'}</td>
+            <td>${record.record_date || '-'}</td>
+            <td>${record.downloaded_records || 0}</td>
+            <td>${record.last_download_time ? record.last_download_time.substring(5) : '-'}</td>
+            <td>
+                <div class="action-btns">
+                    <button class="btn btn-primary btn-sm" onclick="showEditModal(${record.id})">编辑</button>
+                    <button class="btn btn-danger btn-sm" onclick="deleteRecord(${record.id})">删除</button>
+                </div>
+            </td>
+        </tr>
+    `).join('');
+
+    // 更新复选框状态
+    updateCheckboxStates();
+}
+
+function getStatusText(status) {
+    const map = {
+        'pending': '待下载',
+        'processing': '下载中',
+        'success': '已完成',
+        'failed': '失败'
+    };
+    return map[status] || status;
+}
+
+// 更新分页
+function updatePagination(data) {
+    document.getElementById('pageInfo').textContent = `第 ${data.page} / ${data.total_pages} 页`;
+    document.getElementById('prevBtn').disabled = data.page <= 1;
+    document.getElementById('nextBtn').disabled = data.page >= data.total_pages;
+}
+
+// 搜索处理
+function handleSearch(event) {
+    if (event.key === 'Enter') {
+        loadRecords(1);
+    }
+}
+
+// 全选
+function toggleSelectAll() {
+    const selectAll = document.getElementById('selectAll').checked;
+    document.querySelectorAll('.row-checkbox').forEach(cb => {
+        cb.checked = selectAll;
+        const id = parseInt(cb.value);
+        if (selectAll) {
+            selectedIds.add(id);
+        } else {
+            selectedIds.delete(id);
+        }
+    });
+    updateBatchButtons();
+}
+
+// 单行选择
+function toggleRowSelection(id) {
+    if (selectedIds.has(id)) {
+        selectedIds.delete(id);
+    } else {
+        selectedIds.add(id);
+    }
+    updateBatchButtons();
+    updateSelectAllCheckbox();
+}
+
+function updateCheckboxStates() {
+    document.querySelectorAll('.row-checkbox').forEach(cb => {
+        const id = parseInt(cb.value);
+        cb.checked = selectedIds.has(id);
+    });
+    updateSelectAllCheckbox();
+}
+
+function updateSelectAllCheckbox() {
+    const checkboxes = document.querySelectorAll('.row-checkbox');
+    const checkedCount = document.querySelectorAll('.row-checkbox:checked').length;
+    document.getElementById('selectAll').checked = checkboxes.length > 0 && checkedCount === checkboxes.length;
+}
+
+function updateBatchButtons() {
+    const hasSelection = selectedIds.size > 0;
+    document.getElementById('batchPendingBtn').disabled = !hasSelection;
+    document.getElementById('batchDeleteBtn').disabled = !hasSelection;
+}
+
+// 显示添加模态框
+function showAddModal() {
+    document.getElementById('addModal').classList.add('show');
+    document.getElementById('stockCodeInput').value = '';
+    document.getElementById('stockSuggestions').classList.remove('show');
+}
+
+function closeAddModal() {
+    document.getElementById('addModal').classList.remove('show');
+}
+
+// 搜索股票
+let searchTimeout;
+function searchStocks() {
+    clearTimeout(searchTimeout);
+    const input = document.getElementById('stockCodeInput').value;
+
+    if (input.length < 1) {
+        document.getElementById('stockSuggestions').classList.remove('show');
+        return;
+    }
+
+    searchTimeout = setTimeout(() => {
+        fetch(`{{ url_for("download_data_bp.api_get_available_stocks") }}?search=${input}&limit=10`)
+            .then(res => res.json())
+            .then(data => {
+                const container = document.getElementById('stockSuggestions');
+                if (data.stocks && data.stocks.length > 0) {
+                    container.innerHTML = data.stocks.map(s => `
+                        <div class="stock-suggestion-item" onclick="selectStock('${s.code}', '${s.name}')">
+                            <span class="code">${s.code}</span>
+                            <span class="name">${s.name}</span>
+                        </div>
+                    `).join('');
+                    container.classList.add('show');
+                } else {
+                    container.innerHTML = '<div class="empty-message">未找到匹配的股票</div>';
+                    container.classList.add('show');
+                }
+            });
+    }, 300);
+}
+
+function selectStock(code, name) {
+    document.getElementById('stockCodeInput').value = code;
+    document.getElementById('stockSuggestions').classList.remove('show');
+}
+
+// 添加记录
+function addRecord() {
+    const stockCode = document.getElementById('stockCodeInput').value.trim();
+    const endDate = document.getElementById('endDateInput').value;
+    const status = document.getElementById('initialStatusInput').value;
+
+    if (!stockCode) {
+        alert('请输入股票代码');
+        return;
+    }
+
+    fetch('{{ url_for("download_data_bp.api_add_download_record") }}', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            stock_code: stockCode,
+            end_date: endDate,
+            download_status: status
+        })
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.success) {
+            alert(data.message);
+            closeAddModal();
+            loadRecords(1);
+        } else {
+            alert(data.error || '添加失败');
+        }
+    })
+    .catch(err => alert('添加失败: ' + err.message));
+}
+
+// 显示编辑模态框
+function showEditModal(id) {
+    fetch(`{{ url_for("download_data_bp.api_get_download_records") }}`.replace('api/download_records', `api/download_records/${id}`))
+        .then(res => res.json())
+        .then(data => {
+            if (data.error) {
+                alert(data.error);
+                return;
+            }
+            document.getElementById('editRecordId').value = data.id;
+            document.getElementById('editStockCode').value = data.stock_code;
+            document.getElementById('editStatus').value = data.download_status;
+            document.getElementById('editEndDate').value = data.end_date || '';
+            document.getElementById('editErrorMessage').value = data.error_message || '';
+            document.getElementById('editModal').classList.add('show');
+        });
+}
+
+function closeEditModal() {
+    document.getElementById('editModal').classList.remove('show');
+}
+
+// 更新记录
+function updateRecord() {
+    const id = document.getElementById('editRecordId').value;
+    const status = document.getElementById('editStatus').value;
+    const endDate = document.getElementById('editEndDate').value;
+    const errorMessage = document.getElementById('editErrorMessage').value;
+
+    fetch(`/api/download_records/${id}`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            download_status: status,
+            end_date: endDate,
+            error_message: errorMessage
+        })
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.success) {
+            alert(data.message);
+            closeEditModal();
+            loadRecords(currentPage);
+        } else {
+            alert(data.error || '更新失败');
+        }
+    })
+    .catch(err => alert('更新失败: ' + err.message));
+}
+
+// 删除记录
+function deleteRecord(id) {
+    if (!confirm('确定要删除这条记录吗？')) return;
+
+    fetch(`/api/download_records/${id}`, {method: 'DELETE'})
+        .then(res => res.json())
+        .then(data => {
+            if (data.success) {
+                loadRecords(currentPage);
+            } else {
+                alert(data.error || '删除失败');
+            }
+        })
+        .catch(err => alert('删除失败: ' + err.message));
+}
+
+// 批量删除
+function batchDelete() {
+    if (selectedIds.size === 0) {
+        alert('请选择要删除的记录');
+        return;
+    }
+
+    if (!confirm(`确定要删除选中的 ${selectedIds.size} 条记录吗？`)) return;
+
+    fetch('{{ url_for("download_data_bp.api_batch_delete_download_records") }}', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ids: Array.from(selectedIds)})
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.success) {
+            alert(data.message);
+            selectedIds.clear();
+            loadRecords(currentPage);
+        } else {
+            alert(data.error || '删除失败');
+        }
+    })
+    .catch(err => alert('批量删除失败: ' + err.message));
+}
+
+// 批量更新状态
+function batchUpdateStatus(status) {
+    if (selectedIds.size === 0) {
+        alert('请选择要更新的记录');
+        return;
+    }
+
+    if (!confirm(`确定要将选中的 ${selectedIds.size} 条记录状态重置为"待下载"吗？`)) return;
+
+    fetch('{{ url_for("download_data_bp.api_batch_update_status") }}', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ids: Array.from(selectedIds), status: status})
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.success) {
+            alert(data.message);
+            selectedIds.clear();
+            loadRecords(currentPage);
+        } else {
+            alert(data.error || '更新失败');
+        }
+    })
+    .catch(err => alert('批量更新失败: ' + err.message));
+}
+
+// 点击模态框外部关闭
+document.getElementById('addModal').addEventListener('click', function(e) {
+    if (e.target === this) closeAddModal();
+});
+document.getElementById('editModal').addEventListener('click', function(e) {
+    if (e.target === this) closeEditModal();
+});
+</script>
+{% endblock %}

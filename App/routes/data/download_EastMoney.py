@@ -157,40 +157,152 @@ def download_stock_1m_close_data_today_eastmoney():
         if not stock_code:
             flash('请填写完整信息！')
             return redirect(url_for('download_eastmoney_data.download_stock_1m_close_data_today_eastmoney'))
-        
+
         try:
             # 使用完整的下载流程（包含15分钟数据转换）
             from App.codes.RnnDataFile.save_download import complete_download_process
-            
+            import pandas as pd
+            from datetime import datetime, timedelta
+            import os
+
             result = complete_download_process(stock_code, days=1)
-            
+
             if result['success']:
                 flash(f"成功完成 {stock_code} 的完整下载流程: {result['message']}", "success")
-                
-                # 获取各种数据类型的文件路径
-                file_path_1m = get_stock_data_path(stock_code, data_type='1m')
+
+                # 智能查找1分钟数据文件路径（搜索最近的季度）
+                file_path_1m = None
+                from App.utils.path_manager import get_path_manager
+                pm = get_path_manager()
+
+                # 搜索最近几个季度的数据
+                current_year = int(pm.get_current_year())
+                quarters_to_check = []
+
+                # 添加当前季度和上一个季度
+                for year in [current_year, current_year - 1]:
+                    for q in ['Q4', 'Q3', 'Q2', 'Q1']:
+                        quarters_to_check.append((str(year), q))
+
+                for year, quarter in quarters_to_check:
+                    path = get_stock_data_path(stock_code, data_type='1m', year=year, quarter=quarter, create=False)
+                    if os.path.exists(path):
+                        file_path_1m = path
+                        logger.info(f"找到1分钟数据文件: {path}")
+                        break
+
+                if not file_path_1m:
+                    # 如果都没找到，使用默认路径（用于显示）
+                    file_path_1m = get_stock_data_path(stock_code, data_type='1m')
+
                 file_path_15m = get_stock_data_path(stock_code, data_type='15m_normal')
-                file_path_daily = get_stock_data_path(stock_code, data_type='daily')
-                
-                # 从数据库查询刚刚保存的日线数据
+
+                # 同样智能查找日线数据
+                file_path_daily = None
+                for year, quarter in quarters_to_check:
+                    path = get_stock_data_path(stock_code, data_type='daily', year=year, quarter=quarter, create=False)
+                    if os.path.exists(path):
+                        file_path_daily = path
+                        break
+                if not file_path_daily:
+                    file_path_daily = get_stock_data_path(stock_code, data_type='daily')
+
+                # ========== 数据验证部分 ==========
+                validation_result = {
+                    'status': 'success',
+                    'issues': [],
+                    'stats': {}
+                }
+
+                # 读取并验证1分钟数据（支持Parquet和CSV）
+                data_1m_preview = None
+                if os.path.exists(file_path_1m):
+                    try:
+                        if file_path_1m.endswith('.parquet'):
+                            df_1m = pd.read_parquet(file_path_1m)
+                        else:
+                            df_1m = pd.read_csv(file_path_1m, encoding='utf-8-sig')
+                        df_1m['date'] = pd.to_datetime(df_1m['date'])
+
+                        # 统计信息
+                        validation_result['stats']['total_records'] = len(df_1m)
+                        validation_result['stats']['first_time'] = df_1m['date'].min().strftime('%Y-%m-%d %H:%M')
+                        validation_result['stats']['last_time'] = df_1m['date'].max().strftime('%Y-%m-%d %H:%M')
+
+                        # 按天统计记录数
+                        df_1m['trade_date'] = df_1m['date'].dt.date
+                        daily_counts = df_1m.groupby('trade_date').size().to_dict()
+                        validation_result['stats']['daily_counts'] = {str(k): v for k, v in daily_counts.items()}
+
+                        # 检查数据质量问题
+                        # 1. 检查 open=0
+                        zero_open_count = (df_1m['open'] == 0).sum()
+                        if zero_open_count > 0:
+                            validation_result['issues'].append(f"⚠️ 发现 {zero_open_count} 条 open=0 的数据")
+                            validation_result['status'] = 'warning'
+
+                        # 2. 检查时间范围
+                        first_time = df_1m['date'].min().time()
+                        from datetime import time as dt_time
+                        if first_time < dt_time(9, 30):
+                            validation_result['issues'].append(f"⚠️ 数据包含 9:30 之前的记录（首条时间: {first_time}）")
+                            validation_result['status'] = 'warning'
+
+                        # 3. 检查每天记录数是否合理（正常约240条）
+                        for date_str, count in daily_counts.items():
+                            if count < 200:
+                                validation_result['issues'].append(f"⚠️ {date_str} 只有 {count} 条记录（正常约240条）")
+                                validation_result['status'] = 'warning'
+
+                        # 4. 检查价格是否合理
+                        if (df_1m['close'] <= 0).any():
+                            validation_result['issues'].append("❌ 存在 close<=0 的异常数据")
+                            validation_result['status'] = 'error'
+
+                        # 转换为Python原生类型，避免numpy类型在模板中出现问题
+                        def convert_row(row):
+                            return {
+                                'date': row['date'].strftime('%Y-%m-%d %H:%M') if hasattr(row['date'], 'strftime') else str(row['date']),
+                                'open': float(row['open']),
+                                'close': float(row['close']),
+                                'high': float(row['high']),
+                                'low': float(row['low']),
+                                'volume': int(row['volume']),
+                                'money': int(row['money'])
+                            }
+
+                        # 准备全部数据用于显示
+                        data_1m_preview = {
+                            'all': [convert_row(row) for _, row in df_1m.iterrows()],
+                            'total_count': len(df_1m)
+                        }
+
+                        if not validation_result['issues']:
+                            validation_result['issues'].append("✅ 数据质量检查通过")
+
+                    except Exception as e:
+                        logger.error(f"读取1分钟数据失败: {str(e)}")
+                        validation_result['issues'].append(f"❌ 读取CSV失败: {str(e)}")
+                        validation_result['status'] = 'error'
+                else:
+                    validation_result['issues'].append(f"❌ 1分钟数据文件不存在: {file_path_1m}")
+                    validation_result['status'] = 'error'
+
+                # 从数据库查询日线数据
                 daily_data_from_db = None
                 try:
                     from App.models.data.StockDaily import StockDaily
-                    from datetime import datetime, timedelta
-                    
-                    # 查询最近7天的日线数据
+
                     end_date = datetime.now().date()
                     start_date = end_date - timedelta(days=7)
-                    
+
                     daily_records = StockDaily.query.filter(
                         StockDaily.stock_code == stock_code,
                         StockDaily.date >= start_date,
                         StockDaily.date <= end_date
                     ).order_by(StockDaily.date.desc()).all()
-                    
+
                     if daily_records:
-                        # 转换为DataFrame用于显示
-                        import pandas as pd
                         daily_data_list = []
                         for record in daily_records:
                             daily_data_list.append({
@@ -202,40 +314,30 @@ def download_stock_1m_close_data_today_eastmoney():
                                 'volume': f"{record.volume:,}",
                                 'money': f"{record.money:,}"
                             })
-                        
+
                         daily_data_from_db = pd.DataFrame(daily_data_list)
                         logger.info(f"成功查询到 {len(daily_records)} 条日线数据用于验证")
-                    else:
-                        logger.warning(f"未找到 {stock_code} 的日线数据")
-                        
+
                 except Exception as e:
                     logger.error(f"查询日线数据失败: {str(e)}")
-                
-                # 准备显示信息
-                data_info = result.get('data_info', {})
-                display_message = f"""
-                下载完成！处理结果：
-                • 1分钟数据: {data_info.get('1m_records', 0)} 条
-                • 15分钟数据: {data_info.get('15m_records', 0)} 条  
-                • 日线数据: {data_info.get('daily_records', 0)} 条
-                """
-                
-                return render_template('data/success.html', 
-                                     data_html=display_message, 
+
+                return render_template('data/success.html',
                                      file_path=file_path_1m,
                                      file_path_15m=file_path_15m,
                                      file_path_daily=file_path_daily,
                                      stock_code=stock_code,
-                                     daily_data_from_db=daily_data_from_db)
+                                     daily_data_from_db=daily_data_from_db,
+                                     validation_result=validation_result,
+                                     data_1m_preview=data_1m_preview)
             else:
                 flash(f"下载流程部分失败: {result['message']}", "warning")
                 return redirect(url_for('download_eastmoney_data.download_stock_1m_close_data_today_eastmoney'))
-            
+
         except Exception as e:
             logger.error(f"下载数据失败: {stock_code}, 错误: {str(e)}")
             flash(f'下载失败: {str(e)}')
             return redirect(url_for('download_eastmoney_data.download_stock_1m_close_data_today_eastmoney'))
-    
+
     # 处理 GET 请求
     return render_template('data/股票下载.html')
 

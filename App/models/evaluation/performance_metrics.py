@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 class StrategyPerformance(db.Model):
     """策略性能评估表"""
-    __tablename__ = 'strategy_performance'
+    __tablename__ = 'eval_performance'
     __bind_key__ = 'quanttradingsystem'  # 绑定到主数据库
 
     id = db.Column(db.Integer, primary_key=True, autoincrement=True, comment='主键ID')
@@ -170,7 +170,7 @@ class StrategyPerformance(db.Model):
 
 class RiskMetrics(db.Model):
     """风险指标表"""
-    __tablename__ = 'risk_metrics'
+    __tablename__ = 'eval_risk_metrics'
     __bind_key__ = 'quanttradingsystem'  # 绑定到主数据库
 
     id = db.Column(db.Integer, primary_key=True, autoincrement=True, comment='主键ID')

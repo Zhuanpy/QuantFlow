@@ -13,10 +13,10 @@ logger = logging.getLogger(__name__)
 class Position(db.Model):
     """
     持仓模型
-    
+
     用于记录和管理当前持仓信息
     """
-    __tablename__ = 'positions'
+    __tablename__ = 'trade_positions'
     __bind_key__ = 'quanttradingsystem'
 
     # 持仓类型常量

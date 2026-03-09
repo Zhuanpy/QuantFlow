@@ -15,7 +15,7 @@ class Issue(db.Model):
     
     用于记录和管理股票相关的问题及其解决方案
     """
-    __tablename__ = 'stock_issue'
+    __tablename__ = 'strategy_issues'
     __bind_key__ = 'quanttradingsystem'  # 绑定到主数据库
 
     # 状态常量

@@ -49,24 +49,33 @@ class StockData15m:
             except Exception as e:
                 logger.warning(f"从数据库加载失败，尝试从文件加载: {e}")
         
-        # 如果数据库加载失败，尝试从CSV文件加载
+        # 如果数据库加载失败，尝试从Parquet/CSV文件加载
         try:
             if FLASK_AVAILABLE:
-                file_path = StockDataPath.get_stock_data_directory() / '15m' / f'{stock_code}.csv'
+                base_dir = Path(StockDataPath.get_stock_data_directory()) / '15m'
             else:
                 from config import Config
                 project_root = Path(Config.get_project_root())
-                file_path = project_root / 'data' / 'data' / '15m' / f'{stock_code}.csv'
-            
-            if file_path.exists():
-                data = pd.read_csv(file_path, parse_dates=['date'])
-                logger.info(f"成功从文件加载股票 {stock_code} 15分钟数据，共 {len(data)} 条记录")
+                base_dir = project_root / 'data' / 'data' / '15m'
+
+            # 优先读取parquet文件
+            parquet_path = base_dir / f'{stock_code}.parquet'
+            csv_path = base_dir / f'{stock_code}.csv'
+
+            if parquet_path.exists():
+                data = pd.read_parquet(parquet_path)
+                data['date'] = pd.to_datetime(data['date'])
+                logger.info(f"成功从Parquet加载股票 {stock_code} 15分钟数据，共 {len(data)} 条记录")
+                return data
+            elif csv_path.exists():
+                data = pd.read_csv(csv_path, parse_dates=['date'])
+                logger.info(f"成功从CSV加载股票 {stock_code} 15分钟数据，共 {len(data)} 条记录")
                 return data
             else:
-                logger.warning(f"文件不存在: {file_path}")
+                logger.warning(f"15m文件不存在: {parquet_path}")
         except Exception as e:
             logger.error(f"从文件加载失败: {e}")
-        
+
         logger.error(f"无法加载股票 {stock_code} 15分钟数据")
         return pd.DataFrame()
     

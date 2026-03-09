@@ -90,10 +90,54 @@ def register_blueprints(app):
     
     try:
         from App.routes.data.download_top500_funds_awkward import dl_funds_awkward_bp
-        app.register_blueprint(dl_funds_awkward_bp)
+        app.register_blueprint(dl_funds_awkward_bp, url_prefix='/funds')
     except ImportError as e:
         print(f"警告: 无法导入 download_top500_funds_awkward 蓝图: {e}")
-    
+
+    try:
+        from App.routes.data.data_viewer_route import data_viewer_bp
+        app.register_blueprint(data_viewer_bp)
+    except ImportError as e:
+        print(f"警告: 无法导入 data_viewer_route 蓝图: {e}")
+
+    try:
+        from App.routes.data.tdx_download_route import tdx_bp
+        app.register_blueprint(tdx_bp)
+    except ImportError as e:
+        print(f"警告: 无法导入 tdx_download_route 蓝图: {e}")
+
+    try:
+        from App.routes.data.data_analysis_route import data_analysis_bp
+        app.register_blueprint(data_analysis_bp)
+    except ImportError as e:
+        print(f"警告: 无法导入 data_analysis_route 蓝图: {e}")
+
+    try:
+        from App.routes.data.daily_viewer_route import daily_viewer_bp
+        app.register_blueprint(daily_viewer_bp)
+    except ImportError as e:
+        print(f"警告: 无法导入 daily_viewer_route 蓝图: {e}")
+
+    try:
+        from App.routes.data.viewer_15m_route import viewer_15m_bp
+        app.register_blueprint(viewer_15m_bp)
+    except ImportError as e:
+        print(f"警告: 无法导入 viewer_15m_route 蓝图: {e}")
+
+    # 任务状态看板路由
+    try:
+        from App.routes.data.task_status_route import task_status_bp
+        app.register_blueprint(task_status_bp)
+    except ImportError as e:
+        print(f"警告: 无法导入 task_status_route 蓝图: {e}")
+
+    # 交易计划路由
+    try:
+        from App.routes.trade.trade_plan_route import trade_plan_bp
+        app.register_blueprint(trade_plan_bp)
+    except ImportError as e:
+        print(f"警告: 无法导入 trade_plan_route 蓝图: {e}")
+
     # 策略相关路由
     try:
         from App.routes.strategy.StockPoolManagement import stock_pool_bp

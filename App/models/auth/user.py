@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 class User(db.Model):
     """用户模型"""
-    __tablename__ = 'users'
+    __tablename__ = 'auth_users'
     __bind_key__ = 'quanttradingsystem'
     
     # 基本信息
@@ -145,7 +145,7 @@ class User(db.Model):
 
 class Role(db.Model):
     """角色模型"""
-    __tablename__ = 'roles'
+    __tablename__ = 'auth_roles'
     __bind_key__ = 'quanttradingsystem'
     
     id = db.Column(db.Integer, primary_key=True, comment='角色ID')
@@ -171,7 +171,7 @@ class Role(db.Model):
 
 class Permission(db.Model):
     """权限模型"""
-    __tablename__ = 'permissions'
+    __tablename__ = 'auth_permissions'
     __bind_key__ = 'quanttradingsystem'
     
     id = db.Column(db.Integer, primary_key=True, comment='权限ID')
@@ -193,33 +193,33 @@ class Permission(db.Model):
 
 class UserRole(db.Model):
     """用户角色关联"""
-    __tablename__ = 'user_roles'
+    __tablename__ = 'auth_user_roles'
     __bind_key__ = 'quanttradingsystem'
-    
+
     id = db.Column(db.BigInteger, primary_key=True)
-    user_id = db.Column(db.BigInteger, db.ForeignKey('users.id'), nullable=False)
-    role_id = db.Column(db.Integer, db.ForeignKey('roles.id'), nullable=False)
+    user_id = db.Column(db.BigInteger, db.ForeignKey('auth_users.id'), nullable=False)
+    role_id = db.Column(db.Integer, db.ForeignKey('auth_roles.id'), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 
 class RolePermission(db.Model):
     """角色权限关联"""
-    __tablename__ = 'role_permissions'
+    __tablename__ = 'auth_role_permissions'
     __bind_key__ = 'quanttradingsystem'
-    
+
     id = db.Column(db.BigInteger, primary_key=True)
-    role_id = db.Column(db.Integer, db.ForeignKey('roles.id'), nullable=False)
-    permission_id = db.Column(db.Integer, db.ForeignKey('permissions.id'), nullable=False)
+    role_id = db.Column(db.Integer, db.ForeignKey('auth_roles.id'), nullable=False)
+    permission_id = db.Column(db.Integer, db.ForeignKey('auth_permissions.id'), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 
 class LoginLog(db.Model):
     """登录日志"""
-    __tablename__ = 'login_logs'
+    __tablename__ = 'auth_login_logs'
     __bind_key__ = 'quanttradingsystem'
-    
+
     id = db.Column(db.BigInteger, primary_key=True)
-    user_id = db.Column(db.BigInteger, db.ForeignKey('users.id'))
+    user_id = db.Column(db.BigInteger, db.ForeignKey('auth_users.id'))
     username = db.Column(db.String(50), comment='用户名')
     login_type = db.Column(db.Enum('web', 'api', 'mobile'), default='web', comment='登录类型')
     login_status = db.Column(db.Enum('success', 'failed'), nullable=False, comment='登录状态')

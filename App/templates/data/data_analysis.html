@@ -1,0 +1,744 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="analysis-container">
+    <!-- 页面标题 -->
+    <div class="page-header">
+        <div class="header-content">
+            <div class="title-section">
+                <h1>数据完整性分析</h1>
+                <p class="subtitle">分析已下载1分钟数据的完整性和质量</p>
+            </div>
+            <a href="{{ url_for('download_data_bp.download_minute_data_page') }}" class="back-btn">
+                <span class="icon">←</span>
+                返回下载页
+            </a>
+        </div>
+    </div>
+
+    <!-- 数据概览 -->
+    <div class="summary-section">
+        <div class="summary-card">
+            <div class="summary-icon">📁</div>
+            <div class="summary-info">
+                <div class="summary-value" id="totalFiles">-</div>
+                <div class="summary-label">数据文件数</div>
+            </div>
+        </div>
+        <div class="summary-card">
+            <div class="summary-icon">💾</div>
+            <div class="summary-info">
+                <div class="summary-value" id="totalSize">-</div>
+                <div class="summary-label">总数据大小</div>
+            </div>
+        </div>
+        <div class="summary-card">
+            <div class="summary-icon">📊</div>
+            <div class="summary-info">
+                <div class="summary-value" id="avgScore">-</div>
+                <div class="summary-label">平均质量评分</div>
+            </div>
+        </div>
+        <div class="summary-card">
+            <div class="summary-icon">⚠️</div>
+            <div class="summary-info">
+                <div class="summary-value" id="issueFiles">-</div>
+                <div class="summary-label">存在问题的文件</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 主内容区 -->
+    <div class="main-content">
+        <!-- 左侧：操作面板 -->
+        <div class="left-panel">
+            <!-- 单股分析 -->
+            <div class="panel-card">
+                <div class="panel-header">
+                    <h3>单股分析</h3>
+                </div>
+                <div class="panel-body">
+                    <div class="form-group">
+                        <label for="stockCode">股票代码</label>
+                        <input type="text" id="stockCode" placeholder="如：000001">
+                    </div>
+                    <button class="btn primary full-width" onclick="analyzeStock()">分析该股票</button>
+                </div>
+            </div>
+
+            <!-- 批量分析 -->
+            <div class="panel-card">
+                <div class="panel-header">
+                    <h3>批量分析</h3>
+                </div>
+                <div class="panel-body">
+                    <div class="form-group">
+                        <label for="analyzeLimit">分析数量</label>
+                        <select id="analyzeLimit">
+                            <option value="20">前20个</option>
+                            <option value="50" selected>前50个</option>
+                            <option value="100">前100个</option>
+                            <option value="0">全部</option>
+                        </select>
+                    </div>
+                    <button class="btn warning full-width" onclick="analyzeBatch()">批量分析</button>
+                </div>
+            </div>
+
+            <!-- 季度分布 -->
+            <div class="panel-card">
+                <div class="panel-header">
+                    <h3>季度分布</h3>
+                </div>
+                <div class="panel-body">
+                    <div id="quarterStats" class="quarter-stats">
+                        <div class="loading-text">加载中...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 右侧：分析结果 -->
+        <div class="right-panel">
+            <div class="panel-card result-card">
+                <div class="panel-header">
+                    <h3>分析结果</h3>
+                    <div class="header-actions">
+                        <span id="resultInfo" class="result-info"></span>
+                    </div>
+                </div>
+                <div class="panel-body">
+                    <div id="loadingOverlay" class="loading-overlay" style="display: none;">
+                        <div class="loading-spinner"></div>
+                        <span>分析中...</span>
+                    </div>
+                    <div id="analysisResult" class="analysis-result">
+                        <div class="empty-message">
+                            <div class="empty-icon">📈</div>
+                            <p>输入股票代码或点击"批量分析"开始分析</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.analysis-container {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 20px 30px;
+}
+
+.page-header {
+    margin-bottom: 20px;
+}
+
+.header-content {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 20px 25px;
+    background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
+    border-radius: 12px;
+    color: white;
+}
+
+.title-section h1 {
+    margin: 0;
+    font-size: 1.6rem;
+    font-weight: 700;
+}
+
+.subtitle {
+    margin: 5px 0 0;
+    opacity: 0.9;
+    font-size: 0.9rem;
+}
+
+.back-btn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 20px;
+    background: rgba(255, 255, 255, 0.2);
+    color: white;
+    text-decoration: none;
+    border-radius: 8px;
+    font-weight: 500;
+    transition: all 0.3s ease;
+}
+
+.back-btn:hover {
+    background: rgba(255, 255, 255, 0.3);
+}
+
+/* 数据概览 */
+.summary-section {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 15px;
+    margin-bottom: 20px;
+}
+
+.summary-card {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    padding: 20px;
+    background: var(--card-background);
+    border-radius: 10px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+}
+
+.summary-icon {
+    font-size: 2rem;
+    width: 50px;
+    height: 50px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--background-color);
+    border-radius: 10px;
+}
+
+.summary-value {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--text-primary);
+}
+
+.summary-label {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+}
+
+/* 主内容区 */
+.main-content {
+    display: grid;
+    grid-template-columns: 300px 1fr;
+    gap: 20px;
+    align-items: start;
+}
+
+.left-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+}
+
+.panel-card {
+    background: var(--card-background);
+    border-radius: 10px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    overflow: hidden;
+}
+
+.panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 15px;
+    background: var(--background-color);
+    border-bottom: 1px solid var(--border-color);
+}
+
+.panel-header h3 {
+    margin: 0;
+    font-size: 1rem;
+    font-weight: 600;
+}
+
+.panel-body {
+    padding: 15px;
+}
+
+.form-group {
+    margin-bottom: 12px;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 5px;
+    font-size: 0.85rem;
+    font-weight: 500;
+    color: var(--text-secondary);
+}
+
+.form-group input,
+.form-group select {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    font-size: 0.9rem;
+    background: var(--background-color);
+}
+
+.btn {
+    padding: 10px 20px;
+    border: none;
+    border-radius: 6px;
+    font-size: 0.9rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.btn.primary { background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%); color: white; }
+.btn.warning { background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); color: white; }
+.btn:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.2); }
+.full-width { width: 100%; }
+
+/* 季度统计 */
+.quarter-stats {
+    font-size: 0.9rem;
+}
+
+.quarter-item {
+    display: flex;
+    justify-content: space-between;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.quarter-item:last-child {
+    border-bottom: none;
+}
+
+.quarter-name {
+    font-weight: 500;
+}
+
+.quarter-count {
+    color: var(--primary-color);
+    font-weight: 600;
+}
+
+/* 分析结果 */
+.result-card {
+    min-height: 500px;
+}
+
+.result-card .panel-body {
+    position: relative;
+    max-height: 600px;
+    overflow-y: auto;
+}
+
+.loading-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(255,255,255,0.9);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    z-index: 10;
+}
+
+.loading-spinner {
+    width: 40px;
+    height: 40px;
+    border: 3px solid var(--border-color);
+    border-top-color: var(--primary-color);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.empty-message {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 300px;
+    color: var(--text-secondary);
+}
+
+.empty-icon { font-size: 3rem; margin-bottom: 15px; }
+
+/* 结果列表 */
+.result-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.result-item {
+    padding: 15px;
+    background: var(--background-color);
+    border-radius: 8px;
+    border-left: 4px solid;
+}
+
+.result-item.excellent { border-left-color: #10b981; }
+.result-item.good { border-left-color: #3b82f6; }
+.result-item.warning { border-left-color: #f59e0b; }
+.result-item.poor { border-left-color: #ef4444; }
+
+.result-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+}
+
+.stock-code {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.quality-score {
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+
+.score-excellent { background: rgba(16, 185, 129, 0.15); color: #10b981; }
+.score-good { background: rgba(59, 130, 246, 0.15); color: #3b82f6; }
+.score-warning { background: rgba(245, 158, 11, 0.15); color: #d97706; }
+.score-poor { background: rgba(239, 68, 68, 0.15); color: #ef4444; }
+
+.result-stats {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+    margin-bottom: 10px;
+    font-size: 0.85rem;
+}
+
+.stat-item {
+    display: flex;
+    flex-direction: column;
+}
+
+.stat-label {
+    color: var(--text-secondary);
+    font-size: 0.75rem;
+}
+
+.stat-value {
+    font-weight: 500;
+}
+
+.result-issues {
+    font-size: 0.85rem;
+    color: #ef4444;
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px dashed var(--border-color);
+}
+
+.issue-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 5px;
+    margin-bottom: 5px;
+}
+
+.issue-icon { color: #f59e0b; }
+
+/* 详情模式 */
+.detail-section {
+    margin-bottom: 20px;
+}
+
+.detail-section h4 {
+    margin: 0 0 10px;
+    font-size: 1rem;
+    color: var(--text-primary);
+}
+
+.daily-chart {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 3px;
+}
+
+.day-block {
+    width: 20px;
+    height: 20px;
+    border-radius: 3px;
+    cursor: pointer;
+    transition: transform 0.1s;
+}
+
+.day-block:hover {
+    transform: scale(1.2);
+}
+
+.day-block.complete { background: #10b981; }
+.day-block.incomplete { background: #f59e0b; }
+.day-block.missing { background: #ef4444; }
+
+.chart-legend {
+    display: flex;
+    gap: 15px;
+    margin-top: 10px;
+    font-size: 0.8rem;
+}
+
+.legend-item {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.legend-color {
+    width: 12px;
+    height: 12px;
+    border-radius: 2px;
+}
+
+/* 响应式 */
+@media (max-width: 1024px) {
+    .main-content { grid-template-columns: 1fr; }
+    .summary-section { grid-template-columns: repeat(2, 1fr); }
+}
+
+@media (max-width: 600px) {
+    .summary-section { grid-template-columns: 1fr; }
+}
+</style>
+
+<script>
+function showLoading(show) {
+    document.getElementById('loadingOverlay').style.display = show ? 'flex' : 'none';
+}
+
+function getScoreClass(score) {
+    if (score >= 90) return 'excellent';
+    if (score >= 70) return 'good';
+    if (score >= 50) return 'warning';
+    return 'poor';
+}
+
+function formatSize(bytes) {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / 1024 / 1024).toFixed(2) + ' MB';
+}
+
+function loadSummary() {
+    fetch('/api/data_analysis/summary')
+        .then(res => res.json())
+        .then(data => {
+            if (data.success) {
+                document.getElementById('totalFiles').textContent = data.total_files;
+                document.getElementById('totalSize').textContent = data.total_size_mb + ' MB';
+
+                // 季度分布
+                let quarterHtml = '';
+                const quarters = Object.entries(data.by_quarter || {}).sort((a, b) => b[0].localeCompare(a[0]));
+                quarters.forEach(([key, val]) => {
+                    quarterHtml += `<div class="quarter-item">
+                        <span class="quarter-name">${key}</span>
+                        <span class="quarter-count">${val.count} 个文件</span>
+                    </div>`;
+                });
+                document.getElementById('quarterStats').innerHTML = quarterHtml || '<div class="loading-text">暂无数据</div>';
+            }
+        })
+        .catch(err => console.error('加载概览失败:', err));
+}
+
+function analyzeStock() {
+    const code = document.getElementById('stockCode').value.trim();
+    if (!code) {
+        alert('请输入股票代码');
+        return;
+    }
+
+    showLoading(true);
+
+    fetch('/api/data_analysis/detail/' + code)
+        .then(res => res.json())
+        .then(data => {
+            showLoading(false);
+            if (data.success) {
+                renderDetailResult(data);
+            } else {
+                document.getElementById('analysisResult').innerHTML =
+                    `<div class="empty-message"><p>${data.message}</p></div>`;
+            }
+        })
+        .catch(err => {
+            showLoading(false);
+            alert('分析失败: ' + err.message);
+        });
+}
+
+function analyzeBatch() {
+    const limit = parseInt(document.getElementById('analyzeLimit').value);
+
+    showLoading(true);
+
+    fetch('/api/data_analysis/analyze', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            analyze_all: limit === 0,
+            limit: limit || 50
+        })
+    })
+        .then(res => res.json())
+        .then(data => {
+            showLoading(false);
+            if (data.success) {
+                document.getElementById('avgScore').textContent = data.avg_quality_score;
+                document.getElementById('issueFiles').textContent = data.files_with_issues;
+                document.getElementById('resultInfo').textContent = `共分析 ${data.total_analyzed} 个文件`;
+                renderBatchResult(data.results);
+            } else {
+                document.getElementById('analysisResult').innerHTML =
+                    `<div class="empty-message"><p>${data.message}</p></div>`;
+            }
+        })
+        .catch(err => {
+            showLoading(false);
+            alert('分析失败: ' + err.message);
+        });
+}
+
+function renderBatchResult(results) {
+    let html = '<div class="result-list">';
+
+    results.forEach(r => {
+        const scoreClass = getScoreClass(r.quality_score);
+        html += `<div class="result-item ${scoreClass}">
+            <div class="result-header">
+                <span class="stock-code">${r.stock_code}</span>
+                <span class="quality-score score-${scoreClass}">${r.quality_score} 分</span>
+            </div>
+            <div class="result-stats">
+                <div class="stat-item">
+                    <span class="stat-label">记录数</span>
+                    <span class="stat-value">${r.total_records.toLocaleString()}</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">交易日</span>
+                    <span class="stat-value">${r.trading_days} 天</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">时间范围</span>
+                    <span class="stat-value">${r.first_date ? r.first_date.split(' ')[0] : '-'}</span>
+                </div>
+            </div>`;
+
+        if (r.issues && r.issues.length > 0) {
+            html += '<div class="result-issues">';
+            r.issues.forEach(issue => {
+                html += `<div class="issue-item"><span class="issue-icon">⚠️</span><span>${issue}</span></div>`;
+            });
+            html += '</div>';
+        }
+
+        html += '</div>';
+    });
+
+    html += '</div>';
+    document.getElementById('analysisResult').innerHTML = html;
+}
+
+function renderDetailResult(data) {
+    const stats = data.overall_stats || {};
+
+    let html = `<div class="detail-section">
+        <h4>${data.stock_code} - 整体统计</h4>
+        <div class="result-stats" style="grid-template-columns: repeat(4, 1fr);">
+            <div class="stat-item">
+                <span class="stat-label">总记录数</span>
+                <span class="stat-value">${(stats.total_records || 0).toLocaleString()}</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-label">交易日数</span>
+                <span class="stat-value">${stats.total_days || 0} 天</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-label">日均记录</span>
+                <span class="stat-value">${stats.avg_records_per_day || 0}</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-label">不完整天数</span>
+                <span class="stat-value" style="color: ${stats.incomplete_days > 0 ? '#ef4444' : '#10b981'}">${stats.incomplete_days || 0}</span>
+            </div>
+        </div>
+        <p style="margin-top: 10px; color: var(--text-secondary); font-size: 0.85rem;">
+            时间范围: ${stats.first_date || '-'} ~ ${stats.last_date || '-'}
+        </p>
+    </div>`;
+
+    // 每日记录分布图
+    if (stats.daily_distribution) {
+        html += `<div class="detail-section">
+            <h4>每日记录分布 (颜色深浅表示记录数)</h4>
+            <div class="daily-chart">`;
+
+        const days = Object.entries(stats.daily_distribution).sort((a, b) => a[0].localeCompare(b[0]));
+        days.forEach(([date, count]) => {
+            const status = count >= 200 ? 'complete' : 'incomplete';
+            html += `<div class="day-block ${status}" title="${date}: ${count}条"></div>`;
+        });
+
+        html += `</div>
+            <div class="chart-legend">
+                <div class="legend-item"><div class="legend-color" style="background:#10b981"></div>完整 (≥200条)</div>
+                <div class="legend-item"><div class="legend-color" style="background:#f59e0b"></div>不完整 (<200条)</div>
+            </div>
+        </div>`;
+    }
+
+    // 各文件详情
+    html += '<div class="detail-section"><h4>各季度文件</h4><div class="result-list">';
+
+    data.file_results.forEach(r => {
+        const scoreClass = getScoreClass(r.quality_score);
+        html += `<div class="result-item ${scoreClass}">
+            <div class="result-header">
+                <span class="stock-code">${r.year}-${r.quarter}</span>
+                <span class="quality-score score-${scoreClass}">${r.quality_score} 分</span>
+            </div>
+            <div class="result-stats">
+                <div class="stat-item">
+                    <span class="stat-label">记录数</span>
+                    <span class="stat-value">${r.total_records.toLocaleString()}</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">交易日</span>
+                    <span class="stat-value">${r.trading_days} 天</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">文件大小</span>
+                    <span class="stat-value">${formatSize(r.file_size)}</span>
+                </div>
+            </div>`;
+
+        if (r.issues && r.issues.length > 0) {
+            html += '<div class="result-issues">';
+            r.issues.forEach(issue => {
+                html += `<div class="issue-item"><span class="issue-icon">⚠️</span><span>${issue}</span></div>`;
+            });
+            html += '</div>';
+        }
+        html += '</div>';
+    });
+
+    html += '</div></div>';
+
+    document.getElementById('analysisResult').innerHTML = html;
+}
+
+// 页面加载时获取概览
+document.addEventListener('DOMContentLoaded', function() {
+    loadSummary();
+});
+</script>
+{% endblock %}

@@ -13,10 +13,10 @@ logger = logging.getLogger(__name__)
 class Account(db.Model):
     """
     账户资金模型
-    
+
     用于管理账户的资金信息
     """
-    __tablename__ = 'accounts'
+    __tablename__ = 'trade_accounts'
     __bind_key__ = 'quanttradingsystem'
 
     # 账户状态常量
