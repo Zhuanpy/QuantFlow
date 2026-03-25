@@ -1,5 +1,6 @@
 from App.codes.downloads.DlStockData import RMDownloadData, StockType, download_1m_by_type
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import os
 from App.codes.utils.Normal import ResampleData
 from flask import render_template, current_app, jsonify, Blueprint, copy_current_request_context, request, flash
@@ -25,6 +26,7 @@ stop_download = False  # 用于控制下载停止
 download_max_days = 5  # 最大下载天数，默认5天
 download_force = False  # 是否强制重新下载（忽略当天已下载成功的记录）
 download_lock = threading.Lock()  # 用于保护全局变量的锁
+DOWNLOAD_WORKERS = 3  # 并发下载线程数
 
 # 流水线状态跟踪
 pipeline_current_stock = ""       # 当前处理的股票代码
@@ -32,9 +34,21 @@ pipeline_current_step = 0         # 当前步骤 0=空闲, 1=日K, 2=1分钟, 3=
 pipeline_step_name = ""           # 当前步骤名称
 pipeline_stock_index = 0          # 当前第几只股票
 pipeline_total_stocks = 0         # 总股票数
+pipeline_completed_count = 0      # 已完成的股票数（并发用）
 
 # 股票代码缓存
 stock_code_cache = {}
+
+# 最近完成的股票15m数据预览缓存
+last_completed_preview = {
+    'stock_code': '',
+    'stock_name': '',
+    'data_15m': [],       # 最近N条15m数据
+    'data_daily': [],     # 当次下载的日K摘要
+    'macd_success': False,
+    'total_15m': 0,
+    'updated_at': '',
+}
 
 
 def get_stock_code_by_id(stock_code_id):
@@ -68,6 +82,7 @@ def download_file():
     global download_status, download_progress, stop_download, download_max_days, download_force
     global pipeline_current_stock, pipeline_current_step, pipeline_step_name
     global pipeline_stock_index, pipeline_total_stocks
+    global last_completed_preview
 
     logging.info(f"download_file() 启动，download_max_days = {download_max_days}")
 
@@ -159,416 +174,425 @@ def download_file():
         
         logging.info(f"获取到 {len(records_to_download)} 条需要下载的记录")
 
-        # 遍历需要下载的数据记录
-        for i, first_record in enumerate(records_to_download):
-            logging.info(f"开始处理第 {i+1}/{len(records_to_download)} 个股票")
+        # 初始化并发计数器
+        with download_lock:
+            pipeline_completed_count = 0
+            pipeline_total_stocks = len(records_to_download)
 
-            # 更新流水线状态
-            with download_lock:
-                pipeline_stock_index = i + 1
-                pipeline_total_stocks = len(records_to_download)
+        # 使用线程池并发下载，提高3倍速度
+        app = current_app._get_current_object()
+        total = len(records_to_download)
 
-            # 检查是否需要停止下载
-            with download_lock:
-                if stop_download:
-                    download_status = "已停止"  # 更新状态为已停止
-                    download_progress = 0  # 进度清零
-                    pipeline_current_step = 0
-                    pipeline_step_name = ""
-                    return  # 终止下载
+        def _process_single_stock(first_record):
+            """处理单个股票的完整下载流程（在子线程中执行）"""
+            global download_status, download_progress, stop_download
+            global pipeline_current_stock, pipeline_current_step, pipeline_step_name
+            global pipeline_stock_index, pipeline_completed_count
+            global last_completed_preview
 
-            if not first_record:
-                logging.info("记录为空，跳过。")  # 若无记录，记录日志
-                continue
+            with app.app_context():
+                # 检查是否需要停止下载
+                with download_lock:
+                    if stop_download:
+                        return
 
-            # 获取股票代码
-            stock_code = get_stock_code_by_id(first_record.stock_code_id)
-            if not stock_code:
-                logging.error(f'无法获取股票代码ID {first_record.stock_code_id} 对应的股票代码')
-                # 标记为失败并继续下一个
-                first_record.update_download_status(
-                    status='failed',
-                    error_msg=f'无法获取股票代码ID {first_record.stock_code_id} 对应的股票代码'
-                )
+                if not first_record:
+                    logging.info("记录为空，跳过。")
+                    return
+
+                # 关键修复：将主线程加载的ORM对象合并到子线程的session中
+                # 否则子线程的db.session.commit()不会提交对first_record的修改
+                first_record = db.session.merge(first_record)
+
+                # 获取股票代码
+                stock_code = get_stock_code_by_id(first_record.stock_code_id)
+                if not stock_code:
+                    logging.error(f'无法获取股票代码ID {first_record.stock_code_id} 对应的股票代码')
+                    first_record.update_download_status(
+                        status='failed',
+                        error_msg=f'无法获取股票代码ID {first_record.stock_code_id} 对应的股票代码'
+                    )
+                    db.session.commit()
+                    with download_lock:
+                        pipeline_completed_count += 1
+                        download_progress = round(pipeline_completed_count * 100 / total, 1)
+                    return
+
+                # 判断代码类型：板块代码以 'BK' 开头
+                is_board = stock_code.startswith('BK')
+                stock_type = StockType.BOARD_1M if is_board else StockType.STOCK_1M
+                code_type_name = "板块" if is_board else "股票"
+
+                # 更新流水线当前股票（显示最近启动的）
+                with download_lock:
+                    pipeline_current_stock = stock_code
+
+                logging.info(f"正在下载{code_type_name} {stock_code} 的数据...")
+
+                # ===== STEP 1/3: 下载日K数据 =====
+                with download_lock:
+                    download_status = f"进行中 - {stock_code} Step1/3 日K"
+
+                if not is_board:
+                    try:
+                        from App.codes.downloads.DlAkshare import AkshareDownloader
+                        from App.models.data.StockDaily import StockDaily, save_daily_stock_data_to_sql
+                        from App.models.data.DailyTaskStatus import DailyTaskStatus
+
+                        ak_downloader = AkshareDownloader()
+                        if ak_downloader.akshare_available:
+                            daily_df, daily_end = ak_downloader.get_daily_data(stock_code, days=download_max_days + 30)
+
+                            if not daily_df.empty:
+                                save_daily_stock_data_to_sql(stock_code, daily_df)
+                                daily_df['date'] = pd.to_datetime(daily_df['date'])
+                                for d in daily_df['date'].dt.date.unique():
+                                    DailyTaskStatus.mark_task(stock_code, d, 'is_daily_processed')
+                                logging.info(f"[STEP1] {stock_code} 日K数据下载成功，{len(daily_df)} 条")
+                            else:
+                                logging.warning(f"[STEP1] {stock_code} 日K数据为空")
+                        else:
+                            logging.warning(f"[STEP1] AKShare不可用，跳过日K下载")
+                    except Exception as e:
+                        logging.error(f"[STEP1] {stock_code} 日K数据下载失败: {e}")
+                else:
+                    logging.info(f"[STEP1] 板块 {stock_code} 跳过日K数据下载")
+
+                # ===== STEP 2/3: 下载1分钟数据 =====
+                with download_lock:
+                    download_status = f"进行中 - {stock_code} Step2/3 1分钟"
+
+                record_ending = first_record.end_date
+                days = download_max_days
+
+                logging.info(f"下载 {stock_code} 最近 {days} 天的数据...")
+
+                first_record.update_download_status(status='processing')
                 db.session.commit()
 
-                # 更新进度
-                with download_lock:
-                    download_progress = int((i + 1) / len(records_to_download) * 100)
-                continue
+                # 重试机制：最多重试3次
+                max_retries = 3
+                retry_count = 0
+                download_success = False
 
-            # 判断代码类型：板块代码以 'BK' 开头
-            is_board = stock_code.startswith('BK')
-            stock_type = StockType.BOARD_1M if is_board else StockType.STOCK_1M
-            code_type_name = "板块" if is_board else "股票"
+                while retry_count < max_retries and not download_success:
+                    # 检查停止标志
+                    with download_lock:
+                        if stop_download:
+                            return
 
-            # 更新流水线当前股票
-            with download_lock:
-                pipeline_current_stock = stock_code
-
-            logging.info(f"正在下载{code_type_name} {stock_code} 的数据...")
-
-            # ===== STEP 1/3: 下载日K数据 =====
-            with download_lock:
-                pipeline_current_step = 1
-                pipeline_step_name = "下载日K数据"
-                download_status = f"进行中 - {stock_code} Step1/3 日K"
-
-            if not is_board:
-                try:
-                    from App.codes.downloads.DlAkshare import AkshareDownloader
-                    from App.models.data.StockDaily import StockDaily, save_daily_stock_data_to_sql
-                    from App.models.data.DailyTaskStatus import DailyTaskStatus
-
-                    ak_downloader = AkshareDownloader()
-                    if ak_downloader.akshare_available:
-                        daily_df, daily_end = ak_downloader.get_daily_data(stock_code, days=download_max_days + 30)
-
-                        if not daily_df.empty:
-                            save_daily_stock_data_to_sql(stock_code, daily_df)
-                            # 标记今日的日K任务完成
-                            DailyTaskStatus.mark_task(stock_code, today, 'is_daily_processed')
-                            logging.info(f"[STEP1] {stock_code} 日K数据下载成功，{len(daily_df)} 条")
-                        else:
-                            logging.warning(f"[STEP1] {stock_code} 日K数据为空")
-                    else:
-                        logging.warning(f"[STEP1] AKShare不可用，跳过日K下载")
-                except Exception as e:
-                    logging.error(f"[STEP1] {stock_code} 日K数据下载失败: {e}")
-                    # Step 1 失败不影响后续步骤
-            else:
-                logging.info(f"[STEP1] 板块 {stock_code} 跳过日K数据下载")
-
-            # ===== STEP 2/3: 下载1分钟数据 =====
-            with download_lock:
-                pipeline_current_step = 2
-                pipeline_step_name = "下载1分钟数据"
-                download_status = f"进行中 - {stock_code} Step2/3 1分钟"
-
-            # 直接使用用户设置的下载天数
-            record_ending = first_record.end_date
-            days = download_max_days  # 使用用户设置的天数
-
-            logging.info(f"下载 {stock_code} 最近 {days} 天的数据...")
-            
-            # 更新下载状态为进行中
-            first_record.update_download_status(status='processing')
-            db.session.commit()
-
-            # 重试机制：最多重试3次
-            max_retries = 3
-            retry_count = 0
-            download_success = False
-            
-            logging.info(f"开始重试机制，最大重试次数: {max_retries}")
-            
-            while retry_count < max_retries and not download_success:
-                # 构建URL用于调试（放在try外面，确保变量可用）
-                try:
-                    from App.codes.downloads.download_utils import UrlCode
-                    from config import Config
-                    # 根据代码类型选择不同的URL模板
-                    # lmt 参数需要计算为 days * 240（每天约240条记录）
-                    lmt = min(days * 240, 2000)
-                    if is_board:
-                        url_template = 'board_1m_multiple_days'
-                        # 板块代码：URL模板是 format(lmt, code)
-                        debug_url = Config.get_eastmoney_urls(url_template).format(lmt, stock_code)
-                    else:
-                        url_template = 'stock_1m_multiple_days'
-                        # 股票代码：URL模板是 format(lmt, secid)
-                        debug_url = Config.get_eastmoney_urls(url_template).format(lmt, UrlCode(stock_code))
-                except Exception as url_error:
-                    debug_url = f"构建URL失败: {url_error}"
-                
-                try:
-                    if retry_count > 0:
-                        # 使用指数退避策略：第1次重试等3秒，第2次等6秒，第3次等9秒
-                        retry_delay = 3 * retry_count
-                        logging.info(f"{code_type_name} {stock_code} 第 {retry_count + 1} 次重试下载，等待 {retry_delay} 秒...")
-                        time.sleep(retry_delay)
-                    else:
-                        logging.info(f"开始下载{code_type_name} {stock_code} 的 {days} 天数据...")
-                    
-                    # 下载数据，根据代码类型和指定的天数
-                    logging.info(f"尝试访问URL: {debug_url}")
-                    
-                    data, ending = download_1m_by_type(stock_code, days, stock_type)
-
-                    if data.empty:
-                        # 对于板块数据，如果API返回rc=100（数据不存在），可能是正常情况
-                        # 不需要重试，直接标记为失败但继续处理下一个
+                    try:
+                        from App.codes.downloads.download_utils import UrlCode
+                        from config import Config
+                        lmt = min(days * 240, 2000)
                         if is_board:
-                            logging.warning(f'板块 {stock_code} 数据不可用（可能是非交易时间或板块代码无效）')
-                            # 标记为失败，但使用特殊的错误消息
-                            first_record.update_download_status(
-                                status='failed',
-                                error_msg=f'板块数据不可用（API返回rc=100，可能是非交易时间或板块代码无效）\nURL: {debug_url}'
-                            )
-                            db.session.commit()
-                            # 更新进度
-                            with download_lock:
-                                download_progress = int((i + 1) / len(records_to_download) * 100)
-                            break  # 退出重试循环，继续下一个
-                        
-                        # 股票数据继续重试逻辑
+                            url_template = 'board_1m_multiple_days'
+                            debug_url = Config.get_eastmoney_urls(url_template).format(lmt, stock_code)
+                        else:
+                            url_template = 'stock_1m_multiple_days'
+                            debug_url = Config.get_eastmoney_urls(url_template).format(lmt, UrlCode(stock_code))
+                    except Exception as url_error:
+                        debug_url = f"构建URL失败: {url_error}"
+
+                    try:
+                        if retry_count > 0:
+                            retry_delay = 3 * retry_count
+                            logging.info(f"{code_type_name} {stock_code} 第 {retry_count + 1} 次重试下载，等待 {retry_delay} 秒...")
+                            time.sleep(retry_delay)
+                        else:
+                            logging.info(f"开始下载{code_type_name} {stock_code} 的 {days} 天数据...")
+
+                        logging.info(f"尝试访问URL: {debug_url}")
+
+                        data, ending = download_1m_by_type(stock_code, days, stock_type)
+
+                        if data.empty:
+                            if is_board:
+                                logging.warning(f'板块 {stock_code} 数据不可用（可能是非交易时间或板块代码无效）')
+                                first_record.update_download_status(
+                                    status='failed',
+                                    error_msg=f'板块数据不可用（API返回rc=100，可能是非交易时间或板块代码无效）\nURL: {debug_url}'
+                                )
+                                db.session.commit()
+                                break
+
+                            retry_count += 1
+                            logging.error(f"下载失败 - {code_type_name}: {stock_code}, URL: {debug_url}")
+
+                            if retry_count < max_retries:
+                                logging.warning(f'{code_type_name} {stock_code} 第 {retry_count} 次下载数据为空，准备重试...')
+                                continue
+                            else:
+                                logging.error(f'{code_type_name} {stock_code} 下载失败，已达到最大重试次数 {max_retries}')
+                                first_record.update_download_status(
+                                    status='failed',
+                                    error_msg=f'下载失败，已重试{max_retries}次（网络连接问题或数据源限制）\nURL: {debug_url}'
+                                )
+                                db.session.commit()
+                                break
+                        else:
+                            download_success = True
+                            logging.info(f"{code_type_name} {stock_code} 下载成功，获得 {len(data)} 条记录")
+
+                    except Exception as e:
                         retry_count += 1
-                        logging.error(f"下载失败 - {code_type_name}: {stock_code}, URL: {debug_url}")
-                        
+                        logging.error(f"下载异常 - {code_type_name}: {stock_code}, URL: {debug_url}, 错误: {e}")
+
                         if retry_count < max_retries:
-                            logging.warning(f'{code_type_name} {stock_code} 第 {retry_count} 次下载数据为空，准备重试...')
+                            logging.warning(f'{code_type_name} {stock_code} 第 {retry_count} 次下载异常: {e}，准备重试...')
                             continue
                         else:
-                            logging.error(f'{code_type_name} {stock_code} 下载失败，已达到最大重试次数 {max_retries}')
-                            # 更新状态为失败
+                            logging.error(f'{code_type_name} {stock_code} 下载异常，已达到最大重试次数 {max_retries}: {e}')
                             first_record.update_download_status(
                                 status='failed',
-                                error_msg=f'下载失败，已重试{max_retries}次（网络连接问题或数据源限制）\nURL: {debug_url}'
+                                error_msg=f'下载异常，已重试{max_retries}次: {str(e)}\nURL: {debug_url}'
                             )
                             db.session.commit()
-                            # 更新进度
-                            with download_lock:
-                                download_progress = int((i + 1) / len(records_to_download) * 100)
-                            break  # 退出重试循环
-                    else:
-                        download_success = True
-                        logging.info(f"{code_type_name} {stock_code} 下载成功，获得 {len(data)} 条记录")
-                
+                            break
+
+                # 如果下载失败，更新进度后返回
+                if not download_success:
+                    with download_lock:
+                        pipeline_completed_count += 1
+                        download_progress = round(pipeline_completed_count * 100 / total, 1)
+                    return
+
+                # 下载成功，继续处理数据
+                try:
+                    save_1m_to_csv(data, stock_code)
+                    logging.info(f'成功保存 {stock_code} 数据到CSV文件，共 {len(data)} 条记录')
                 except Exception as e:
-                    retry_count += 1
-                    logging.error(f"下载异常 - {code_type_name}: {stock_code}, URL: {debug_url}, 错误: {e}")
-                    
-                    if retry_count < max_retries:
-                        logging.warning(f'{code_type_name} {stock_code} 第 {retry_count} 次下载异常: {e}，准备重试...')
-                        continue
-                    else:
-                        logging.error(f'{code_type_name} {stock_code} 下载异常，已达到最大重试次数 {max_retries}: {e}')
-                        # 更新状态为失败
-                        first_record.update_download_status(
-                            status='failed',
-                            error_msg=f'下载异常，已重试{max_retries}次: {str(e)}\nURL: {debug_url}'
-                        )
-                        db.session.commit()
-                        # 更新进度
-                        with download_lock:
-                            download_progress = int((i + 1) / len(records_to_download) * 100)
-                        break  # 退出重试循环
-            
-            # 如果下载失败，跳过后续处理
-            if not download_success:
-                continue
+                    logging.error(f'保存至CSV失败: {stock_code}, {e}')
+                    first_record.update_download_status(
+                        status='failed',
+                        error_msg=f'保存至CSV失败: {str(e)}'
+                    )
+                    db.session.commit()
+                    with download_lock:
+                        pipeline_completed_count += 1
+                        download_progress = round(pipeline_completed_count * 100 / total, 1)
+                    return
 
-            # 下载成功，继续处理数据
-            try:
-                # 保存数据至本地 CSV 文件（追加合并模式）
-                save_1m_to_csv(data, stock_code)
-                logging.info(f'成功保存 {stock_code} 数据到CSV文件，共 {len(data)} 条记录')
+                # 标记 DailyTaskStatus: 1分钟数据已下载
+                try:
+                    from App.models.data.DailyTaskStatus import DailyTaskStatus
+                    data['date'] = pd.to_datetime(data['date'])
+                    trade_dates = data['date'].dt.date.unique()
+                    for d in trade_dates:
+                        DailyTaskStatus.mark_task(stock_code, d, 'is_1m_downloaded')
+                    logging.info(f"[STEP2] 已标记 {stock_code} 的 {len(trade_dates)} 个交易日 is_1m_downloaded")
+                except Exception as e:
+                    logging.warning(f"[STEP2] 标记1m任务状态失败: {stock_code}, {e}")
 
-            except Exception as e:
-                logging.error(f'保存至CSV失败: {stock_code}, {e}')
-                # 标记为失败并继续下一个
+                # 更新数据库记录，标记下载成功
                 first_record.update_download_status(
-                    status='failed',
-                    error_msg=f'保存至CSV失败: {str(e)}'
+                    status='success',
+                    progress=100.0
                 )
+                if ending > record_ending:
+                    first_record.end_date = ending
+                first_record.record_date = current
+                first_record.last_download_time = datetime.now()
+                first_record.downloaded_records = len(data)
                 db.session.commit()
-                continue
+                logging.info(f'[STEP2] 成功下载 {stock_code} 的1分钟数据（{days}天），共 {len(data)} 条记录')
 
-            # 标记 DailyTaskStatus: 1分钟数据已下载
-            try:
-                from App.models.data.DailyTaskStatus import DailyTaskStatus
-                data['date'] = pd.to_datetime(data['date'])
-                trade_dates = data['date'].dt.date.unique()
-                for d in trade_dates:
-                    DailyTaskStatus.mark_task(stock_code, d, 'is_1m_downloaded')
-                # 同时标记今天（确保 daily_viewer 能看到今日状态）
-                if today not in trade_dates:
-                    DailyTaskStatus.mark_task(stock_code, today, 'is_1m_downloaded')
-                logging.info(f"[STEP2] 已标记 {stock_code} 的 {len(trade_dates)} 个交易日 is_1m_downloaded")
-            except Exception as e:
-                logging.warning(f"[STEP2] 标记1m任务状态失败: {stock_code}, {e}")
+                # ===== STEP 3/3: 处理15分钟数据（加载完整历史1m数据） =====
+                with download_lock:
+                    download_status = f"进行中 - {stock_code} Step3/3 15分钟"
 
-            # 更新数据库记录，标记下载成功
-            first_record.update_download_status(
-                status='success',
-                progress=100.0
-            )
-            # 更新 end_date 为下载数据中的最新日期
-            if ending > record_ending:
-                first_record.end_date = ending
-            first_record.record_date = current
-            first_record.last_download_time = datetime.now()
-            first_record.downloaded_records = len(data)
-            db.session.commit()
-            logging.info(f'[STEP2] 成功下载 {stock_code} 的1分钟数据（{days}天），共 {len(data)} 条记录')
+                try:
+                    from App.codes.utils.Normal import ResampleData
+                    from App.codes.Signals.StatisticsMacd import SignalMethod
+                    from App.utils.file_utils import get_stock_data_path
+                    from App.models.data.DailyTaskStatus import DailyTaskStatus
+                    from App.codes.RnnDataFile.save_download import get_quarter_from_month
 
-            # ===== STEP 3/3: 处理15分钟数据（加载完整历史1m数据） =====
-            with download_lock:
-                pipeline_current_step = 3
-                pipeline_step_name = "处理15分钟数据"
-                download_status = f"进行中 - {stock_code} Step3/3 15分钟"
+                    data['date'] = pd.to_datetime(data['date'])
+                    last_date = data['date'].max()
+                    cur_year = str(last_date.year)
+                    cur_quarter = get_quarter_from_month(last_date.month)
 
-            try:
-                from App.codes.utils.Normal import ResampleData
-                from App.codes.Signals.StatisticsMacd import SignalMethod
-                from App.utils.file_utils import get_stock_data_path
-                from App.models.data.DailyTaskStatus import DailyTaskStatus
-                from App.codes.RnnDataFile.save_download import get_quarter_from_month
+                    q_num = int(cur_quarter[1])
+                    if q_num == 1:
+                        prev_year, prev_quarter = str(int(cur_year) - 1), 'Q4'
+                    else:
+                        prev_year, prev_quarter = cur_year, f'Q{q_num - 1}'
 
-                # === 加载完整历史1m数据（当前季度 + 上一季度） ===
-                data['date'] = pd.to_datetime(data['date'])
-                last_date = data['date'].max()
-                cur_year = str(last_date.year)
-                cur_quarter = get_quarter_from_month(last_date.month)
+                    cur_1m_path = get_stock_data_path(stock_code, data_type='1m', year=cur_year, quarter=cur_quarter, create=False)
+                    cur_1m_csv = cur_1m_path.replace('.parquet', '.csv')
 
-                # 计算上一季度
-                q_num = int(cur_quarter[1])
-                if q_num == 1:
-                    prev_year, prev_quarter = str(int(cur_year) - 1), 'Q4'
-                else:
-                    prev_year, prev_quarter = cur_year, f'Q{q_num - 1}'
+                    df_1m_full = None
+                    for p in [cur_1m_path, cur_1m_csv]:
+                        if os.path.exists(p):
+                            df_1m_full = pd.read_parquet(p) if p.endswith('.parquet') else pd.read_csv(p)
+                            df_1m_full['date'] = pd.to_datetime(df_1m_full['date'])
+                            break
 
-                # 读取当前季度完整1m文件
-                cur_1m_path = get_stock_data_path(stock_code, data_type='1m', year=cur_year, quarter=cur_quarter, create=False)
-                cur_1m_csv = cur_1m_path.replace('.parquet', '.csv')
+                    if df_1m_full is None:
+                        df_1m_full = data.copy()
 
-                df_1m_full = None
-                for p in [cur_1m_path, cur_1m_csv]:
-                    if os.path.exists(p):
-                        df_1m_full = pd.read_parquet(p) if p.endswith('.parquet') else pd.read_csv(p)
-                        df_1m_full['date'] = pd.to_datetime(df_1m_full['date'])
-                        break
+                    prev_1m_path = get_stock_data_path(stock_code, data_type='1m', year=prev_year, quarter=prev_quarter, create=False)
+                    prev_1m_csv = prev_1m_path.replace('.parquet', '.csv')
+                    for p in [prev_1m_path, prev_1m_csv]:
+                        if os.path.exists(p):
+                            df_1m_prev = pd.read_parquet(p) if p.endswith('.parquet') else pd.read_csv(p)
+                            df_1m_prev['date'] = pd.to_datetime(df_1m_prev['date'])
+                            df_1m_full = pd.concat([df_1m_prev, df_1m_full]).sort_values('date').reset_index(drop=True)
+                            df_1m_full = df_1m_full.drop_duplicates(subset=['date'], keep='last')
+                            break
 
-                if df_1m_full is None:
-                    df_1m_full = data.copy()
+                    cur_quarter_start = data['date'].min()
+                    data_15m_full = ResampleData.resample_1m_data(df_1m_full, '15m')
 
-                # 尝试读取上一季度的1m数据（用于MACD历史计算）
-                prev_1m_path = get_stock_data_path(stock_code, data_type='1m', year=prev_year, quarter=prev_quarter, create=False)
-                prev_1m_csv = prev_1m_path.replace('.parquet', '.csv')
-                prev_found = False
-                for p in [prev_1m_path, prev_1m_csv]:
-                    if os.path.exists(p):
-                        df_1m_prev = pd.read_parquet(p) if p.endswith('.parquet') else pd.read_csv(p)
-                        df_1m_prev['date'] = pd.to_datetime(df_1m_prev['date'])
-                        df_1m_full = pd.concat([df_1m_prev, df_1m_full]).sort_values('date').reset_index(drop=True)
-                        df_1m_full = df_1m_full.drop_duplicates(subset=['date'], keep='last')
-                        prev_found = True
-                        break
-                # 记录当前季度起始日期（用于过滤）
-                cur_quarter_start = data['date'].min()
-
-                # === 重采样完整数据 1m -> 15m ===
-                data_15m_full = ResampleData.resample_1m_data(df_1m_full, '15m')
-
-                if not data_15m_full.empty:
-                    # 计算 MACD 信号
-                    macd_success = False
-                    try:
-                        data_15m_full = SignalMethod.signal_by_MACD_3ema(data_15m_full, df_1m_full)
-                        macd_success = True
-                    except Exception as macd_err:
-                        logging.warning(f"[STEP3] {stock_code} MACD计算失败: {macd_err}")
-
-                    # 只保留当前季度的数据
-                    data_15m = data_15m_full[data_15m_full['date'] >= cur_quarter_start].copy()
-
-                    # 清理旧列
-                    if 'SignalTimes' in data_15m.columns:
-                        data_15m = data_15m.drop(columns=['SignalTimes'])
-
-                    # 保存15分钟数据（追加合并模式）
-                    file_path_15m = get_stock_data_path(stock_code, data_type='15m_normal')
-
-                    # 检查已有15m文件（parquet或csv）
-                    existing_15m_path = file_path_15m
-                    if file_path_15m.endswith('.parquet') and not os.path.exists(file_path_15m):
-                        csv_fallback = file_path_15m.replace('.parquet', '.csv')
-                        if os.path.exists(csv_fallback):
-                            existing_15m_path = csv_fallback
-
-                    if os.path.exists(existing_15m_path):
+                    if not data_15m_full.empty:
+                        macd_success = False
                         try:
-                            if existing_15m_path.endswith('.parquet'):
-                                try:
-                                    existing_15m = pd.read_parquet(existing_15m_path)
-                                except ImportError:
-                                    existing_15m = None
-                                    logging.warning(f"[STEP3] {stock_code} pyarrow不可用，跳过读取旧parquet")
-                            else:
-                                existing_15m = pd.read_csv(existing_15m_path, parse_dates=['date'])
-                            if existing_15m is not None:
-                                existing_15m['date'] = pd.to_datetime(existing_15m['date'])
-                                if 'SignalTimes' in existing_15m.columns:
-                                    existing_15m = existing_15m.drop(columns=['SignalTimes'])
-                                data_15m['date'] = pd.to_datetime(data_15m['date'])
-                                data_15m = pd.concat([existing_15m, data_15m], ignore_index=True)
-                                data_15m = data_15m.drop_duplicates(subset=['date'], keep='last')
-                                data_15m = data_15m.sort_values('date').reset_index(drop=True)
-                        except Exception as merge_err:
-                            logging.warning(f"[STEP3] {stock_code} 合并旧15m失败: {merge_err}")
+                            data_15m_full = SignalMethod.signal_by_MACD_3ema(data_15m_full, df_1m_full)
+                            macd_success = True
+                        except Exception as macd_err:
+                            logging.warning(f"[STEP3] {stock_code} MACD计算失败: {macd_err}")
 
-                    # 保存文件（优先parquet，pyarrow不可用时回退CSV）
-                    try:
-                        if file_path_15m.endswith('.parquet'):
+                        data_15m = data_15m_full[data_15m_full['date'] >= cur_quarter_start].copy()
+
+                        if 'SignalTimes' in data_15m.columns:
+                            data_15m = data_15m.drop(columns=['SignalTimes'])
+
+                        file_path_15m = get_stock_data_path(stock_code, data_type='15m_normal')
+
+                        existing_15m_path = file_path_15m
+                        if file_path_15m.endswith('.parquet') and not os.path.exists(file_path_15m):
+                            csv_fallback = file_path_15m.replace('.parquet', '.csv')
+                            if os.path.exists(csv_fallback):
+                                existing_15m_path = csv_fallback
+
+                        if os.path.exists(existing_15m_path):
                             try:
-                                data_15m.to_parquet(file_path_15m, index=False, engine='pyarrow')
-                                logging.info(f"[STEP3] {stock_code} parquet保存成功: {len(data_15m)} 条")
-                            except ImportError:
-                                csv_path = file_path_15m.replace('.parquet', '.csv')
-                                data_15m.to_csv(csv_path, index=False)
-                                logging.info(f"[STEP3] {stock_code} pyarrow不可用，回退CSV保存: {len(data_15m)} 条")
-                        else:
-                            data_15m.to_csv(file_path_15m, index=False)
-                            logging.info(f"[STEP3] {stock_code} CSV保存成功: {len(data_15m)} 条")
-                    except Exception as save_err:
-                        logging.error(f"[STEP3] {stock_code} 文件保存失败: {save_err}")
+                                if existing_15m_path.endswith('.parquet'):
+                                    try:
+                                        existing_15m = pd.read_parquet(existing_15m_path)
+                                    except ImportError:
+                                        existing_15m = None
+                                        logging.warning(f"[STEP3] {stock_code} pyarrow不可用，跳过读取旧parquet")
+                                else:
+                                    existing_15m = pd.read_csv(existing_15m_path, parse_dates=['date'])
+                                if existing_15m is not None:
+                                    existing_15m['date'] = pd.to_datetime(existing_15m['date'])
+                                    if 'SignalTimes' in existing_15m.columns:
+                                        existing_15m = existing_15m.drop(columns=['SignalTimes'])
+                                    data_15m['date'] = pd.to_datetime(data_15m['date'])
+                                    data_15m = pd.concat([existing_15m, data_15m], ignore_index=True)
+                                    data_15m = data_15m.drop_duplicates(subset=['date'], keep='last')
+                                    data_15m = data_15m.sort_values('date').reset_index(drop=True)
+                            except Exception as merge_err:
+                                logging.warning(f"[STEP3] {stock_code} 合并旧15m失败: {merge_err}")
 
-                    # 标记 DailyTaskStatus
-                    try:
-                        trade_dates = data['date'].dt.date.unique()
-                        all_dates = list(trade_dates)
-                        if today not in all_dates:
-                            all_dates.append(today)
-                        for d in all_dates:
-                            DailyTaskStatus.mark_task(stock_code, d, 'is_15m_generated')
-                            if macd_success:
-                                DailyTaskStatus.mark_task(stock_code, d, 'is_macd_calculated')
-                        logging.info(f"[STEP3] {stock_code} DailyTaskStatus标记成功 (15m=True, macd={macd_success})")
-                    except Exception as mark_err:
-                        logging.error(f"[STEP3] {stock_code} DailyTaskStatus标记失败: {mark_err}")
+                        try:
+                            if file_path_15m.endswith('.parquet'):
+                                try:
+                                    data_15m.to_parquet(file_path_15m, index=False, engine='pyarrow')
+                                    logging.info(f"[STEP3] {stock_code} parquet保存成功: {len(data_15m)} 条")
+                                except ImportError:
+                                    csv_path = file_path_15m.replace('.parquet', '.csv')
+                                    data_15m.to_csv(csv_path, index=False)
+                                    logging.info(f"[STEP3] {stock_code} pyarrow不可用，回退CSV保存: {len(data_15m)} 条")
+                            else:
+                                data_15m.to_csv(file_path_15m, index=False)
+                                logging.info(f"[STEP3] {stock_code} CSV保存成功: {len(data_15m)} 条")
+                        except Exception as save_err:
+                            logging.error(f"[STEP3] {stock_code} 文件保存失败: {save_err}")
 
-                    logging.info(f"[STEP3] {stock_code} 15分钟处理完成，{len(data_15m)} 条")
-                else:
-                    logging.warning(f"[STEP3] {stock_code} 15分钟重采样结果为空")
+                        try:
+                            trade_dates = data['date'].dt.date.unique()
+                            for d in trade_dates:
+                                DailyTaskStatus.mark_task(stock_code, d, 'is_15m_generated')
+                                if macd_success:
+                                    DailyTaskStatus.mark_task(stock_code, d, 'is_macd_calculated')
+                            logging.info(f"[STEP3] {stock_code} DailyTaskStatus标记成功 (15m=True, macd={macd_success})")
+                        except Exception as mark_err:
+                            logging.error(f"[STEP3] {stock_code} DailyTaskStatus标记失败: {mark_err}")
 
-            except Exception as e:
-                logging.error(f"[STEP3] {stock_code} 处理异常: {e}")
-                # Step 3 失败不影响已保存的1m数据
+                        logging.info(f"[STEP3] {stock_code} 15分钟处理完成，{len(data_15m)} 条")
 
-            # 重置流水线步骤
-            with download_lock:
-                pipeline_current_step = 0
-                pipeline_step_name = ""
+                        # 缓存15m数据预览（最近30条）
+                        try:
+                            preview_cols = ['date', 'open', 'close', 'high', 'low', 'volume']
+                            signal_cols = ['Signal', 'SignalChoice', 'MACD', 'Dif', 'Dea',
+                                           'BollUp', 'BollMid', 'BollDn',
+                                           'CycleAmplitudePerBar', 'CycleAmplitudeMax', 'CycleLengthPerBar']
+                            use_cols = preview_cols + [c for c in signal_cols if c in data_15m.columns]
+                            preview_df = data_15m[use_cols].tail(30).copy()
+                            preview_df['date'] = preview_df['date'].dt.strftime('%m-%d %H:%M')
+                            for c in preview_df.columns:
+                                if c != 'date' and preview_df[c].dtype in ('float64', 'float32'):
+                                    preview_df[c] = preview_df[c].round(3)
+                            preview_records = preview_df.fillna('').to_dict('records')
 
-            # 更新下载进度
-            with download_lock:
-                download_progress = round((i + 1) * (100 / len(records_to_download)), 1)
+                            stock_info = StockCodes.query.filter_by(code=stock_code).first()
+                            s_name = stock_info.name if stock_info else stock_code
 
-            # 添加延迟，避免触发反爬虫机制
-            import random
-            delay = random.uniform(2, 3.5)  # 每次下载后随机等待2-3.5秒
-            logging.info(f"等待 {delay:.1f} 秒后继续下一个股票...")
-            time.sleep(delay)
+                            with download_lock:
+                                last_completed_preview['stock_code'] = stock_code
+                                last_completed_preview['stock_name'] = s_name
+                                last_completed_preview['data_15m'] = preview_records
+                                last_completed_preview['macd_success'] = macd_success
+                                last_completed_preview['total_15m'] = len(data_15m)
+                                last_completed_preview['updated_at'] = datetime.now().strftime('%H:%M:%S')
+                            logging.info(f"[STEP3] {stock_code} 15m预览数据已缓存（{len(preview_records)}条）")
+                        except Exception as preview_err:
+                            logging.warning(f"[STEP3] {stock_code} 缓存预览数据失败: {preview_err}")
+
+                    else:
+                        logging.warning(f"[STEP3] {stock_code} 15分钟重采样结果为空")
+
+                except Exception as e:
+                    logging.error(f"[STEP3] {stock_code} 处理异常: {e}")
+
+                # 更新完成计数和进度
+                with download_lock:
+                    pipeline_completed_count += 1
+                    download_progress = round(pipeline_completed_count * 100 / total, 1)
+                    pipeline_stock_index = pipeline_completed_count
+
+                # 添加延迟，避免触发反爬虫机制
+                import random
+                delay = random.uniform(1, 2)  # 并发模式下缩短延迟
+                time.sleep(delay)
+
+        # === 使用线程池并发下载 ===
+        logging.info(f"启动 {DOWNLOAD_WORKERS} 个并发线程下载 {total} 个股票...")
+        with ThreadPoolExecutor(max_workers=DOWNLOAD_WORKERS) as executor:
+            futures = {
+                executor.submit(_process_single_stock, record): record
+                for record in records_to_download
+            }
+            for future in as_completed(futures):
+                # 检查是否需要停止
+                with download_lock:
+                    if stop_download:
+                        executor.shutdown(wait=False, cancel_futures=True)
+                        download_status = "已停止"
+                        download_progress = 0
+                        pipeline_current_step = 0
+                        pipeline_step_name = ""
+                        logging.info("下载任务已停止")
+                        return
+                # 捕获子线程未处理的异常
+                try:
+                    future.result()
+                except Exception as e:
+                    record = futures[future]
+                    logging.error(f"下载线程异常: {record.stock_code_id}, {e}")
 
         # 下载任务完成，更新下载状态和进度
         with download_lock:
-            download_status = "已完成"  # 状态设为已完成
-            download_progress = 100  # 进度设为 100%
+            download_status = "已完成"
+            download_progress = 100
             pipeline_current_step = 0
             pipeline_step_name = ""
             pipeline_current_stock = ""
 
-        logging.info("下载任务完成")
+        logging.info(f"下载任务完成（{DOWNLOAD_WORKERS}线程并发）")
 
 
 @download_data_bp.route('/start_download', methods=['GET', 'POST'])
@@ -694,6 +718,13 @@ def get_today_task_status():
         return jsonify({'error': str(e)}), 500
 
 
+@download_data_bp.route('/get_last_15m_preview', methods=['GET'])
+def get_last_15m_preview():
+    """获取最近完成的股票15m数据预览"""
+    with download_lock:
+        return jsonify(last_completed_preview), 200
+
+
 @download_data_bp.route('/get_pipeline_status', methods=['GET'])
 def get_pipeline_status():
     """获取流水线详细状态（含当前步骤信息）"""
@@ -706,6 +737,8 @@ def get_pipeline_status():
             "step_name": pipeline_step_name,
             "stock_index": pipeline_stock_index,
             "total_stocks": pipeline_total_stocks,
+            "workers": DOWNLOAD_WORKERS,
+            "completed": pipeline_completed_count,
         }), 200
 
 
@@ -713,6 +746,10 @@ def get_pipeline_status():
 def get_download_details():
     """获取详细的下载状态信息（最近下载的记录）"""
     try:
+        # 结束当前事务并清除缓存，确保能读到并发线程提交的最新数据
+        db.session.rollback()
+        db.session.expire_all()
+
         # 注意：数据库中的时间戳使用UTC时间，所以这里也使用UTC时间进行比较
         utc_now = datetime.utcnow()
 
@@ -768,6 +805,8 @@ def get_download_details():
 def get_success_stocks():
     """获取下载成功的股票列表（带分页）"""
     try:
+        db.session.rollback()
+        db.session.expire_all()
         today = date.today()
 
         # 获取分页参数
@@ -813,6 +852,8 @@ def get_success_stocks():
 def get_failed_stocks():
     """获取下载失败的股票列表（带分页）"""
     try:
+        db.session.rollback()
+        db.session.expire_all()
         # 获取分页参数
         page = request.args.get('page', 1, type=int)
         per_page = request.args.get('per_page', 50, type=int)
@@ -855,40 +896,39 @@ def get_failed_stocks():
 def get_download_statistics():
     """获取下载统计数据"""
     try:
-        today = date.today()
-        
-        # 统计各种状态的记录数量
-        # 只统计需要下载的记录（排除被忽略的股票）
+        # 结束当前事务并清除缓存，确保能读到并发线程提交的最新数据
+        db.session.rollback()
+        db.session.expire_all()
+
         pending_count = dlr.query.filter(
             dlr.download_status == 'pending',
-            dlr.end_date != date(2050, 1, 1),  # 排除被忽略的股票
-            dlr.record_date != date(2050, 1, 1)  # 排除被忽略的股票
+            dlr.end_date != date(2050, 1, 1),
+            dlr.record_date != date(2050, 1, 1)
         ).count()
-        
+
         success_count = dlr.query.filter(
             dlr.download_status == 'success',
             dlr.end_date != date(2050, 1, 1),
             dlr.record_date != date(2050, 1, 1)
         ).count()
-        
+
         failed_count = dlr.query.filter(
             dlr.download_status == 'failed',
             dlr.end_date != date(2050, 1, 1),
             dlr.record_date != date(2050, 1, 1)
         ).count()
-        
+
         processing_count = dlr.query.filter(
             dlr.download_status == 'processing',
             dlr.end_date != date(2050, 1, 1),
             dlr.record_date != date(2050, 1, 1)
         ).count()
-        
-        # 计算总数（排除被忽略的股票）
+
         total_count = dlr.query.filter(
             dlr.end_date != date(2050, 1, 1),
             dlr.record_date != date(2050, 1, 1)
         ).count()
-        
+
         return jsonify({
             "pending": pending_count,
             "success": success_count,
@@ -896,9 +936,9 @@ def get_download_statistics():
             "processing": processing_count,
             "total": total_count
         }), 200
-        
+
     except Exception as e:
-        logging.error(f"获取下载统计数据时发生错误: {e}")
+        logging.error(f"获取下载统计数据时发生错误: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 
@@ -906,6 +946,8 @@ def get_download_statistics():
 def get_pending_stocks():
     """获取等待下载的股票列表（包括数据过期需要更新的）"""
     try:
+        db.session.rollback()
+        db.session.expire_all()
         today = date.today()
 
         # 获取分页参数

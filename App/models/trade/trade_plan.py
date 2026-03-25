@@ -354,6 +354,7 @@ class TradePlan(db.Model):
             'plan_time': self.plan_time.strftime('%Y-%m-%d %H:%M:%S') if self.plan_time else None,
             'entry_time': self.entry_time.strftime('%Y-%m-%d %H:%M:%S') if self.entry_time else None,
             'exit_time': self.exit_time.strftime('%Y-%m-%d %H:%M:%S') if self.exit_time else None,
+            'expire_time': self.expire_time.strftime('%Y-%m-%d %H:%M:%S') if self.expire_time else None,
             'entry_reason': self.entry_reason,
             'exit_reason': self.exit_reason,
             'strategy_name': self.strategy_name,

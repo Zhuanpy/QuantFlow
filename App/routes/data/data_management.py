@@ -44,8 +44,8 @@ def record_stock_minute():
     # 获取总记录数
     count_query = text(f"""
         SELECT COUNT(*) as total
-        FROM record_stock_minute r
-        LEFT JOIN stock_market_data s ON r.stock_code_id = s.id
+        FROM data_download_records r
+        LEFT JOIN data_stock_info s ON r.stock_code_id = s.id
         WHERE {where_sql}
     """)
     total_result = db.session.execute(count_query, params).fetchone()
@@ -54,8 +54,8 @@ def record_stock_minute():
     # 获取分页数据
     paginated_query = text(f"""
         SELECT r.*, s.name as stock_name, s.code as stock_code
-        FROM record_stock_minute r
-        LEFT JOIN stock_market_data s ON r.stock_code_id = s.id
+        FROM data_download_records r
+        LEFT JOIN data_stock_info s ON r.stock_code_id = s.id
         WHERE {where_sql}
         ORDER BY r.id DESC
         LIMIT {per_page} OFFSET {offset}
@@ -151,8 +151,8 @@ def get_record_stock_minute(id):
     # 使用JOIN查询获取完整信息
     query = text("""
         SELECT r.*, s.name as stock_name, s.code as stock_code
-        FROM record_stock_minute r
-        LEFT JOIN stock_market_data s ON r.stock_code_id = s.id
+        FROM data_download_records r
+        LEFT JOIN data_stock_info s ON r.stock_code_id = s.id
         WHERE r.id = :id
     """)
     

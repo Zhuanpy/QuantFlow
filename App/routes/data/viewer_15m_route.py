@@ -1,11 +1,14 @@
 # -*- coding: utf-8 -*-
 """
 15分钟数据查看器路由
-读取 data/15m/ 目录下的 CSV 文件展示15分钟K线 + MACD信号数据
+股票列表从 data_download_records 数据库读取（快速）
+具体15m数据从 data/15m/ 文件读取
 """
 from flask import Blueprint, render_template, jsonify, request
 from App.models.data.basic_info import StockInfo
+from App.models.data.Stock1m import DownloadRecord
 from App.utils.path_manager import get_path_manager
+from App.exts import db
 import pandas as pd
 import os
 import logging
@@ -14,29 +17,24 @@ logger = logging.getLogger(__name__)
 
 viewer_15m_bp = Blueprint('viewer_15m', __name__)
 
+
 def _get_15m_dir() -> str:
     """获取15m数据目录"""
     pm = get_path_manager()
     return str(pm.data_base / '15m')
 
 
-def _list_15m_files(data_dir: str) -> list:
-    """列出15m目录下所有数据文件（csv和parquet），同一股票优先csv"""
-    if not os.path.isdir(data_dir):
-        return []
-    files = {}
-    for f in os.listdir(data_dir):
-        if f.endswith('.csv') or f.endswith('.parquet'):
-            code = f.rsplit('.', 1)[0]
-            ext = f.rsplit('.', 1)[1]
-            # csv 优先（因为 parquet 可能无法读取）
-            if code not in files or ext == 'csv':
-                files[code] = f
-    return list(files.values())
+def _find_15m_file(data_dir: str, stock_code: str) -> str:
+    """查找指定股票的15m数据文件，parquet优先"""
+    for ext in ['.parquet', '.csv']:
+        candidate = os.path.join(data_dir, f'{stock_code}{ext}')
+        if os.path.exists(candidate):
+            return candidate
+    return None
 
 
 def _read_15m_file(fpath: str) -> pd.DataFrame:
-    """读取15m数据文件，支持csv和parquet，parquet失败时返回空DataFrame"""
+    """读取15m数据文件，支持csv和parquet"""
     if fpath.endswith('.csv'):
         return pd.read_csv(fpath, parse_dates=['date'])
     else:
@@ -58,51 +56,41 @@ def viewer_15m_page():
 
 @viewer_15m_bp.route('/api/viewer_15m/overview', methods=['GET'])
 def get_overview():
-    """获取15m数据总览"""
+    """获取15m数据总览（从数据库统计）"""
     try:
-        data_dir = _get_15m_dir()
-        files = _list_15m_files(data_dir)
-        if not files:
-            return jsonify({'stock_count': 0, 'total_records': 0,
-                            'min_date': '-', 'max_date': '-',
-                            'avg_records': 0}), 200
+        DLR = DownloadRecord
+        SI = StockInfo
 
-        stock_count = len(files)
+        # 总股票数（有下载记录的）
+        stock_count = DLR.query.count()
 
-        # 采样几个文件获取日期范围和平均记录数
-        total_records = 0
-        global_min = None
-        global_max = None
-        sample_files = files[:50] if len(files) > 50 else files
+        # 成功下载的数量
+        success_count = DLR.query.filter(DLR.download_status == 'success').count()
 
-        for fname in sample_files:
-            fpath = os.path.join(data_dir, fname)
-            try:
-                df = _read_15m_file(fpath)
-                if df.empty or 'date' not in df.columns:
-                    continue
-                df['date'] = pd.to_datetime(df['date'])
-                total_records += len(df)
-                fmin, fmax = df['date'].min(), df['date'].max()
-                if global_min is None or fmin < global_min:
-                    global_min = fmin
-                if global_max is None or fmax > global_max:
-                    global_max = fmax
-            except Exception:
-                continue
+        # 日期范围
+        date_range = db.session.query(
+            db.func.min(DLR.start_date),
+            db.func.max(DLR.end_date),
+        ).filter(
+            DLR.download_status == 'success'
+        ).first()
 
-        # 估算总记录数
-        if len(sample_files) < len(files) and len(sample_files) > 0:
-            avg_per_file = total_records / len(sample_files)
-            total_records = int(avg_per_file * len(files))
+        min_date = date_range[0].strftime('%Y-%m-%d') if date_range and date_range[0] else '-'
+        max_date = date_range[1].strftime('%Y-%m-%d') if date_range and date_range[1] else '-'
 
-        avg_records = round(total_records / stock_count) if stock_count > 0 else 0
+        # 总记录数（已下载的）
+        total_records = db.session.query(
+            db.func.sum(DLR.downloaded_records)
+        ).filter(DLR.download_status == 'success').scalar() or 0
+
+        avg_records = round(total_records / success_count) if success_count > 0 else 0
 
         return jsonify({
             'stock_count': stock_count,
+            'success_count': success_count,
             'total_records': total_records,
-            'min_date': global_min.strftime('%Y-%m-%d') if global_min else '-',
-            'max_date': global_max.strftime('%Y-%m-%d %H:%M') if global_max else '-',
+            'min_date': min_date,
+            'max_date': max_date,
             'avg_records': avg_records,
         }), 200
 
@@ -113,7 +101,7 @@ def get_overview():
 
 @viewer_15m_bp.route('/api/viewer_15m/stocks', methods=['GET'])
 def get_stocks():
-    """获取所有有15m数据的股票列表"""
+    """获取股票列表（从数据库查询，不再遍历文件）"""
     try:
         page = request.args.get('page', 1, type=int)
         per_page = request.args.get('per_page', 50, type=int)
@@ -121,66 +109,52 @@ def get_stocks():
         sort_by = request.args.get('sort_by', 'records', type=str)
         per_page = min(per_page, 200)
 
-        data_dir = _get_15m_dir()
-        files = _list_15m_files(data_dir)
-        if not files:
-            return jsonify({'stocks': [], 'total': 0, 'page': 1,
-                            'per_page': per_page, 'total_pages': 0}), 200
+        DLR = DownloadRecord
+        SI = StockInfo
 
-        # 构建股票列表
-        stock_list = []
-        for fname in files:
-            code = fname.rsplit('.', 1)[0]
-            fpath = os.path.join(data_dir, fname)
-            try:
-                fsize = os.path.getsize(fpath)
-                df = _read_15m_file(fpath)
-                if not df.empty and 'date' in df.columns:
-                    df['date'] = pd.to_datetime(df['date'])
-                    records = len(df)
-                    start_date = df['date'].min().strftime('%Y-%m-%d')
-                    end_date = df['date'].max().strftime('%m-%d %H:%M')
-                else:
-                    records = 0
-                    start_date = '-'
-                    end_date = '-'
-            except Exception:
-                records = 0
-                start_date = '-'
-                end_date = '-'
-                fsize = 0
-
-            # 获取股票名称
-            info = StockInfo.query.filter_by(code=code).first()
-            name = info.name if info else '-'
-
-            stock_list.append({
-                'code': code,
-                'name': name,
-                'records': records,
-                'start_date': start_date,
-                'end_date': end_date,
-                'size_kb': round(fsize / 1024, 1),
-            })
+        # 联表查询：download_records JOIN stock_info
+        query = db.session.query(
+            SI.code,
+            SI.name,
+            DLR.download_status,
+            DLR.end_date,
+            DLR.downloaded_records,
+            DLR.last_download_time,
+        ).join(
+            SI, DLR.stock_code_id == SI.id
+        )
 
         # 搜索过滤
         if search:
-            search_lower = search.lower()
-            stock_list = [s for s in stock_list
-                          if search_lower in s['code'].lower() or search_lower in s['name'].lower()]
+            query = query.filter(
+                db.or_(
+                    SI.code.like(f'%{search}%'),
+                    SI.name.like(f'%{search}%'),
+                )
+            )
 
         # 排序
         if sort_by == 'code':
-            stock_list.sort(key=lambda x: x['code'])
+            query = query.order_by(SI.code)
         elif sort_by == 'date':
-            stock_list.sort(key=lambda x: x['end_date'], reverse=True)
-        else:
-            stock_list.sort(key=lambda x: x['records'], reverse=True)
+            query = query.order_by(DLR.end_date.desc())
+        else:  # records
+            query = query.order_by(DLR.downloaded_records.desc())
 
-        total = len(stock_list)
+        total = query.count()
         total_pages = (total + per_page - 1) // per_page
-        start = (page - 1) * per_page
-        stocks = stock_list[start:start + per_page]
+        rows = query.offset((page - 1) * per_page).limit(per_page).all()
+
+        stocks = []
+        for row in rows:
+            stocks.append({
+                'code': row.code,
+                'name': row.name or '-',
+                'status': row.download_status or 'pending',
+                'end_date': row.end_date.strftime('%Y-%m-%d') if row.end_date else '-',
+                'records': row.downloaded_records or 0,
+                'time': row.last_download_time.strftime('%m-%d %H:%M') if row.last_download_time else '-',
+            })
 
         return jsonify({
             'stocks': stocks,
@@ -197,7 +171,7 @@ def get_stocks():
 
 @viewer_15m_bp.route('/api/viewer_15m/stock/<stock_code>', methods=['GET'])
 def get_stock_15m_data(stock_code):
-    """获取指定股票的15m数据"""
+    """获取指定股票的15m数据（从文件读取）"""
     try:
         page = request.args.get('page', 1, type=int)
         per_page = request.args.get('per_page', 100, type=int)
@@ -206,13 +180,7 @@ def get_stock_15m_data(stock_code):
         per_page = min(per_page, 500)
 
         data_dir = _get_15m_dir()
-        # 优先找csv，再找parquet
-        fpath = None
-        for ext in ['.csv', '.parquet']:
-            candidate = os.path.join(data_dir, f'{stock_code}{ext}')
-            if os.path.exists(candidate):
-                fpath = candidate
-                break
+        fpath = _find_15m_file(data_dir, stock_code)
 
         if not fpath:
             return jsonify({'error': f'未找到 {stock_code} 的15m数据文件'}), 404

@@ -63,9 +63,42 @@ class BoardDownloader:
         logger.info(f"开始下载板块 {code} 的 {days} 天数据")
         logger.info("*" * 80)
 
-        # 第一阶段：优先使用 pytdx
+        # 第一阶段：优先使用东方财富 kline API（板块数据更快更稳定）
         logger.info("=" * 60)
-        logger.info("第一阶段：使用 pytdx 获取数据（优先方案）")
+        logger.info("第一阶段：使用东方财富 kline API（优先方案）")
+        logger.info("=" * 60)
+
+        # 计算需要的记录数量（每天约240根K线）
+        lmt = min(days * 240, 2000)  # 最多2000条记录
+        logger.info(f"计算记录数量: {days}天 x 240 = {lmt} 条")
+
+        try:
+            url = my_url('board_1m_multiple_days').format(code, lmt)
+            logger.info(f"尝试访问URL: {url}")
+
+            source = EastMoneyHttpClient.get_source_with_rotation(url, 'board_1m_multiple_days')
+
+            if source:
+                logger.info(f"开始解析下载的数据...")
+                dl = get_1m_data(source, match=False, multiple=True)
+
+                if not dl.empty:
+                    show_download('1m', code)
+                    logger.info("*" * 80)
+                    logger.info(f"成功下载板块 {code} 的 {len(dl)} 条记录")
+                    logger.info("*" * 80)
+                    return dl
+                else:
+                    logger.warning(f"板块 {code} 东方财富数据解析后为空，尝试备用方案")
+            else:
+                logger.warning(f"东方财富返回空数据，尝试备用方案")
+        except Exception as e:
+            logger.warning(f"东方财富获取失败: {e}，尝试备用方案")
+
+        # 第二阶段：备用使用 pytdx
+        logger.info("")
+        logger.info("=" * 60)
+        logger.info("第二阶段：使用 pytdx 获取数据（备用方案）")
         logger.info("=" * 60)
 
         try:
@@ -81,44 +114,15 @@ class BoardDownloader:
                 logger.info("*" * 80)
                 return df_pytdx
             else:
-                logger.warning("pytdx 返回空数据，尝试备用方案")
+                logger.warning("pytdx 返回空数据")
 
         except ImportError:
-            logger.warning("pytdx 未安装，跳过第一阶段")
+            logger.warning("pytdx 未安装，跳过备用方案")
         except Exception as e:
             logger.warning(f"pytdx 获取失败: {e}")
 
-        # 第二阶段：使用东方财富 kline API
-        logger.info("")
-        logger.info("=" * 60)
-        logger.info("第二阶段：使用东方财富 kline API（备用方案）")
-        logger.info("=" * 60)
-
-        # 计算需要的记录数量（每天约240根K线）
-        lmt = min(days * 240, 2000)  # 最多2000条记录
-        logger.info(f"计算记录数量: {days}天 x 240 = {lmt} 条")
-
-        url = my_url('board_1m_multiple_days').format(code, lmt)
-        logger.info(f"尝试访问URL: {url}")
-
-        source = EastMoneyHttpClient.get_source_with_rotation(url, 'board_1m_multiple_days')
-
-        if not source:
-            logger.warning(f"Failed to retrieve data for {code}. Source is empty.")
-            return pd.DataFrame()
-
-        logger.info(f"开始解析下载的数据...")
-        dl = get_1m_data(source, match=False, multiple=True)
-
-        if dl.empty:
-            logger.warning(f"板块 {code} 数据解析后为空")
-            return dl
-
-        show_download('1m', code)
-        logger.info("*" * 80)
-        logger.info(f"成功下载板块 {code} 的 {len(dl)} 条记录")
-        logger.info("*" * 80)
-        return dl
+        logger.error(f"所有数据源都失败，无法获取板块 {code} 的数据")
+        return pd.DataFrame()
 
     @classmethod
     def industry_list(cls) -> pd.DataFrame:

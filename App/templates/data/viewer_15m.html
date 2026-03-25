@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block content %}
+<script src="{{ url_for('static', filename='js/echarts.js') }}"></script>
 <div class="viewer-container">
     <!-- 顶部标题栏 -->
     <div class="viewer-header">
@@ -25,31 +26,6 @@
         </div>
     </div>
 
-    <!-- 总览统计 -->
-    <div class="overview-section">
-        <div class="overview-grid">
-            <div class="overview-item">
-                <div class="overview-number" id="ovStockCount">-</div>
-                <div class="overview-label">股票数</div>
-            </div>
-            <div class="overview-item">
-                <div class="overview-number primary" id="ovTotalRecords">-</div>
-                <div class="overview-label">总记录数</div>
-            </div>
-            <div class="overview-item">
-                <div class="overview-number" id="ovAvgRecords">-</div>
-                <div class="overview-label">平均记录数</div>
-            </div>
-            <div class="overview-item">
-                <div class="overview-number" id="ovDateRange">-</div>
-                <div class="overview-label">数据日期范围</div>
-            </div>
-            <div class="overview-item">
-                <div class="overview-number primary" id="ovMaxDate">-</div>
-                <div class="overview-label">最新数据时间</div>
-            </div>
-        </div>
-    </div>
 
     <!-- 主内容 -->
     <div class="main-content">
@@ -84,9 +60,13 @@
             <div class="panel-header">
                 <h3 id="detailTitle">15分钟数据</h3>
                 <div class="detail-controls">
+                    <div class="view-toggle">
+                        <button class="btn-view active" id="btnChartView" onclick="switchView('chart')">K线图</button>
+                        <button class="btn-view" id="btnTableView" onclick="switchView('table')">数据表</button>
+                    </div>
                     <input type="date" id="filterStartDate" title="开始日期">
                     <input type="date" id="filterEndDate" title="结束日期">
-                    <button class="btn-filter" onclick="load15mData(1)">筛选</button>
+                    <button class="btn-filter" onclick="onFilter()">筛选</button>
                 </div>
             </div>
 
@@ -95,8 +75,21 @@
                 <div class="summary-placeholder">点击左上角菜单按钮选择股票</div>
             </div>
 
+            <!-- K线图区域 -->
+            <div class="chart-section" id="chartSection">
+                <div class="chart-toolbar">
+                    <div class="chart-range-btns">
+                        <button class="range-btn active" onclick="setChartRange(100)">100根</button>
+                        <button class="range-btn" onclick="setChartRange(200)">200根</button>
+                        <button class="range-btn" onclick="setChartRange(500)">500根</button>
+                    </div>
+                    <div class="chart-info" id="chartCrosshairInfo"></div>
+                </div>
+                <div id="klineChart" style="width:100%; height:800px;"></div>
+            </div>
+
             <!-- 数据表格 -->
-            <div class="table-wrapper">
+            <div class="table-wrapper" id="tableSection" style="display:none;">
                 <table class="data-table" id="dataTable">
                     <thead>
                         <tr class="group-header-row">
@@ -194,17 +187,6 @@
     color: white; cursor: pointer; flex-shrink: 0;
 }
 .btn-toggle-panel:hover { background: rgba(255,255,255,0.3); }
-
-/* ===== 总览统计 ===== */
-.overview-section {
-    background: var(--card-background); border-radius: 0.75rem;
-    padding: 0.75rem 1rem; margin-bottom: 1rem; box-shadow: var(--shadow-sm);
-}
-.overview-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 0.75rem; }
-.overview-item { text-align: center; padding: 0.6rem; background: var(--background-color); border-radius: 0.5rem; }
-.overview-number { font-size: 1.3rem; font-weight: 700; color: var(--text-primary); }
-.overview-number.primary { color: #0891b2; }
-.overview-label { font-size: 0.72rem; color: var(--text-secondary); margin-top: 0.2rem; }
 
 /* ===== 主内容 ===== */
 .main-content { position: relative; }
@@ -326,6 +308,34 @@
 .field-header-row th:nth-child(n+18):nth-child(-n+21)       { background: #d1fae5; }
 .field-header-row th:nth-child(n+22)                        { background: #fee2e2; }
 
+/* ===== 视图切换 ===== */
+.view-toggle {
+    display: flex; border: 1px solid #d1d5db; border-radius: 0.35rem; overflow: hidden; margin-right: 0.5rem;
+}
+.btn-view {
+    padding: 0.25rem 0.7rem; border: none; background: white; color: #6b7280;
+    font-size: 0.78rem; cursor: pointer; transition: all 0.15s; font-weight: 500;
+}
+.btn-view.active { background: #0891b2; color: white; }
+.btn-view:hover:not(.active) { background: #f3f4f6; }
+
+/* ===== K线图区域 ===== */
+.chart-section {
+    background: var(--card-background); border-bottom: 1px solid #e5e7eb;
+}
+.chart-toolbar {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 0.5rem 1rem; border-bottom: 1px solid #f1f5f9;
+}
+.chart-range-btns { display: flex; gap: 0.3rem; }
+.range-btn {
+    padding: 0.2rem 0.6rem; border: 1px solid #d1d5db; background: white;
+    border-radius: 0.25rem; font-size: 0.72rem; cursor: pointer; color: #6b7280;
+}
+.range-btn.active { background: #0891b2; color: white; border-color: #0891b2; }
+.range-btn:hover:not(.active) { background: #f3f4f6; }
+.chart-info { font-size: 0.75rem; color: var(--text-secondary); }
+
 /* ===== 信号标记 ===== */
 .signal-up { color: #ef4444; font-weight: 600; }
 .signal-down { color: #10b981; font-weight: 600; }
@@ -344,10 +354,8 @@
 .btn-page:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* ===== 响应式 ===== */
-@media (max-width: 1024px) { .overview-grid { grid-template-columns: repeat(3, 1fr); } }
 @media (max-width: 768px) {
     .viewer-header { flex-direction: column; gap: 0.75rem; }
-    .overview-grid { grid-template-columns: repeat(2, 1fr); }
     .summary-grid { grid-template-columns: repeat(4, 1fr); }
     .stock-drawer { width: 300px; left: -300px; }
 }
@@ -359,9 +367,12 @@ let currentDataPage = 1, totalDataPages = 1;
 let selectedStock = null;
 let searchTimeout = null;
 let drawerOpen = false;
+let currentView = 'chart';  // 'chart' or 'table'
+let klineChart = null;
+let chartDataCache = null;  // 缓存图表数据
+let chartRange = 100;
 
 document.addEventListener('DOMContentLoaded', function() {
-    loadOverview();
     loadStockList(1);
 
     document.getElementById('searchInput').addEventListener('input', function() {
@@ -372,6 +383,13 @@ document.addEventListener('DOMContentLoaded', function() {
     document.addEventListener('keydown', function(e) {
         if (e.key === 'Escape' && drawerOpen) togglePanel();
     });
+
+    // 支持 ?stock=xxx 参数自动加载
+    const urlParams = new URLSearchParams(window.location.search);
+    const stockParam = urlParams.get('stock');
+    if (stockParam) {
+        selectStock(stockParam, '');
+    }
 });
 
 /* ===== 抽屉控制 ===== */
@@ -379,23 +397,6 @@ function togglePanel() {
     drawerOpen = !drawerOpen;
     document.getElementById('stockDrawer').classList.toggle('open', drawerOpen);
     document.getElementById('drawerOverlay').classList.toggle('show', drawerOpen);
-}
-
-/* ===== 总览 ===== */
-function loadOverview() {
-    fetch('{{ url_for("viewer_15m.get_overview") }}')
-        .then(r => r.json())
-        .then(d => {
-            if (d.error) return;
-            document.getElementById('ovStockCount').textContent = d.stock_count.toLocaleString();
-            document.getElementById('ovTotalRecords').textContent = d.total_records.toLocaleString();
-            document.getElementById('ovAvgRecords').textContent = d.avg_records.toLocaleString();
-            document.getElementById('ovDateRange').textContent = d.min_date;
-            document.getElementById('ovDateRange').style.fontSize = '0.85rem';
-            document.getElementById('ovMaxDate').textContent = d.max_date;
-            document.getElementById('ovMaxDate').style.fontSize = '0.85rem';
-        })
-        .catch(e => console.error('加载总览失败:', e));
 }
 
 /* ===== 股票列表 ===== */
@@ -426,7 +427,7 @@ function loadStockList(page) {
                         </div>
                         <div class="stock-meta">
                             <div class="stock-records">${s.records.toLocaleString()} 条</div>
-                            <div class="stock-dates">${s.start_date} ~ ${s.end_date}</div>
+                            <div class="stock-dates">${s.end_date} · ${s.time}</div>
                         </div>
                     </div>
                 `).join('');
@@ -460,6 +461,10 @@ function selectStock(code, name) {
     document.getElementById('filterEndDate').value = '';
 
     if (drawerOpen) togglePanel();
+    chartDataCache = null;
+    if (currentView === 'chart') {
+        loadChartData();
+    }
     load15mData(1);
 }
 
@@ -607,7 +612,7 @@ function onQuickSearchInput() {
                     dd.innerHTML = d.stocks.map(s => `
                         <div class="qs-item" onclick="quickSelectStock('${s.code}', '${s.name}')">
                             <div><span class="qs-code">${s.code}</span><span class="qs-name">${s.name}</span></div>
-                            <div class="qs-meta">${s.records}条 ${s.end_date}</div>
+                            <div class="qs-meta">${s.records}条 · ${s.end_date}</div>
                         </div>
                     `).join('');
                 }
@@ -634,11 +639,285 @@ document.addEventListener('click', function(e) {
     }
 });
 
+/* ===== 筛选 ===== */
+function onFilter() {
+    chartDataCache = null;
+    load15mData(1);
+    if (currentView === 'chart') loadChartData();
+}
+
+/* ===== 视图切换 ===== */
+function switchView(view) {
+    currentView = view;
+    document.getElementById('btnChartView').classList.toggle('active', view === 'chart');
+    document.getElementById('btnTableView').classList.toggle('active', view === 'table');
+    document.getElementById('chartSection').style.display = view === 'chart' ? 'block' : 'none';
+    document.getElementById('tableSection').style.display = view === 'table' ? 'block' : 'none';
+
+    if (view === 'chart' && selectedStock && !chartDataCache) {
+        loadChartData();
+    }
+    if (view === 'chart' && klineChart) {
+        klineChart.resize();
+    }
+}
+
+function setChartRange(range) {
+    chartRange = range;
+    document.querySelectorAll('.range-btn').forEach(b => b.classList.remove('active'));
+    event.target.classList.add('active');
+    if (selectedStock) loadChartData();
+}
+
+/* ===== 加载图表数据 ===== */
+function loadChartData() {
+    if (!selectedStock) return;
+
+    const startDate = document.getElementById('filterStartDate').value;
+    const endDate = document.getElementById('filterEndDate').value;
+
+    let url = `{{ url_for("viewer_15m.get_stock_15m_data", stock_code="__CODE__") }}`.replace('__CODE__', selectedStock);
+    url += `?page=1&per_page=${chartRange}`;
+    if (startDate) url += `&start_date=${startDate}`;
+    if (endDate) url += `&end_date=${endDate}`;
+
+    fetch(url)
+        .then(r => r.json())
+        .then(d => {
+            if (d.error || !d.data || d.data.length === 0) {
+                document.getElementById('klineChart').innerHTML =
+                    '<div style="text-align:center;color:#9ca3af;padding:4rem;">暂无数据</div>';
+                return;
+            }
+            chartDataCache = d;
+            renderKlineChart(d);
+        })
+        .catch(e => {
+            console.error('加载图表数据失败:', e);
+            document.getElementById('klineChart').innerHTML =
+                '<div style="text-align:center;color:#9ca3af;padding:4rem;">加载失败</div>';
+        });
+}
+
+/* ===== 渲染K线图 ===== */
+function renderKlineChart(d) {
+    const container = document.getElementById('klineChart');
+    if (!klineChart) {
+        klineChart = echarts.init(container);
+        window.addEventListener('resize', () => klineChart && klineChart.resize());
+    }
+
+    // 数据是倒序的（最新在前），需要反转
+    const rawData = d.data.slice().reverse();
+
+    const dates = [];
+    const ohlc = [];      // [open, close, low, high]
+    const volumes = [];
+    const macdBars = [];
+    const difLine = [];
+    const deaLine = [];
+    const bollMid = [];
+    const bollUp = [];
+    const bollDn = [];
+
+    rawData.forEach((r, i) => {
+        dates.push(r.date);
+        ohlc.push([r.open, r.close, r.low, r.high]);
+        const isUp = (r.close || 0) >= (r.open || 0);
+        volumes.push([i, r.volume || 0, isUp ? 1 : -1]);
+        macdBars.push(r.macd);
+        difLine.push(r.dif);
+        deaLine.push(r.dea);
+        bollMid.push(r.boll_mid);
+        bollUp.push(r.boll_up);
+        bollDn.push(r.boll_dn);
+    });
+
+    const upColor = '#ef4444';
+    const downColor = '#10b981';
+
+    const option = {
+        animation: false,
+        tooltip: {
+            trigger: 'axis',
+            axisPointer: { type: 'cross' },
+            backgroundColor: 'rgba(255,255,255,0.96)',
+            borderColor: '#e5e7eb',
+            textStyle: { fontSize: 12, color: '#1e293b' },
+            formatter: function(params) {
+                if (!params || params.length === 0) return '';
+                const idx = params[0].dataIndex;
+                const r = rawData[idx];
+                if (!r) return '';
+                const chg = r.open ? ((r.close - r.open) / r.open * 100).toFixed(2) : '0.00';
+                const chgColor = chg >= 0 ? upColor : downColor;
+                return `<div style="font-size:12px;line-height:1.6">
+                    <b>${r.date}</b><br/>
+                    <span style="color:#6b7280">开:</span> ${n(r.open)}
+                    <span style="color:#6b7280;margin-left:8px">高:</span> ${n(r.high)}<br/>
+                    <span style="color:#6b7280">收:</span> <b style="color:${chgColor}">${n(r.close)}</b>
+                    <span style="color:#6b7280;margin-left:8px">低:</span> ${n(r.low)}<br/>
+                    <span style="color:#6b7280">涨幅:</span> <b style="color:${chgColor}">${chg}%</b>
+                    <span style="color:#6b7280;margin-left:8px">量:</span> ${ni(r.volume)}<br/>
+                    <span style="color:#7c3aed">DIF:</span> ${n(r.dif,4)}
+                    <span style="color:#d97706;margin-left:6px">DEA:</span> ${n(r.dea,4)}
+                    <span style="color:#6b7280;margin-left:6px">MACD:</span> ${n(r.macd,4)}<br/>
+                    <span style="color:#2563eb">布林:</span> ${n(r.boll_up)} / ${n(r.boll_mid)} / ${n(r.boll_dn)}
+                </div>`;
+            }
+        },
+        axisPointer: {
+            link: [{ xAxisIndex: [0, 1, 2] }],
+            label: { backgroundColor: '#64748b' }
+        },
+        grid: [
+            { left: 60, right: 20, top: 20, height: '48%' },   // K线
+            { left: 60, right: 20, top: '72%', height: '10%' }, // 成交量
+            { left: 60, right: 20, top: '85%', height: '12%' }, // MACD
+        ],
+        xAxis: [
+            {
+                type: 'category', data: dates, gridIndex: 0,
+                axisLine: { lineStyle: { color: '#d1d5db' } },
+                axisLabel: { show: false },
+                axisTick: { show: false },
+                splitLine: { show: true, lineStyle: { color: '#f1f5f9' } },
+                boundaryGap: true,
+                min: 'dataMin', max: 'dataMax',
+            },
+            {
+                type: 'category', data: dates, gridIndex: 1,
+                axisLine: { lineStyle: { color: '#d1d5db' } },
+                axisLabel: { show: false },
+                axisTick: { show: false },
+                splitLine: { show: false },
+                boundaryGap: true,
+                min: 'dataMin', max: 'dataMax',
+            },
+            {
+                type: 'category', data: dates, gridIndex: 2,
+                axisLine: { lineStyle: { color: '#d1d5db' } },
+                axisLabel: { fontSize: 10, color: '#9ca3af', rotate: 30 },
+                axisTick: { show: false },
+                splitLine: { show: false },
+                boundaryGap: true,
+                min: 'dataMin', max: 'dataMax',
+            },
+        ],
+        yAxis: [
+            {
+                scale: true, gridIndex: 0, splitNumber: 5,
+                axisLine: { show: false },
+                axisTick: { show: false },
+                splitLine: { lineStyle: { color: '#f1f5f9' } },
+                axisLabel: { fontSize: 10, color: '#9ca3af' },
+            },
+            {
+                scale: true, gridIndex: 1,
+                axisLine: { show: false },
+                axisTick: { show: false },
+                splitLine: { show: false },
+                axisLabel: { show: false },
+            },
+            {
+                scale: true, gridIndex: 2, splitNumber: 2,
+                axisLine: { show: false },
+                axisTick: { show: false },
+                splitLine: { lineStyle: { color: '#f1f5f9' } },
+                axisLabel: { fontSize: 10, color: '#9ca3af' },
+            },
+        ],
+        dataZoom: [
+            {
+                type: 'inside', xAxisIndex: [0, 1, 2],
+                start: Math.max(0, 100 - Math.min(100, 80 / rawData.length * 100)),
+                end: 100,
+            },
+            {
+                type: 'slider', xAxisIndex: [0, 1, 2],
+                bottom: 5, height: 18,
+                borderColor: '#d1d5db',
+                fillerColor: 'rgba(8,145,178,0.12)',
+                handleStyle: { color: '#0891b2' },
+                textStyle: { fontSize: 10, color: '#9ca3af' },
+                start: Math.max(0, 100 - Math.min(100, 80 / rawData.length * 100)),
+                end: 100,
+            },
+        ],
+        series: [
+            // K线
+            {
+                name: 'K线', type: 'candlestick', xAxisIndex: 0, yAxisIndex: 0,
+                data: ohlc,
+                itemStyle: {
+                    color: upColor, color0: downColor,
+                    borderColor: upColor, borderColor0: downColor,
+                },
+            },
+            // 布林上轨
+            {
+                name: '上轨', type: 'line', xAxisIndex: 0, yAxisIndex: 0,
+                data: bollUp, smooth: true,
+                lineStyle: { color: '#3b82f6', width: 1, opacity: 0.6 },
+                symbol: 'none',
+            },
+            // 布林中轨
+            {
+                name: '中轨', type: 'line', xAxisIndex: 0, yAxisIndex: 0,
+                data: bollMid, smooth: true,
+                lineStyle: { color: '#f59e0b', width: 1, opacity: 0.6 },
+                symbol: 'none',
+            },
+            // 布林下轨
+            {
+                name: '下轨', type: 'line', xAxisIndex: 0, yAxisIndex: 0,
+                data: bollDn, smooth: true,
+                lineStyle: { color: '#3b82f6', width: 1, opacity: 0.6 },
+                symbol: 'none',
+            },
+            // 成交量
+            {
+                name: '成交量', type: 'bar', xAxisIndex: 1, yAxisIndex: 1,
+                data: volumes.map(v => ({
+                    value: v[1],
+                    itemStyle: { color: v[2] > 0 ? upColor : downColor, opacity: 0.7 }
+                })),
+            },
+            // MACD柱
+            {
+                name: 'MACD', type: 'bar', xAxisIndex: 2, yAxisIndex: 2,
+                data: macdBars.map(v => ({
+                    value: v,
+                    itemStyle: { color: v >= 0 ? upColor : downColor, opacity: 0.8 }
+                })),
+            },
+            // DIF线
+            {
+                name: 'DIF', type: 'line', xAxisIndex: 2, yAxisIndex: 2,
+                data: difLine,
+                lineStyle: { color: '#7c3aed', width: 1.2 },
+                symbol: 'none',
+            },
+            // DEA线
+            {
+                name: 'DEA', type: 'line', xAxisIndex: 2, yAxisIndex: 2,
+                data: deaLine,
+                lineStyle: { color: '#d97706', width: 1.2 },
+                symbol: 'none',
+            },
+        ],
+    };
+
+    klineChart.setOption(option, true);
+}
+
 /* ===== 刷新 ===== */
 function refreshAll() {
-    loadOverview();
     loadStockList(currentPage);
-    if (selectedStock) load15mData(currentDataPage);
+    if (selectedStock) {
+        load15mData(currentDataPage);
+        if (currentView === 'chart') loadChartData();
+    }
 }
 </script>
 {% endblock %}

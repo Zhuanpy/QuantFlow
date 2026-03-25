@@ -83,6 +83,7 @@
                         <th>股票</th>
                         <th>模式</th>
                         <th>方向</th>
+                        <th>计划时间</th>
                         <th>入场价</th>
                         <th>止损</th>
                         <th>止盈</th>
@@ -94,7 +95,7 @@
                     </tr>
                 </thead>
                 <tbody id="plansTableBody">
-                    <tr><td colspan="11" class="loading">加载中...</td></tr>
+                    <tr><td colspan="12" class="loading">加载中...</td></tr>
                 </tbody>
             </table>
         </div>
@@ -112,13 +113,15 @@
             <input type="hidden" id="planId">
 
             <div class="form-row">
-                <div class="form-group">
+                <div class="form-group stock-autocomplete-group">
                     <label>股票代码 *</label>
-                    <input type="text" id="stockCode" required placeholder="如: 000001">
+                    <input type="text" id="stockCode" required placeholder="输入代码搜索" autocomplete="off">
+                    <div class="autocomplete-dropdown" id="stockCodeDropdown"></div>
                 </div>
-                <div class="form-group">
+                <div class="form-group stock-autocomplete-group">
                     <label>股票名称 *</label>
-                    <input type="text" id="stockName" required placeholder="如: 平安银行">
+                    <input type="text" id="stockName" required placeholder="输入名称搜索" autocomplete="off">
+                    <div class="autocomplete-dropdown" id="stockNameDropdown"></div>
                 </div>
             </div>
 
@@ -136,6 +139,17 @@
                         <option value="long">做多</option>
                         <option value="short">做空</option>
                     </select>
+                </div>
+            </div>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label>计划交易时间</label>
+                    <input type="datetime-local" id="planTime">
+                </div>
+                <div class="form-group">
+                    <label>计划过期时间</label>
+                    <input type="datetime-local" id="expireTime">
                 </div>
             </div>
 
@@ -631,6 +645,74 @@
     border-top: 1px solid #eee;
 }
 
+/* 股票自动补全 */
+.stock-autocomplete-group {
+    position: relative;
+}
+
+.autocomplete-dropdown {
+    display: none;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    background: white;
+    border: 1px solid #ddd;
+    border-top: none;
+    border-radius: 0 0 0.5rem 0.5rem;
+    max-height: 240px;
+    overflow-y: auto;
+    z-index: 1100;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+}
+
+.autocomplete-dropdown.show {
+    display: block;
+}
+
+.autocomplete-item {
+    padding: 0.5rem 0.75rem;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid #f0f0f0;
+    transition: background 0.15s;
+}
+
+.autocomplete-item:last-child {
+    border-bottom: none;
+}
+
+.autocomplete-item:hover, .autocomplete-item.active {
+    background: #f0f7ff;
+}
+
+.autocomplete-item .stock-code {
+    font-weight: 600;
+    color: var(--primary-color);
+    min-width: 70px;
+}
+
+.autocomplete-item .stock-name {
+    flex: 1;
+    margin-left: 0.5rem;
+    color: var(--text-primary);
+}
+
+.autocomplete-item .stock-industry {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    margin-left: 0.5rem;
+}
+
+.autocomplete-empty {
+    padding: 0.75rem;
+    text-align: center;
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+}
+
 @media (max-width: 768px) {
     .stats-grid {
         grid-template-columns: 1fr;
@@ -709,6 +791,141 @@ function setupEventListeners() {
     ['entryPrice', 'stopLossPrice', 'takeProfitPrice', 'quantity'].forEach(id => {
         document.getElementById(id).addEventListener('input', updateRiskPreview);
     });
+
+    // 股票代码/名称自动补全
+    setupStockAutocomplete();
+}
+
+// ============ 股票自动补全 ============
+let searchTimer = null;
+let activeDropdown = null;
+
+function setupStockAutocomplete() {
+    const codeInput = document.getElementById('stockCode');
+    const nameInput = document.getElementById('stockName');
+    const codeDropdown = document.getElementById('stockCodeDropdown');
+    const nameDropdown = document.getElementById('stockNameDropdown');
+
+    // 股票代码输入 → 搜索
+    codeInput.addEventListener('input', function() {
+        clearTimeout(searchTimer);
+        const keyword = this.value.trim();
+        if (keyword.length === 0) {
+            hideDropdown(codeDropdown);
+            return;
+        }
+        searchTimer = setTimeout(() => searchStocks(keyword, codeDropdown), 200);
+    });
+
+    // 股票名称输入 → 搜索
+    nameInput.addEventListener('input', function() {
+        clearTimeout(searchTimer);
+        const keyword = this.value.trim();
+        if (keyword.length === 0) {
+            hideDropdown(nameDropdown);
+            return;
+        }
+        searchTimer = setTimeout(() => searchStocks(keyword, nameDropdown), 200);
+    });
+
+    // 键盘导航
+    [codeInput, nameInput].forEach(input => {
+        const dropdown = input.id === 'stockCode' ? codeDropdown : nameDropdown;
+        input.addEventListener('keydown', function(e) {
+            handleDropdownKeydown(e, dropdown);
+        });
+    });
+
+    // 点击外部关闭下拉
+    document.addEventListener('click', function(e) {
+        if (!e.target.closest('.stock-autocomplete-group')) {
+            hideDropdown(codeDropdown);
+            hideDropdown(nameDropdown);
+        }
+    });
+}
+
+async function searchStocks(keyword, dropdown) {
+    try {
+        const response = await fetch(`/api/trade/stocks/search?keyword=${encodeURIComponent(keyword)}`);
+        const data = await response.json();
+
+        if (data.success) {
+            renderDropdown(dropdown, data.stocks);
+        }
+    } catch (error) {
+        console.error('搜索股票失败:', error);
+    }
+}
+
+function renderDropdown(dropdown, stocks) {
+    if (stocks.length === 0) {
+        dropdown.innerHTML = '<div class="autocomplete-empty">未找到匹配的股票（仅支持已整理的市场数据）</div>';
+        dropdown.classList.add('show');
+        return;
+    }
+
+    dropdown.innerHTML = stocks.map((s, i) => `
+        <div class="autocomplete-item" data-code="${s.stock_code}" data-name="${s.stock_name}" data-index="${i}">
+            <span class="stock-code">${s.stock_code}</span>
+            <span class="stock-name">${s.stock_name}</span>
+            <span class="stock-industry">${s.industry || ''}</span>
+        </div>
+    `).join('');
+
+    // 绑定点击事件
+    dropdown.querySelectorAll('.autocomplete-item').forEach(item => {
+        item.addEventListener('click', function() {
+            selectStock(this.dataset.code, this.dataset.name);
+            hideDropdown(dropdown);
+        });
+    });
+
+    dropdown.classList.add('show');
+    activeDropdown = dropdown;
+}
+
+function selectStock(code, name) {
+    document.getElementById('stockCode').value = code;
+    document.getElementById('stockName').value = name;
+}
+
+function hideDropdown(dropdown) {
+    dropdown.classList.remove('show');
+    if (activeDropdown === dropdown) activeDropdown = null;
+}
+
+function handleDropdownKeydown(e, dropdown) {
+    if (!dropdown.classList.contains('show')) return;
+
+    const items = dropdown.querySelectorAll('.autocomplete-item');
+    if (items.length === 0) return;
+
+    let currentIndex = -1;
+    items.forEach((item, i) => {
+        if (item.classList.contains('active')) currentIndex = i;
+    });
+
+    if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        items.forEach(item => item.classList.remove('active'));
+        currentIndex = (currentIndex + 1) % items.length;
+        items[currentIndex].classList.add('active');
+        items[currentIndex].scrollIntoView({ block: 'nearest' });
+    } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        items.forEach(item => item.classList.remove('active'));
+        currentIndex = currentIndex <= 0 ? items.length - 1 : currentIndex - 1;
+        items[currentIndex].classList.add('active');
+        items[currentIndex].scrollIntoView({ block: 'nearest' });
+    } else if (e.key === 'Enter' && currentIndex >= 0) {
+        e.preventDefault();
+        const active = items[currentIndex];
+        selectStock(active.dataset.code, active.dataset.name);
+        hideDropdown(dropdown);
+    } else if (e.key === 'Escape') {
+        hideDropdown(dropdown);
+    }
 }
 
 // 加载统计数据
@@ -738,7 +955,7 @@ async function loadStatistics() {
 // 加载交易计划列表
 async function loadPlans() {
     const tbody = document.getElementById('plansTableBody');
-    tbody.innerHTML = '<tr><td colspan="11" class="loading">加载中...</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="12" class="loading">加载中...</td></tr>';
 
     try {
         let url = '/api/trade/plans?limit=100';
@@ -751,11 +968,11 @@ async function loadPlans() {
         if (data.success && data.plans.length > 0) {
             tbody.innerHTML = data.plans.map(plan => renderPlanRow(plan)).join('');
         } else {
-            tbody.innerHTML = '<tr><td colspan="11" class="loading">暂无交易计划</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="12" class="loading">暂无交易计划</td></tr>';
         }
     } catch (error) {
         console.error('加载计划失败:', error);
-        tbody.innerHTML = '<tr><td colspan="11" class="loading">加载失败</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="12" class="loading">加载失败</td></tr>';
     }
 }
 
@@ -763,6 +980,10 @@ function renderPlanRow(plan) {
     const profitClass = plan.profit_loss > 0 ? 'profit-positive' : (plan.profit_loss < 0 ? 'profit-negative' : '');
     const profitDisplay = plan.profit_loss !== null ?
         `<span class="${profitClass}">${plan.profit_loss > 0 ? '+' : ''}${plan.profit_loss.toFixed(2)}</span>` : '-';
+
+    // 格式化计划时间：显示入场时间 > 计划时间
+    const timeStr = plan.entry_time || plan.plan_time || '';
+    const timeDisplay = timeStr ? `<small>${timeStr.slice(0, 16).replace('T', ' ')}</small>` : '-';
 
     let actionButtons = '';
     if (plan.status === 'planning' || plan.status === 'pending') {
@@ -774,10 +995,11 @@ function renderPlanRow(plan) {
     } else if (plan.status === 'active') {
         actionButtons = `
             <button class="btn btn-warning btn-sm" onclick="showExitModal(${plan.id})">出场</button>
+            <button class="btn btn-secondary btn-sm" onclick="editPlan(${plan.id})">编辑</button>
         `;
     } else {
         actionButtons = `
-            <button class="btn btn-secondary btn-sm" onclick="viewPlan(${plan.id})">详情</button>
+            <button class="btn btn-secondary btn-sm" onclick="editPlan(${plan.id})">编辑</button>
             <button class="btn btn-danger btn-sm" onclick="deletePlan(${plan.id})">删除</button>
         `;
     }
@@ -787,6 +1009,7 @@ function renderPlanRow(plan) {
             <td><strong>${plan.stock_code}</strong><br><small>${plan.stock_name}</small></td>
             <td><span class="badge badge-${plan.trade_mode}">${plan.trade_mode === 'simulate' ? '模拟' : '实盘'}</span></td>
             <td><span class="badge badge-${plan.direction}">${plan.direction === 'long' ? '做多' : '做空'}</span></td>
+            <td>${timeDisplay}</td>
             <td>${plan.entry_price || '-'}</td>
             <td>${plan.stop_loss_price || '-'}</td>
             <td>${plan.take_profit_price || '-'}</td>
@@ -841,6 +1064,8 @@ async function editPlan(planId) {
             document.getElementById('takeProfitPrice').value = plan.take_profit_price || '';
             document.getElementById('quantity').value = plan.quantity;
             document.getElementById('positionRatio').value = plan.position_ratio || '';
+            document.getElementById('planTime').value = plan.plan_time ? plan.plan_time.replace(' ', 'T').slice(0, 16) : '';
+            document.getElementById('expireTime').value = plan.expire_time ? plan.expire_time.replace(' ', 'T').slice(0, 16) : '';
             document.getElementById('strategyName').value = plan.strategy_name || '';
             document.getElementById('entryReason').value = plan.entry_reason || '';
             document.getElementById('notes').value = plan.notes || '';
@@ -908,6 +1133,8 @@ async function handleFormSubmit(e) {
         take_profit_price: parseFloat(document.getElementById('takeProfitPrice').value) || null,
         quantity: parseInt(document.getElementById('quantity').value),
         position_ratio: parseFloat(document.getElementById('positionRatio').value) || null,
+        plan_time: document.getElementById('planTime').value || null,
+        expire_time: document.getElementById('expireTime').value || null,
         strategy_name: document.getElementById('strategyName').value,
         entry_reason: document.getElementById('entryReason').value,
         notes: document.getElementById('notes').value

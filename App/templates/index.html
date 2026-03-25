@@ -57,7 +57,6 @@
             <div class="button-group">
         <a href="{{ url_for('RnnData.rnn_data_page') }}" class="button">模型数据</a>
         <a href="{{ url_for('RnnData.data_statistics_page') }}" class="button">数据统计</a>
-        <a href="{{ url_for('stock_pool.stock_pool_page') }}" class="button">股票池管理</a>
                 <a href="#" class="button disabled">模型训练</a>
                 <a href="#" class="button disabled">模型测试</a>
             </div>
@@ -66,6 +65,7 @@
         <div class="section">
             <h2>交易系统</h2>
             <div class="button-group">
+                <a href="{{ url_for('stock_pool.stock_pool_page') }}" class="button">股票池管理</a>
                 <a href="{{ url_for('trade_plan.trade_page') }}" class="button">交易管理</a>
                 <a href="{{ url_for('trade_plan.simulate_trade_page') }}" class="button">模拟交易</a>
                 <a href="{{ url_for('trade_plan.real_trade_page') }}" class="button button-real">实盘交易</a>

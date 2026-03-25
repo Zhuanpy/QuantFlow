@@ -119,7 +119,7 @@ class EastMoneyHttpClient:
             session.mount("http://", adapter)
             session.mount("https://", adapter)
 
-            delay = random.uniform(3, 5)
+            delay = random.uniform(1, 2)
             logger.info(f"请求延迟 {delay:.2f} 秒（避免限流）")
             time.sleep(delay)
 

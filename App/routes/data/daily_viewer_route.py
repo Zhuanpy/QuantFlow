@@ -275,6 +275,114 @@ def get_stock_daily_data(stock_code):
         return jsonify({'error': str(e)}), 500
 
 
+@daily_viewer_bp.route('/api/daily_viewer/latest_all', methods=['GET'])
+def get_latest_all():
+    """获取所有维护股票最新日期的数据（合并 StockDaily + DailyTaskStatus + StockInfo）"""
+    try:
+        sort_by = request.args.get('sort_by', 'code')
+        search = request.args.get('search', '').strip()
+
+        T = DailyTaskStatus
+
+        # 子查询：每只股票的最新日期
+        latest_date_sq = db.session.query(
+            StockDaily.stock_code,
+            db.func.max(StockDaily.date).label('max_date')
+        ).group_by(StockDaily.stock_code).subquery()
+
+        # 主查询：用最新日期关联取完整行
+        query = db.session.query(
+            StockDaily, T, StockInfo.name.label('stock_name')
+        ).join(
+            latest_date_sq,
+            db.and_(
+                StockDaily.stock_code == latest_date_sq.c.stock_code,
+                StockDaily.date == latest_date_sq.c.max_date
+            )
+        ).outerjoin(
+            T,
+            db.and_(
+                StockDaily.stock_code == T.stock_code,
+                StockDaily.date == T.date
+            )
+        ).outerjoin(
+            StockInfo,
+            StockInfo.code == StockDaily.stock_code
+        )
+
+        if search:
+            query = query.filter(db.or_(
+                StockDaily.stock_code.like(f'%{search}%'),
+                StockInfo.name.like(f'%{search}%')
+            ))
+
+        # 排序
+        if sort_by == 'close_desc':
+            query = query.order_by(StockDaily.close.desc())
+        elif sort_by == 'close_asc':
+            query = query.order_by(StockDaily.close.asc())
+        elif sort_by == 'volume_desc':
+            query = query.order_by(StockDaily.volume.desc())
+        elif sort_by == 'score_desc':
+            query = query.order_by(db.case((T.score_rnn_model != None, T.score_rnn_model), else_=0).desc())
+        elif sort_by == 'date_desc':
+            query = query.order_by(StockDaily.date.desc(), StockDaily.stock_code)
+        else:  # code
+            query = query.order_by(StockDaily.stock_code)
+
+        rows = query.all()
+
+        def _r(val, n=2):
+            return round(val, n) if val else 0
+
+        data = []
+        for daily, task, stock_name in rows:
+            row = {
+                'code': daily.stock_code,
+                'name': stock_name or '-',
+                'date': daily.date.strftime('%Y-%m-%d') if daily.date else '-',
+                'open': _r(daily.open), 'close': _r(daily.close),
+                'high': _r(daily.high), 'low': _r(daily.low),
+                'volume': daily.volume or 0, 'money': daily.money or 0,
+                'fund_count': daily.fund_holdings_count or 0,
+                'fund_ratio': _r(daily.fund_holdings_ratio),
+            }
+            if task:
+                row.update({
+                    'signal': task.signal, 'signal_name': task.signal_name or '',
+                    're_trend': task.re_trend or 0,
+                    'pred_bar_chg': _r(task.predict_bar_change),
+                    'pred_bar_price': _r(task.predict_bar_price),
+                    'sc_rnn': _r(task.score_rnn_model),
+                    'sc_boll': _r(task.score_board_boll),
+                    'sc_money': _r(task.score_board_money),
+                    'sc_hot': _r(task.score_board_hot),
+                    'sc_fund': _r(task.score_funds_awkward),
+                    'trend_prob': _r(task.trend_probability),
+                    'trend_score': _r(task.trend_score),
+                    'trade_action': task.trade_action or 0,
+                    'has_task': True,
+                })
+            else:
+                row.update({
+                    'signal': None, 'signal_name': '', 're_trend': 0,
+                    'pred_bar_chg': 0, 'pred_bar_price': 0,
+                    'sc_rnn': 0, 'sc_boll': 0, 'sc_money': 0, 'sc_hot': 0,
+                    'sc_fund': 0, 'trend_prob': 0, 'trend_score': 0,
+                    'trade_action': 0, 'has_task': False,
+                })
+            data.append(row)
+
+        return jsonify({
+            'total': len(data),
+            'data': data,
+        }), 200
+
+    except Exception as e:
+        logger.error(f"获取全部股票最新数据失败: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
 @daily_viewer_bp.route('/api/daily_viewer/download_daily', methods=['POST'])
 def download_daily_data():
     """

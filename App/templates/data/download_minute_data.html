@@ -4,7 +4,7 @@
     <!-- 顶部标题和按钮 -->
     <div class="download-header-bar">
         <div class="header-left">
-            <h2>批量数据下载(日K + 1分钟 + 15分钟)</h2>
+            <h2>盘后数据下载(日K + 1分钟 + 15分钟)</h2>
             <div class="days-selector">
                 <label for="downloadDays">下载天数：</label>
                 <select id="downloadDays" class="days-select">
@@ -161,6 +161,7 @@
                         <button class="tab-button" onclick="showTab('pending')">等待下载</button>
                         <button class="tab-button active" onclick="showTab('success')">成功列表</button>
                         <button class="tab-button" onclick="showTab('failed')">失败列表</button>
+                        <button class="tab-button" onclick="showTab('preview')">数据预览</button>
                         <button class="tab-button" onclick="showTab('logs')">实时日志</button>
                     </div>
                 </div>
@@ -204,6 +205,16 @@
                     </div>
                     <div class="stock-list" id="failedList">
                         <div class="empty-message">加载中...</div>
+                    </div>
+                </div>
+
+                <div id="previewTab" class="tab-content">
+                    <div class="preview-header" id="previewHeader">
+                        <span id="previewStockInfo">暂无数据</span>
+                        <span id="previewTime" class="preview-time"></span>
+                    </div>
+                    <div class="preview-table-wrap" id="previewTableWrap">
+                        <div class="empty-message">下载完成后自动展示15分钟数据</div>
                     </div>
                 </div>
 
@@ -893,6 +904,70 @@
         font-size: 0.75rem;
     }
 }
+
+/* 数据预览表格 */
+.preview-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.5rem 0.75rem;
+    background: linear-gradient(135deg, #ede9fe, #e0e7ff);
+    border-radius: 0.375rem;
+    margin-bottom: 0.5rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #4c1d95;
+}
+.preview-time { font-size: 0.75rem; font-weight: 400; color: #7c3aed; }
+.preview-table-wrap {
+    max-height: calc(100vh - 320px);
+    overflow: auto;
+}
+.preview-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.72rem;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+.preview-table thead { position: sticky; top: 0; z-index: 1; }
+.preview-table th {
+    background: #4c1d95;
+    color: white;
+    padding: 0.35rem 0.5rem;
+    text-align: right;
+    font-weight: 600;
+    border-bottom: 2px solid #6d28d9;
+}
+.preview-table th:first-child { text-align: center; }
+.preview-table td {
+    padding: 0.3rem 0.5rem;
+    text-align: right;
+    border-bottom: 1px solid #e5e7eb;
+    color: var(--text-primary);
+}
+.preview-table td:first-child {
+    text-align: center;
+    font-weight: 500;
+    color: #6b7280;
+}
+.preview-table tr:hover td { background: #f5f3ff; }
+.preview-table .col-up { color: #dc2626; }
+.preview-table .col-dn { color: #16a34a; }
+.preview-table .col-signal-up {
+    background: #fef2f2; color: #dc2626; font-weight: 700;
+}
+.preview-table .col-signal-dn {
+    background: #f0fdf4; color: #16a34a; font-weight: 700;
+}
+.preview-macd-pos { color: #dc2626; }
+.preview-macd-neg { color: #16a34a; }
+.preview-badge {
+    display: inline-block; padding: 1px 6px; border-radius: 3px;
+    font-size: 0.68rem; font-weight: 600;
+}
+.preview-badge-up { background: #fef2f2; color: #dc2626; }
+.preview-badge-dn { background: #f0fdf4; color: #16a34a; }
 </style>
 <script>
 let polling = null;
@@ -907,6 +982,8 @@ let failedStocks = [];
 let pendingStocks = [];
 let downloadLogs = [];
 let lastDownloadStatus = {status: '未开始', progress: 0};
+let previewPolling = null;
+let lastPreviewStock = '';  // 用于检测是否有新股票完成
 
 // 分页状态
 let currentPendingPage = 1, totalPendingPages = 1, totalPendingCount = 0;
@@ -1153,21 +1230,99 @@ function addLog(message, type = 'info') {
     updateLogs();
 }
 
-function updateStatistics() {
-    console.log('[DEBUG] 开始更新统计数据...');
-    fetch('{{ url_for("download_data_bp.get_download_statistics") }}')
-        .then(res => {
-            console.log('[DEBUG] 响应状态:', res.status);
-            return res.json();
+// 加载15m数据预览
+function loadPreview() {
+    fetch('{{ url_for("download_data_bp.get_last_15m_preview") }}')
+        .then(r => r.json())
+        .then(d => {
+            if (!d.stock_code || d.data_15m.length === 0) return;
+            // 检测是否有新数据（股票代码或时间变了）
+            const key = d.stock_code + '_' + d.updated_at;
+            if (key === lastPreviewStock) return;
+            lastPreviewStock = key;
+
+            // 更新头部信息
+            const macdBadge = d.macd_success
+                ? '<span class="preview-badge preview-badge-up">MACD</span>'
+                : '<span class="preview-badge preview-badge-dn">无MACD</span>';
+            document.getElementById('previewStockInfo').innerHTML =
+                `${d.stock_name} (${d.stock_code}) &nbsp; 15m数据 ${d.total_15m} 条 &nbsp; ${macdBadge}`;
+            document.getElementById('previewTime').textContent = d.updated_at;
+
+            // 构建表格
+            const rows = d.data_15m;
+            if (rows.length === 0) return;
+
+            // 动态确定要显示的列
+            const baseCols = [
+                {key: 'date', label: '时间'},
+                {key: 'open', label: '开'},
+                {key: 'close', label: '收'},
+                {key: 'high', label: '高'},
+                {key: 'low', label: '低'},
+                {key: 'volume', label: '量'},
+            ];
+            const extraCols = [
+                {key: 'SignalChoice', label: '信号'},
+                {key: 'MACD', label: 'MACD'},
+                {key: 'Dif', label: 'DIF'},
+                {key: 'Dea', label: 'DEA'},
+                {key: 'BollUp', label: 'Boll上'},
+                {key: 'BollMid', label: 'Boll中'},
+                {key: 'BollDn', label: 'Boll下'},
+                {key: 'CycleAmplitudePerBar', label: '周期振幅'},
+                {key: 'CycleLengthPerBar', label: '周期位置'},
+            ];
+            // 只显示数据中实际存在的列
+            const cols = baseCols.concat(extraCols.filter(c => rows[0].hasOwnProperty(c.key)));
+
+            let html = '<table class="preview-table"><thead><tr>';
+            cols.forEach(c => { html += `<th>${c.label}</th>`; });
+            html += '</tr></thead><tbody>';
+
+            rows.forEach(row => {
+                html += '<tr>';
+                cols.forEach(c => {
+                    let val = row[c.key];
+                    let cls = '';
+                    if (c.key === 'close' || c.key === 'open' || c.key === 'high' || c.key === 'low') {
+                        // 涨跌色（和open比）
+                        if (row.close > row.open) cls = 'col-up';
+                        else if (row.close < row.open) cls = 'col-dn';
+                    } else if (c.key === 'SignalChoice') {
+                        if (val === 'up') { cls = 'col-signal-up'; val = '▲ 上涨'; }
+                        else if (val === 'down') { cls = 'col-signal-dn'; val = '▼ 下跌'; }
+                        else { val = '-'; }
+                    } else if (c.key === 'MACD') {
+                        cls = parseFloat(val) >= 0 ? 'preview-macd-pos' : 'preview-macd-neg';
+                    }
+                    if (val === '' || val === null || val === undefined) val = '-';
+                    html += `<td class="${cls}">${val}</td>`;
+                });
+                html += '</tr>';
+            });
+
+            html += '</tbody></table>';
+            document.getElementById('previewTableWrap').innerHTML = html;
+
+            // 如果当前在预览Tab，自动滚到底部
+            const wrap = document.getElementById('previewTableWrap');
+            wrap.scrollTop = wrap.scrollHeight;
+
+            addLog(`${d.stock_name}(${d.stock_code}) 15m数据预览已更新，共${d.total_15m}条`, 'success');
         })
+        .catch(e => console.error('加载15m预览失败:', e));
+}
+
+function updateStatistics() {
+    fetch('{{ url_for("download_data_bp.get_download_statistics") }}')
+        .then(res => res.json())
         .then(data => {
-            console.log('[DEBUG] 获取到统计数据:', data);
             document.getElementById('totalCount').innerText = data.total || 0;
             document.getElementById('pendingCount').innerText = data.pending || 0;
             document.getElementById('successCount').innerText = data.success || 0;
             document.getElementById('failedCount').innerText = data.failed || 0;
             document.getElementById('processingCount').innerText = data.processing || 0;
-            console.log('[DEBUG] 统计数据更新完成');
         })
         .catch(error => {
             console.error('获取统计数据失败:', error);
@@ -1218,7 +1373,7 @@ function updateStatus() {
                 pipelineDiv.style.display = 'flex';
                 document.getElementById('currentStock').innerText = data.current_stock || '-';
                 document.getElementById('stockIndex').innerText =
-                    data.stock_index ? '(' + data.stock_index + '/' + data.total_stocks + ')' : '';
+                    data.total_stocks ? '(' + (data.completed || 0) + '/' + data.total_stocks + ' | ' + data.workers + '线程)' : '';
                 document.getElementById('currentStep').innerText =
                     'Step ' + data.current_step + '/3: ' + data.step_name;
 
@@ -1380,6 +1535,10 @@ function clearAllPolling() {
         console.log('[DEBUG] 清理数据源状态轮询');
     }
     // statusDisplayPolling 已废弃，不再需要清理
+    if (previewPolling) {
+        clearInterval(previewPolling);
+        previewPolling = null;
+    }
 }
 
 // 启动基础轮询（低频）
@@ -1442,6 +1601,10 @@ function startHighFrequencyPolling() {
     // 下载中每3秒更新今日任务状态
     if (taskStatusPolling) clearInterval(taskStatusPolling);
     taskStatusPolling = setInterval(loadTodayTaskStatus, 3000);
+
+    // 下载中每2秒检查15m预览数据
+    if (previewPolling) clearInterval(previewPolling);
+    previewPolling = setInterval(loadPreview, 2000);
 }
 
 // 重置失败的股票为待下载状态

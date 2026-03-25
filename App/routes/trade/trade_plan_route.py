@@ -5,6 +5,8 @@
 from flask import Blueprint, render_template, request, jsonify
 from App.exts import db
 from App.models.trade import TradePlan
+from App.models.data.basic_info import StockInfo
+from App.models.data.StockDaily import StockDaily
 from datetime import datetime, timedelta
 import logging
 
@@ -85,6 +87,8 @@ def create_trade_plan():
             take_profit_price=data.get('take_profit_price'),
             quantity=data['quantity'],
             position_ratio=data.get('position_ratio'),
+            plan_time=datetime.fromisoformat(data['plan_time']) if data.get('plan_time') else datetime.utcnow(),
+            expire_time=datetime.fromisoformat(data['expire_time']) if data.get('expire_time') else None,
             entry_reason=data.get('entry_reason'),
             strategy_name=data.get('strategy_name'),
             notes=data.get('notes'),
@@ -144,6 +148,12 @@ def update_trade_plan(plan_id):
         for field in editable_fields:
             if field in data:
                 setattr(plan, field, data[field])
+
+        # 处理时间字段
+        if data.get('plan_time'):
+            plan.plan_time = datetime.fromisoformat(data['plan_time'])
+        if data.get('expire_time'):
+            plan.expire_time = datetime.fromisoformat(data['expire_time'])
 
         # 重新计算风险指标
         plan.calculate_risk_metrics()
@@ -263,6 +273,46 @@ def delete_trade_plan(plan_id):
     except Exception as e:
         db.session.rollback()
         logger.error(f"删除失败: {e}")
+        return jsonify({'success': False, 'message': str(e)})
+
+
+@trade_plan_bp.route('/api/trade/stocks/search', methods=['GET'])
+def search_stocks():
+    """搜索已有市场数据的股票（支持代码或名称模糊搜索）"""
+    try:
+        keyword = request.args.get('keyword', '').strip()
+        if not keyword:
+            return jsonify({'success': True, 'stocks': []})
+
+        # 有日线数据的股票代码子查询
+        daily_codes = db.session.query(
+            StockDaily.stock_code.distinct()
+        ).subquery()
+
+        query = StockInfo.query.filter(
+            StockInfo.code.in_(db.session.query(daily_codes))
+        ).filter(
+            db.or_(
+                StockInfo.code.like(f'%{keyword}%'),
+                StockInfo.name.like(f'%{keyword}%')
+            )
+        )
+        stocks = query.order_by(StockInfo.code).limit(20).all()
+
+        return jsonify({
+            'success': True,
+            'stocks': [
+                {
+                    'stock_code': s.code,
+                    'stock_name': s.name,
+                    'market': s.MarketCode or '',
+                    'industry': ''
+                }
+                for s in stocks
+            ]
+        })
+    except Exception as e:
+        logger.error(f"搜索股票失败: {e}")
         return jsonify({'success': False, 'message': str(e)})
 
 
