@@ -230,7 +230,7 @@
 
 <style>
 .download-container {
-    max-width: 1400px;
+    max-width: 1800px;
     margin: 0 auto;
     padding: 1rem;
 }
@@ -309,7 +309,7 @@
 /* 主内容区：双栏布局 */
 .main-content {
     display: grid;
-    grid-template-columns: 320px 1fr;
+    grid-template-columns: 420px 1fr;
     gap: 1rem;
     align-items: start;
 }
@@ -996,17 +996,28 @@ function showTab(tabName) {
     document.querySelectorAll('.tab-content').forEach(tab => {
         tab.classList.remove('active');
     });
-    
+
     // 移除所有按钮的active状态
     document.querySelectorAll('.tab-button').forEach(btn => {
         btn.classList.remove('active');
     });
-    
+
     // 显示选中的标签页
     document.getElementById(tabName + 'Tab').classList.add('active');
-    
+
     // 激活对应的按钮
     event.target.classList.add('active');
+
+    // 切换标签页时刷新对应数据
+    if (tabName === 'failed') {
+        loadFailedStocks(currentFailedPage);
+    } else if (tabName === 'success') {
+        loadSuccessStocks(currentSuccessPage);
+    } else if (tabName === 'pending') {
+        loadPendingStocks(currentPendingPage);
+    } else if (tabName === 'preview') {
+        loadPreview();
+    }
 }
 
 // 加载成功下载的股票列表
@@ -1404,6 +1415,21 @@ function updateStatus() {
                     polling = null;
                     console.log('[DEBUG] polling定时器已清理');
                 }
+                if (detailsPolling) {
+                    clearInterval(detailsPolling);
+                    detailsPolling = null;
+                    console.log('[DEBUG] detailsPolling定时器已清理');
+                }
+                if (previewPolling) {
+                    clearInterval(previewPolling);
+                    previewPolling = null;
+                    console.log('[DEBUG] previewPolling定时器已清理');
+                }
+                // 下载完成后刷新完整列表数据并恢复基础轮询
+                loadFailedStocks(1);
+                loadSuccessStocks(1);
+                loadPendingStocks(1);
+                startBasicPolling();
             }
         })
         .catch(error => {
