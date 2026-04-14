@@ -207,7 +207,7 @@ class DataDailyRenew:
         download 1m code_data ;
         every day running method;
         """
-        # todo 判断公共假期，周六补充下载数据
+        # 交易日历判断已在 download_data_route.get_latest_trading_date() 中实现
         today = datetime.date.today()
         current = pd.Timestamp(today)  # 2024-01-09 00:00:00
 

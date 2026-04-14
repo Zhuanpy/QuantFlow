@@ -18,6 +18,10 @@ from App.codes.RnnDataFile.save_download import save_1m_to_csv, complete_downloa
 # 创建蓝图
 download_data_bp = Blueprint('download_data_bp', __name__)
 
+# 交易日历缓存
+_trading_dates_cache = None
+_trading_dates_cache_date = None
+
 # 下载状态和进度的存储
 download_status = "未开始"
 download_progress = 0
@@ -49,6 +53,73 @@ last_completed_preview = {
     'total_15m': 0,
     'updated_at': '',
 }
+
+
+def get_trading_dates():
+    """
+    获取A股交易日历，优先使用akshare，失败则回退到周末判断。
+    结果按天缓存，避免重复请求。
+
+    Returns:
+        set[date] or None: 交易日期集合。None表示无法获取（回退到周末判断）。
+    """
+    global _trading_dates_cache, _trading_dates_cache_date
+    today = date.today()
+
+    if _trading_dates_cache is not None and _trading_dates_cache_date == today:
+        return _trading_dates_cache
+
+    try:
+        import akshare as ak
+        df = ak.tool_trade_date_hist_sina()
+        # 列名可能是 'trade_date'
+        col = df.columns[0]
+        dates = set(pd.to_datetime(df[col]).dt.date)
+        _trading_dates_cache = dates
+        _trading_dates_cache_date = today
+        logging.info(f"成功获取交易日历，共 {len(dates)} 个交易日")
+        return dates
+    except Exception as e:
+        logging.warning(f"获取交易日历失败: {e}，将回退到周末判断")
+        _trading_dates_cache = None
+        _trading_dates_cache_date = today
+        return None
+
+
+def get_latest_trading_date(ref_date=None):
+    """
+    获取 ref_date 当天或之前最近的一个交易日。
+    如果当前时间在15:00之前，认为今天的数据尚未完整，返回上一个交易日。
+
+    Returns:
+        date: 最近的交易日
+        bool: 今天是否是交易日
+    """
+    if ref_date is None:
+        ref_date = date.today()
+
+    from datetime import time as dt_time
+    now = datetime.now()
+    # 15:00之前认为今天数据不完整，用前一天
+    if ref_date == date.today() and now.time() < dt_time(15, 0):
+        ref_date = ref_date - timedelta(days=1)
+
+    trading_dates = get_trading_dates()
+
+    if trading_dates is not None:
+        # 使用交易日历精确判断
+        d = ref_date
+        while d not in trading_dates and d > ref_date - timedelta(days=30):
+            d = d - timedelta(days=1)
+        is_today_trading = date.today() in trading_dates
+        return d, is_today_trading
+    else:
+        # 回退：跳过周末
+        d = ref_date
+        while d.weekday() >= 5:  # 5=Saturday, 6=Sunday
+            d = d - timedelta(days=1)
+        is_today_trading = date.today().weekday() < 5
+        return d, is_today_trading
 
 
 def get_stock_code_by_id(stock_code_id):
@@ -114,21 +185,40 @@ def download_file():
             'updated_at': datetime.utcnow()
         })
 
+        # 获取最近交易日，判断是否需要下载
+        latest_trading_date, is_today_trading = get_latest_trading_date()
+        logging.info(f"最近交易日: {latest_trading_date}, 今天是否交易日: {is_today_trading}")
+
         # 检查是否需要重置所有success记录
-        # 如果record_date和今天不一样，说明数据不是最新的，需要重新下载
-        # 或者用户勾选了"强制重新下载"
         latest_record = dlr.query.filter(
             dlr.record_date != date(2050, 1, 1)  # 排除被忽略的股票
         ).order_by(dlr.record_date.desc()).first()
 
         success_reset_count = 0
-        need_reset = download_force or (latest_record and latest_record.record_date != today)
+
+        if not download_force and latest_record:
+            # 如果上次已下载的数据已经覆盖到最近交易日，无需重新下载
+            if latest_record.end_date >= latest_trading_date:
+                logging.info(
+                    f"数据已是最新：end_date={latest_record.end_date} >= "
+                    f"最近交易日={latest_trading_date}，无需重新下载"
+                )
+                # 不重置success记录，只处理之前失败的
+                need_reset = False
+            else:
+                logging.info(
+                    f"检测到新交易日数据：end_date={latest_record.end_date} < "
+                    f"最近交易日={latest_trading_date}，需要重新下载"
+                )
+                need_reset = True
+        else:
+            need_reset = download_force
 
         if need_reset:
             if download_force:
                 logging.info("用户选择强制重新下载，重置所有success记录")
             else:
-                logging.info(f"检测到最新记录日期 {latest_record.record_date} 与今天 {today} 不同，重置所有success记录")
+                logging.info(f"重置success记录以获取最新数据（最近交易日: {latest_trading_date}）")
 
             # 将所有非忽略的success记录重置为pending
             success_reset_count = dlr.query.filter(
@@ -156,9 +246,13 @@ def download_file():
         ).count()
         
         if total_count == 0:
-            logging.info("没有需要下载的数据。")  # 若无数据，记录日志
+            if not need_reset:
+                msg = f"数据已是最新（截至交易日 {latest_trading_date}），无需下载"
+            else:
+                msg = "没有需要下载的数据"
+            logging.info(msg)
             with download_lock:
-                download_status = "无数据下载"  # 更新状态为无数据
+                download_status = msg
             return
 
         logging.info(f"开始下载任务，总共需要下载 {total_count} 个股票")
@@ -229,34 +323,67 @@ def download_file():
 
                 logging.info(f"正在下载{code_type_name} {stock_code} 的数据...")
 
-                # ===== STEP 1/3: 下载日K数据 =====
+                # ===== STEP 1/3: 下载日K数据（pytdx优先，AKShare备用，股票+板块通用） =====
                 with download_lock:
                     download_status = f"进行中 - {stock_code} Step1/3 日K"
 
-                if not is_board:
+                try:
+                    from App.models.data.StockDaily import StockDaily, save_daily_stock_data_to_sql
+                    from App.models.data.DailyTaskStatus import DailyTaskStatus
+
+                    # 计算需要补充的天数
+                    daily_days = download_max_days + 30
                     try:
-                        from App.codes.downloads.DlAkshare import AkshareDownloader
-                        from App.models.data.StockDaily import StockDaily, save_daily_stock_data_to_sql
-                        from App.models.data.DailyTaskStatus import DailyTaskStatus
+                        latest_daily = db.session.query(db.func.max(StockDaily.date)).filter(
+                            StockDaily.stock_code == stock_code
+                        ).scalar()
+                        if latest_daily:
+                            gap_days = (current - latest_daily).days
+                            if gap_days > daily_days:
+                                daily_days = min(gap_days + 10, 365)
+                                logging.info(f"[STEP1] {stock_code} 日K数据落后 {gap_days} 天，扩大下载到 {daily_days} 天")
+                    except Exception:
+                        pass
 
-                        ak_downloader = AkshareDownloader()
-                        if ak_downloader.akshare_available:
-                            daily_df, daily_end = ak_downloader.get_daily_data(stock_code, days=download_max_days + 30)
+                    daily_df = pd.DataFrame()
 
-                            if not daily_df.empty:
-                                save_daily_stock_data_to_sql(stock_code, daily_df)
-                                daily_df['date'] = pd.to_datetime(daily_df['date'])
-                                for d in daily_df['date'].dt.date.unique():
-                                    DailyTaskStatus.mark_task(stock_code, d, 'is_daily_processed')
-                                logging.info(f"[STEP1] {stock_code} 日K数据下载成功，{len(daily_df)} 条")
-                            else:
-                                logging.warning(f"[STEP1] {stock_code} 日K数据为空")
-                        else:
-                            logging.warning(f"[STEP1] AKShare不可用，跳过日K下载")
+                    # 第一优先：pytdx（快速、稳定、支持板块、凌晨可用）
+                    try:
+                        from App.codes.downloads.DlPytdx import download_daily_pytdx
+                        daily_df, daily_end = download_daily_pytdx(stock_code, days=daily_days)
+                        if not daily_df.empty:
+                            logging.info(f"[STEP1] {stock_code} pytdx日K成功，{len(daily_df)} 条")
+                    except ImportError:
+                        logging.debug("[STEP1] pytdx未安装")
                     except Exception as e:
-                        logging.error(f"[STEP1] {stock_code} 日K数据下载失败: {e}")
-                else:
-                    logging.info(f"[STEP1] 板块 {stock_code} 跳过日K数据下载")
+                        logging.warning(f"[STEP1] {stock_code} pytdx日K失败: {e}")
+
+                    # 第二优先：AKShare（仅股票，数据更全）
+                    if daily_df.empty and not is_board:
+                        try:
+                            from App.codes.downloads.DlAkshare import AkshareDownloader
+                            ak_downloader = AkshareDownloader()
+                            if ak_downloader.akshare_available:
+                                daily_df, daily_end = ak_downloader.get_daily_data(stock_code, days=daily_days)
+                                if not daily_df.empty:
+                                    logging.info(f"[STEP1] {stock_code} AKShare日K成功，{len(daily_df)} 条")
+                            else:
+                                logging.warning(f"[STEP1] AKShare不可用")
+                        except Exception as e:
+                            logging.warning(f"[STEP1] {stock_code} AKShare日K失败: {e}")
+
+                    # 保存日K数据
+                    if not daily_df.empty:
+                        save_daily_stock_data_to_sql(stock_code, daily_df)
+                        daily_df['date'] = pd.to_datetime(daily_df['date'])
+                        for d in daily_df['date'].dt.date.unique():
+                            DailyTaskStatus.mark_task(stock_code, d, 'is_daily_processed')
+                        logging.info(f"[STEP1] {stock_code} 日K数据保存成功，{len(daily_df)} 条")
+                    else:
+                        logging.warning(f"[STEP1] {stock_code} 日K数据为空（所有数据源均失败）")
+
+                except Exception as e:
+                    logging.error(f"[STEP1] {stock_code} 日K数据下载失败: {e}")
 
                 # ===== STEP 2/3: 下载1分钟数据 =====
                 with download_lock:
@@ -593,6 +720,54 @@ def download_file():
             pipeline_current_stock = ""
 
         logging.info(f"下载任务完成（{DOWNLOAD_WORKERS}线程并发）")
+
+
+@download_data_bp.route('/check_trading_day', methods=['GET'])
+def check_trading_day():
+    """检查今天是否是交易日，以及数据是否已是最新"""
+    try:
+        latest_trading_date, is_today_trading = get_latest_trading_date()
+        now = datetime.now()
+        from datetime import time as dt_time
+        market_closed = now.time() >= dt_time(15, 0)
+
+        # 查询最新的下载记录
+        latest_record = dlr.query.filter(
+            dlr.record_date != date(2050, 1, 1)
+        ).order_by(dlr.end_date.desc()).first()
+
+        data_up_to_date = False
+        last_end_date = None
+        if latest_record:
+            last_end_date = latest_record.end_date.isoformat() if latest_record.end_date else None
+            if latest_record.end_date and latest_record.end_date >= latest_trading_date:
+                data_up_to_date = True
+
+        return jsonify({
+            'success': True,
+            'is_today_trading': is_today_trading,
+            'market_closed': market_closed if is_today_trading else None,
+            'latest_trading_date': latest_trading_date.isoformat(),
+            'last_end_date': last_end_date,
+            'data_up_to_date': data_up_to_date,
+            'message': _get_trading_day_message(is_today_trading, market_closed, data_up_to_date, latest_trading_date)
+        })
+    except Exception as e:
+        logging.error(f"检查交易日失败: {e}")
+        return jsonify({'success': False, 'message': f'检查失败: {str(e)}'})
+
+
+def _get_trading_day_message(is_today_trading, market_closed, data_up_to_date, latest_trading_date):
+    """生成交易日状态提示信息"""
+    today = date.today()
+    if data_up_to_date:
+        return f"数据已是最新（截至交易日 {latest_trading_date}）"
+    if not is_today_trading:
+        weekday_names = ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
+        return f"今天（{weekday_names[today.weekday()]}）非交易日，最近交易日: {latest_trading_date}"
+    if is_today_trading and not market_closed:
+        return f"今天是交易日，盘中尚未收盘（15:00后可下载完整数据）"
+    return f"今天是交易日，已收盘，可以下载最新数据"
 
 
 @download_data_bp.route('/start_download', methods=['GET', 'POST'])

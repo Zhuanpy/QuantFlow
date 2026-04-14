@@ -465,6 +465,101 @@ def download_board_1m_pytdx(board_code, days=5):
         return downloader.get_1m_data(board_code, days)
 
 
+def download_daily_pytdx(stock_code, days=365):
+    """
+    使用 pytdx 下载日线数据（股票和板块通用）
+
+    Parameters:
+    stock_code: 股票代码（如 '000001'）或板块代码（如 'BK0420'）
+    days: 获取天数，默认365天
+
+    Returns:
+    tuple: (DataFrame, end_date)
+    """
+    api = TdxHq_API()
+    connected = False
+
+    for server_ip, server_port in AVAILABLE_SERVERS:
+        try:
+            if api.connect(server_ip, server_port, time_out=5):
+                connected = True
+                logging.info(f"[pytdx日线] 连接服务器: {server_ip}:{server_port}")
+                break
+        except Exception:
+            continue
+
+    if not connected:
+        logging.error("[pytdx日线] 无法连接到任何服务器")
+        return pd.DataFrame(), None
+
+    try:
+        is_board = stock_code.startswith('BK')
+
+        if is_board:
+            tdx_code = '88' + stock_code[2:]
+            market = 1
+        else:
+            market = get_market(stock_code)
+            tdx_code = stock_code
+
+        # 分批获取（每次最多800根）
+        all_data = []
+        batch_size = 800
+        total_needed = min(days, 3000)
+        batches = (total_needed + batch_size - 1) // batch_size
+
+        for i in range(batches):
+            start_pos = i * batch_size
+            count = min(batch_size, total_needed - start_pos)
+
+            if is_board:
+                data = api.get_index_bars(9, market, tdx_code, start_pos, count)
+            else:
+                data = api.get_security_bars(9, market, tdx_code, start_pos, count)
+
+            if data:
+                all_data.extend(data)
+            else:
+                break
+
+            if i < batches - 1:
+                import time
+                time.sleep(0.05)
+
+        api.disconnect()
+
+        if not all_data:
+            logging.warning(f"[pytdx日线] {stock_code} 返回空数据")
+            return pd.DataFrame(), None
+
+        df = pd.DataFrame(all_data)
+        df = df.rename(columns={
+            'datetime': 'date', 'vol': 'volume', 'amount': 'money'
+        })
+        df['date'] = pd.to_datetime(df['date'])
+
+        if 'money' not in df.columns:
+            df['money'] = 0
+
+        required = ['date', 'open', 'close', 'high', 'low', 'volume', 'money']
+        for col in required:
+            if col not in df.columns:
+                df[col] = 0
+        df = df[required]
+
+        df = df.drop_duplicates(subset=['date']).sort_values('date').reset_index(drop=True)
+
+        end_date = df['date'].max().date() if not df.empty else None
+        logging.info(f"[pytdx日线] {stock_code} 成功获取 {len(df)} 条日线数据")
+
+        return df, end_date
+
+    except Exception as e:
+        logging.error(f"[pytdx日线] {stock_code} 失败: {e}")
+        api.disconnect()
+        return pd.DataFrame(), None
+
+
 # 测试代码
 if __name__ == "__main__":
     print("=" * 80)

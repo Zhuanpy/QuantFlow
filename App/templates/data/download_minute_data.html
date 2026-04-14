@@ -5,6 +5,7 @@
     <div class="download-header-bar">
         <div class="header-left">
             <h2>盘后数据下载(日K + 1分钟 + 15分钟)</h2>
+            <span id="tradingDayBadge" class="trading-day-badge" title="点击刷新" onclick="checkTradingDay()" style="cursor:pointer;"></span>
             <div class="days-selector">
                 <label for="downloadDays">下载天数：</label>
                 <select id="downloadDays" class="days-select">
@@ -968,8 +969,55 @@
 }
 .preview-badge-up { background: #fef2f2; color: #dc2626; }
 .preview-badge-dn { background: #f0fdf4; color: #16a34a; }
+
+/* 交易日状态徽章 */
+.trading-day-badge {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 4px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    margin-left: 8px;
+    vertical-align: middle;
+    transition: opacity 0.2s;
+}
+.trading-day-badge:hover { opacity: 0.8; }
+.trading-day-badge.trading { background: #dcfce7; color: #15803d; }
+.trading-day-badge.non-trading { background: #fef3c7; color: #92400e; }
+.trading-day-badge.up-to-date { background: #dbeafe; color: #1d4ed8; }
+.trading-day-badge.loading { background: #f3f4f6; color: #6b7280; }
 </style>
 <script>
+// 交易日检查
+function checkTradingDay() {
+    const badge = document.getElementById('tradingDayBadge');
+    badge.textContent = '检查中...';
+    badge.className = 'trading-day-badge loading';
+    fetch('{{ url_for("download_data_bp.check_trading_day") }}')
+        .then(res => res.json())
+        .then(data => {
+            if (!data.success) {
+                badge.textContent = '检查失败';
+                badge.className = 'trading-day-badge non-trading';
+                return;
+            }
+            badge.textContent = data.message;
+            if (data.data_up_to_date) {
+                badge.className = 'trading-day-badge up-to-date';
+            } else if (data.is_today_trading) {
+                badge.className = 'trading-day-badge trading';
+            } else {
+                badge.className = 'trading-day-badge non-trading';
+            }
+        })
+        .catch(() => {
+            badge.textContent = '检查失败';
+            badge.className = 'trading-day-badge non-trading';
+        });
+}
+// 页面加载时自动检查
+checkTradingDay();
+
 let polling = null;
 let statsPolling = null;
 let detailsPolling = null;
@@ -1405,8 +1453,10 @@ function updateStatus() {
             // 同时更新下载状态显示（避免重复调用API）
             updateDownloadStatusDisplayFromCache();
 
-            if (data.status === '已完成' || data.status === '已停止' || data.status === '无数据下载') {
+            if (data.status === '已完成' || data.status === '已停止' || data.status === '无数据下载' || data.status.includes('数据已是最新') || data.status.includes('没有需要下载')) {
                 console.log('[DEBUG] 下载已完成/停止，清理polling定时器');
+                // 下载结束后刷新交易日状态
+                checkTradingDay();
                 document.getElementById('startBtn').disabled = false;
                 document.getElementById('stopBtn').disabled = true;
                 pipelineDiv.style.display = 'none';
@@ -1521,6 +1571,9 @@ function updateDownloadStatusDisplayFromCache() {
     } else if (status === '已停止') {
         statusElement.textContent = '已停止';
         statusElement.style.color = '#ef4444';
+    } else if (status.includes('数据已是最新')) {
+        statusElement.textContent = status;
+        statusElement.style.color = '#1d4ed8';
     } else {
         statusElement.textContent = status;
         statusElement.style.color = '#6b7280';

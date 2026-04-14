@@ -25,41 +25,53 @@ def daily_viewer_page():
 def get_overview():
     """获取日线数据总览统计"""
     try:
-        # 有多少只股票
-        stock_count = db.session.query(
-            db.func.count(db.distinct(StockDaily.stock_code))
-        ).scalar() or 0
+        from sqlalchemy import text as sa_text
 
-        # 总记录数
-        total_records = db.session.query(db.func.count(StockDaily.stock_code)).scalar() or 0
+        # 一次查询获取全部统计
+        row = db.session.execute(sa_text('''
+            SELECT
+                COUNT(DISTINCT stock_code) as stock_count,
+                SUM(CASE WHEN stock_code LIKE 'BK%' THEN 0 ELSE 1 END) as stock_records,
+                COUNT(DISTINCT CASE WHEN stock_code LIKE 'BK%' THEN stock_code END) as board_count,
+                COUNT(DISTINCT CASE WHEN stock_code NOT LIKE 'BK%' THEN stock_code END) as ind_stock_count,
+                MIN(date) as min_date,
+                MAX(date) as max_date
+            FROM data_stock_daily
+        ''')).fetchone()
 
-        # 日期范围
-        date_range = db.session.query(
-            db.func.min(StockDaily.date),
-            db.func.max(StockDaily.date)
-        ).first()
-        min_date = date_range[0].strftime('%Y-%m-%d') if date_range[0] else '-'
-        max_date = date_range[1].strftime('%Y-%m-%d') if date_range[1] else '-'
+        stock_count = row[0] or 0
+        board_count = row[2] or 0
+        ind_stock_count = row[3] or 0
+        min_date = row[4].strftime('%Y-%m-%d') if row[4] else '-'
+        max_date = row[5].strftime('%Y-%m-%d') if row[5] else '-'
 
-        # 最近更新的股票数（最近3个交易日有数据的）
-        recent_date = db.session.query(db.func.max(StockDaily.date)).scalar()
+        # 最新日期及该日有数据的股票数
+        recent_date = row[5]
         recent_count = 0
         if recent_date:
-            recent_count = db.session.query(
-                db.func.count(db.distinct(StockDaily.stock_code))
-            ).filter(StockDaily.date == recent_date).scalar() or 0
+            recent_count = db.session.execute(sa_text(
+                "SELECT COUNT(DISTINCT stock_code) FROM data_stock_daily WHERE date = :d"
+            ), {'d': str(recent_date)}).scalar() or 0
 
-        # 平均每只股票的记录数
-        avg_records = round(total_records / stock_count) if stock_count > 0 else 0
+        # 数据过期的股票数（最新日期 < 全局最新日期）
+        outdated_count = 0
+        if recent_date:
+            outdated_count = db.session.execute(sa_text('''
+                SELECT COUNT(*) FROM (
+                    SELECT stock_code, MAX(date) as mx
+                    FROM data_stock_daily GROUP BY stock_code HAVING mx < :d
+                ) t
+            '''), {'d': str(recent_date)}).scalar() or 0
 
         return jsonify({
             'stock_count': stock_count,
-            'total_records': total_records,
+            'board_count': board_count,
+            'ind_stock_count': ind_stock_count,
             'min_date': min_date,
             'max_date': max_date,
             'recent_count': recent_count,
             'recent_date': recent_date.strftime('%Y-%m-%d') if recent_date else '-',
-            'avg_records': avg_records,
+            'outdated_count': outdated_count,
         }), 200
 
     except Exception as e:
@@ -272,6 +284,35 @@ def get_stock_daily_data(stock_code):
 
     except Exception as e:
         logger.error(f"获取股票 {stock_code} 日线数据失败: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@daily_viewer_bp.route('/api/daily_viewer/stock/<stock_code>/chart', methods=['GET'])
+def get_stock_chart_data(stock_code):
+    """获取日线K线图数据（最近N天，不分页）"""
+    try:
+        days = request.args.get('days', 120, type=int)
+        days = max(20, min(days, 1000))
+
+        rows = db.session.query(StockDaily).filter(
+            StockDaily.stock_code == stock_code
+        ).order_by(StockDaily.date.desc()).limit(days).all()
+
+        rows.reverse()  # 按日期正序
+
+        data = [{
+            'date': r.date.strftime('%Y-%m-%d'),
+            'open': round(r.open, 2) if r.open else 0,
+            'high': round(r.high, 2) if r.high else 0,
+            'low': round(r.low, 2) if r.low else 0,
+            'close': round(r.close, 2) if r.close else 0,
+            'volume': r.volume or 0,
+        } for r in rows]
+
+        return jsonify({'data': data, 'days': days}), 200
+
+    except Exception as e:
+        logger.error(f"获取K线图数据失败: {e}")
         return jsonify({'error': str(e)}), 500
 
 

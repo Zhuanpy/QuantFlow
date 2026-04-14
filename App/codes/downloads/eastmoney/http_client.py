@@ -11,6 +11,7 @@ HTTP 客户端模块
 import logging
 import time
 import random
+import threading
 from typing import Optional
 
 import requests
@@ -19,6 +20,12 @@ from urllib3.util.retry import Retry
 import urllib3
 
 logger = logging.getLogger(__name__)
+
+# Selenium 全局锁：同一时间只允许一个线程使用 Selenium，避免同时启动多个 Chrome
+_selenium_lock = threading.Lock()
+# API 连通性缓存：HTTP 连接失败后短时间内跳过 Selenium 降级
+_api_fail_time = None
+_API_FAIL_COOLDOWN = 60  # 秒：API 失败后 60 秒内不再尝试 Selenium
 
 
 class HeaderRotator:
@@ -305,6 +312,8 @@ class EastMoneyHttpClient:
         Returns:
             str: 页面源代码
         """
+        global _api_fail_time
+
         if use_selenium_fallback is None:
             from config import Config
             use_selenium_fallback = Config.DOWNLOAD_CONFIG.get('use_selenium_fallback', True)
@@ -320,6 +329,7 @@ class EastMoneyHttpClient:
             if content and len(content) > 100:
                 logger.info(f"使用请求头 #{rotator.current_index + 1} 成功获取数据")
                 rotator.rotate()
+                _api_fail_time = None  # 清除失败标记
                 return content
             else:
                 logger.warning(f"请求头 #{rotator.current_index + 1} 返回空内容")
@@ -330,19 +340,39 @@ class EastMoneyHttpClient:
         logger.warning("HTTP 请求失败")
         rotator.rotate()
 
+        # 记录 API 失败时间
+        if _api_fail_time is None:
+            _api_fail_time = time.time()
+
+        # 判断是否应该尝试 Selenium 降级
         if use_selenium_fallback:
-            logger.warning("降级使用 Selenium 获取数据")
+            # 如果 API 在冷却期内连续失败，跳过 Selenium（避免反复启动 Chrome）
+            if _api_fail_time and (time.time() - _api_fail_time) < _API_FAIL_COOLDOWN:
+                elapsed = int(time.time() - _api_fail_time)
+                if elapsed > 5:  # 首次失败仍尝试一次 Selenium
+                    logger.warning(f"API 连续失败中（{elapsed}秒），跳过 Selenium 降级以避免资源浪费")
+                    return ""
+
+            # 使用锁确保同一时间只有一个 Selenium 实例
+            acquired = _selenium_lock.acquire(timeout=30)
+            if not acquired:
+                logger.warning("其他线程正在使用 Selenium，跳过降级")
+                return ""
 
             try:
+                logger.warning("降级使用 Selenium 获取数据")
                 content = cls.get_source_with_selenium(url)
 
                 if content and len(content) > 100:
                     logger.info("Selenium 成功获取数据")
+                    _api_fail_time = None  # Selenium 成功，清除失败标记
                     return content
                 else:
                     logger.error("Selenium 获取失败或数据为空")
             except Exception as e:
                 logger.error(f"Selenium 执行异常: {e}")
+            finally:
+                _selenium_lock.release()
         else:
             logger.warning("Selenium 降级已禁用")
 

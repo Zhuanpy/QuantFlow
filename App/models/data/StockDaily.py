@@ -74,49 +74,52 @@ def save_daily_stock_data_to_sql(stock_code: str, data: pd.DataFrame) -> bool:
         bool: 保存是否成功
     """
     try:
-        daily_stock_records = []
+        import pandas as pd
 
-        for _, row in data.iterrows():
-            record = StockDaily(
-                stock_code=stock_code,
-                date=row['date'],
-                open=row['open'],
-                close=row['close'],
-                high=row['high'],
-                low=row['low'],
-                volume=row['volume'],
-                money=row['money'],
-                fund_holdings_count=row.get('fund_holdings_count', 0),
-                fund_holdings_ratio=row.get('fund_holdings_ratio', 0),
-                fund_holdings_avg_ratio=row.get('fund_holdings_avg_ratio', 0),
-                fund_holdings_max_ratio=row.get('fund_holdings_max_ratio', 0),
-            )
-            daily_stock_records.append(record)
+        # 确保 date 列是纯日期（去掉时间部分），避免 pytdx 的 15:00 时间戳导致主键冲突
+        data = data.copy()
+        data['date'] = pd.to_datetime(data['date']).dt.date
 
         inserted_count = 0
         updated_count = 0
 
-        for record in daily_stock_records:
+        for _, row in data.iterrows():
+            row_date = row['date']
             try:
                 existing_record = StockDaily.query.filter_by(
-                    stock_code=record.stock_code,
-                    date=record.date
+                    stock_code=stock_code,
+                    date=row_date
                 ).first()
 
                 if existing_record:
-                    existing_record.open = record.open
-                    existing_record.close = record.close
-                    existing_record.high = record.high
-                    existing_record.low = record.low
-                    existing_record.volume = record.volume
-                    existing_record.money = record.money
+                    existing_record.open = row['open']
+                    existing_record.close = row['close']
+                    existing_record.high = row['high']
+                    existing_record.low = row['low']
+                    existing_record.volume = row['volume']
+                    existing_record.money = row['money']
                     updated_count += 1
                 else:
+                    record = StockDaily(
+                        stock_code=stock_code,
+                        date=row_date,
+                        open=row['open'],
+                        close=row['close'],
+                        high=row['high'],
+                        low=row['low'],
+                        volume=row['volume'],
+                        money=row['money'],
+                        fund_holdings_count=row.get('fund_holdings_count', 0),
+                        fund_holdings_ratio=row.get('fund_holdings_ratio', 0),
+                        fund_holdings_avg_ratio=row.get('fund_holdings_avg_ratio', 0),
+                        fund_holdings_max_ratio=row.get('fund_holdings_max_ratio', 0),
+                    )
                     db.session.add(record)
                     inserted_count += 1
 
             except Exception as e:
-                logger.warning(f"处理记录失败: {record.stock_code} - {record.date}, 错误: {e}")
+                db.session.rollback()
+                logger.warning(f"处理记录失败: {stock_code} - {row_date}, 错误: {e}")
                 continue
 
         db.session.commit()

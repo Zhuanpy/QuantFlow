@@ -16,7 +16,17 @@ data_viewer_bp = Blueprint('data_viewer', __name__)
 
 
 def get_data_base_path():
-    """获取数据基础路径"""
+    """获取数据基础路径（新路径 data/quarters/）"""
+    try:
+        from config import Config
+        project_root = Path(Config.get_project_root())
+    except:
+        project_root = Path(__file__).parent.parent.parent.parent
+    return project_root / 'data' / 'quarters'
+
+
+def get_data_base_path_legacy():
+    """获取旧版数据基础路径（data/data/quarters/）"""
     try:
         from config import Config
         project_root = Path(Config.get_project_root())
@@ -41,50 +51,59 @@ def get_1m_stock_data_from_csv(stock_code: str, year: int = None, start_date: st
     if year is None:
         year = datetime.now().year
 
-    data_base = get_data_base_path()
     all_data = []
+    seen_quarters = set()  # 避免同一季度重复读取
 
-    # 查找该年份所有季度的数据
-    # 支持: quarters/{year}/{quarter}/ (parquet优先，兼容CSV)
+    # 搜索新路径 (data/quarters/) 和旧路径 (data/data/quarters/)
+    for data_base in [get_data_base_path(), get_data_base_path_legacy()]:
+        # 新格式: quarters/{year}/{quarter}/
+        year_dir = data_base / str(year)
+        if year_dir.exists():
+            for quarter_dir in sorted(year_dir.iterdir()):
+                if quarter_dir.is_dir() and quarter_dir.name.startswith('Q'):
+                    q_key = f"{year}-{quarter_dir.name}"
+                    if q_key in seen_quarters:
+                        continue
+                    parquet_file = quarter_dir / f"{stock_code}.parquet"
+                    csv_file = quarter_dir / f"{stock_code}.csv"
+                    if parquet_file.exists():
+                        try:
+                            df = pd.read_parquet(parquet_file)
+                            all_data.append(df)
+                            seen_quarters.add(q_key)
+                        except Exception as e:
+                            logging.warning(f"读取文件失败 {parquet_file}: {e}")
+                    elif csv_file.exists():
+                        try:
+                            df = pd.read_csv(csv_file)
+                            all_data.append(df)
+                            seen_quarters.add(q_key)
+                        except Exception as e:
+                            logging.warning(f"读取文件失败 {csv_file}: {e}")
 
-    year_dir = data_base / str(year)
-    if year_dir.exists():
-        for quarter_dir in sorted(year_dir.iterdir()):
-            if quarter_dir.is_dir() and quarter_dir.name.startswith('Q'):
-                # 优先读取parquet
-                parquet_file = quarter_dir / f"{stock_code}.parquet"
-                csv_file = quarter_dir / f"{stock_code}.csv"
+        # 旧格式: quarters/2024Q1/
+        for quarter in ['Q1', 'Q2', 'Q3', 'Q4']:
+            q_key = f"{year}-{quarter}"
+            if q_key in seen_quarters:
+                continue
+            old_format_dir = data_base / f"{year}{quarter}"
+            if old_format_dir.exists():
+                parquet_file = old_format_dir / f"{stock_code}.parquet"
+                csv_file = old_format_dir / f"{stock_code}.csv"
                 if parquet_file.exists():
                     try:
                         df = pd.read_parquet(parquet_file)
                         all_data.append(df)
+                        seen_quarters.add(q_key)
                     except Exception as e:
                         logging.warning(f"读取文件失败 {parquet_file}: {e}")
                 elif csv_file.exists():
                     try:
                         df = pd.read_csv(csv_file)
                         all_data.append(df)
+                        seen_quarters.add(q_key)
                     except Exception as e:
                         logging.warning(f"读取文件失败 {csv_file}: {e}")
-
-    # 兼容旧格式: quarters/2024Q1/
-    for quarter in ['Q1', 'Q2', 'Q3', 'Q4']:
-        old_format_dir = data_base / f"{year}{quarter}"
-        if old_format_dir.exists():
-            parquet_file = old_format_dir / f"{stock_code}.parquet"
-            csv_file = old_format_dir / f"{stock_code}.csv"
-            if parquet_file.exists():
-                try:
-                    df = pd.read_parquet(parquet_file)
-                    all_data.append(df)
-                except Exception as e:
-                    logging.warning(f"读取文件失败 {parquet_file}: {e}")
-            elif csv_file.exists():
-                try:
-                    df = pd.read_csv(csv_file)
-                    all_data.append(df)
-                except Exception as e:
-                    logging.warning(f"读取文件失败 {csv_file}: {e}")
 
     if not all_data:
         return pd.DataFrame()
@@ -111,31 +130,31 @@ def get_1m_stock_data_from_csv(stock_code: str, year: int = None, start_date: st
 
 def get_available_years_for_stock(stock_code: str) -> list:
     """获取股票可用的年份列表"""
-    data_base = get_data_base_path()
     years = set()
 
-    if not data_base.exists():
-        return []
+    for data_base in [get_data_base_path(), get_data_base_path_legacy()]:
+        if not data_base.exists():
+            continue
 
-    for item in data_base.iterdir():
-        if item.is_dir():
-            # 新格式目录: 2025, 2026 等
-            if item.name.isdigit():
-                year = int(item.name)
-                for quarter_dir in item.iterdir():
-                    if quarter_dir.is_dir():
-                        parquet_file = quarter_dir / f"{stock_code}.parquet"
-                        csv_file = quarter_dir / f"{stock_code}.csv"
-                        if parquet_file.exists() or csv_file.exists():
-                            years.add(year)
-                            break
-            # 旧格式目录: 2024Q1 等
-            elif len(item.name) == 6 and item.name[:4].isdigit() and item.name[4] == 'Q':
-                year = int(item.name[:4])
-                parquet_file = item / f"{stock_code}.parquet"
-                csv_file = item / f"{stock_code}.csv"
-                if parquet_file.exists() or csv_file.exists():
-                    years.add(year)
+        for item in data_base.iterdir():
+            if item.is_dir():
+                # 新格式目录: 2025, 2026 等
+                if item.name.isdigit():
+                    year = int(item.name)
+                    for quarter_dir in item.iterdir():
+                        if quarter_dir.is_dir():
+                            parquet_file = quarter_dir / f"{stock_code}.parquet"
+                            csv_file = quarter_dir / f"{stock_code}.csv"
+                            if parquet_file.exists() or csv_file.exists():
+                                years.add(year)
+                                break
+                # 旧格式目录: 2024Q1 等
+                elif len(item.name) == 6 and item.name[:4].isdigit() and item.name[4] == 'Q':
+                    year = int(item.name[:4])
+                    parquet_file = item / f"{stock_code}.parquet"
+                    csv_file = item / f"{stock_code}.csv"
+                    if parquet_file.exists() or csv_file.exists():
+                        years.add(year)
 
     return sorted(years, reverse=True)
 
@@ -367,10 +386,11 @@ def get_available_years():
                 return jsonify({"years": years}), 200
 
         # 默认返回有数据的年份
-        data_base = get_data_base_path()
         years = set()
 
-        if data_base.exists():
+        for data_base in [get_data_base_path(), get_data_base_path_legacy()]:
+            if not data_base.exists():
+                continue
             for item in data_base.iterdir():
                 if item.is_dir():
                     if item.name.isdigit():
@@ -448,6 +468,77 @@ def get_data_quality():
         return jsonify({"error": str(e)}), 500
 
 
+@data_viewer_bp.route('/api/data_viewer/stock/<stock_code>/chart_data', methods=['GET'])
+def get_chart_data(stock_code):
+    """
+    获取K线图数据，支持单天和多天模式。
+
+    参数:
+        year: 年份
+        date: 结束日期（YYYY-MM-DD），默认最新交易日
+        days: 显示天数（1/3/5/10/20），默认5
+    """
+    try:
+        year = request.args.get('year', datetime.now().year, type=int)
+        target_date = request.args.get('date', None)
+        days = request.args.get('days', 5, type=int)
+        days = max(1, min(days, 60))
+
+        df = get_1m_stock_data_from_csv(stock_code, year)
+
+        if df.empty:
+            return jsonify({"data": [], "trading_dates": [], "current_date": None, "days": days}), 200
+
+        df['date'] = pd.to_datetime(df['date'])
+        trading_dates = sorted(df['date'].dt.date.unique())
+        trading_dates_str = [d.strftime('%Y-%m-%d') for d in trading_dates]
+
+        # 确定结束日期
+        if target_date:
+            end_date = pd.to_datetime(target_date).date()
+        else:
+            end_date = trading_dates[-1]
+
+        # 找到 end_date 在交易日列表中的位置，向前取 days 天
+        end_idx = len(trading_dates) - 1
+        for i, d in enumerate(trading_dates):
+            if d >= end_date:
+                end_idx = i
+                break
+        start_idx = max(0, end_idx - days + 1)
+        selected_dates = set(trading_dates[start_idx:end_idx + 1])
+
+        # 筛选数据
+        chart_df = df[df['date'].dt.date.isin(selected_dates)].copy()
+
+        data_list = []
+        for _, row in chart_df.iterrows():
+            data_list.append({
+                'date': row['date'].strftime('%Y-%m-%d %H:%M'),
+                'open': round(float(row['open']), 2) if pd.notna(row['open']) else 0,
+                'high': round(float(row['high']), 2) if pd.notna(row['high']) else 0,
+                'low': round(float(row['low']), 2) if pd.notna(row['low']) else 0,
+                'close': round(float(row['close']), 2) if pd.notna(row['close']) else 0,
+                'volume': int(row['volume']) if pd.notna(row['volume']) else 0,
+            })
+
+        return jsonify({
+            "data": data_list,
+            "trading_dates": trading_dates_str,
+            "current_date": end_date.strftime('%Y-%m-%d'),
+            "days": days,
+            "date_range": {
+                "start": trading_dates[start_idx].strftime('%Y-%m-%d'),
+                "end": trading_dates[end_idx].strftime('%Y-%m-%d'),
+                "count": len(selected_dates),
+            }
+        }), 200
+
+    except Exception as e:
+        logging.error(f"获取K线图数据失败: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 @data_viewer_bp.route('/api/data_viewer/open_folder', methods=['POST'])
 def open_data_folder():
     """打开数据文件夹"""
@@ -461,26 +552,22 @@ def open_data_folder():
         data_base = get_data_base_path()
 
         # 确定要打开的文件夹
+        folder_to_open = str(data_base)
         if stock_code and year:
-            # 尝试找到包含该股票数据的季度文件夹
-            # 新格式: quarters/2025/Q1/
-            year_dir = data_base / year
-            if year_dir.exists():
-                # 找到第一个包含该股票的季度
-                for quarter_dir in sorted(year_dir.iterdir(), reverse=True):
-                    if quarter_dir.is_dir():
-                        parquet_file = quarter_dir / f"{stock_code}.parquet"
-                        csv_file = quarter_dir / f"{stock_code}.csv"
-                        if parquet_file.exists() or csv_file.exists():
-                            folder_to_open = str(quarter_dir)
-                            break
-                else:
-                    folder_to_open = str(year_dir)
-            else:
-                # 旧格式: quarters/2024Q1/
-                folder_to_open = str(data_base)
-        else:
-            folder_to_open = str(data_base)
+            # 搜索新路径和旧路径
+            for base in [get_data_base_path(), get_data_base_path_legacy()]:
+                year_dir = base / year
+                if year_dir.exists():
+                    for quarter_dir in sorted(year_dir.iterdir(), reverse=True):
+                        if quarter_dir.is_dir():
+                            parquet_file = quarter_dir / f"{stock_code}.parquet"
+                            csv_file = quarter_dir / f"{stock_code}.csv"
+                            if parquet_file.exists() or csv_file.exists():
+                                folder_to_open = str(quarter_dir)
+                                break
+                    else:
+                        continue
+                    break
 
         # 确保文件夹存在
         if not os.path.exists(folder_to_open):

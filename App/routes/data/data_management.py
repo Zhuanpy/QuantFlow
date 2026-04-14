@@ -76,7 +76,29 @@ def record_stock_minute():
 
     pagination = Pagination(page, per_page, total)
 
-    return render_template('data/record_stock_minute.html', pagination=pagination, records=records, request=request)
+    # 全表统计（不受分页和搜索影响）
+    stats_query = text("""
+        SELECT
+            COUNT(*) as total,
+            SUM(CASE WHEN download_status = 'pending' THEN 1 ELSE 0 END) as pending,
+            SUM(CASE WHEN download_status = 'processing' THEN 1 ELSE 0 END) as processing,
+            SUM(CASE WHEN download_status = 'success' THEN 1 ELSE 0 END) as success,
+            SUM(CASE WHEN download_status = 'failed' THEN 1 ELSE 0 END) as failed,
+            ROUND(AVG(download_progress), 1) as avg_progress
+        FROM data_download_records
+        WHERE end_date != '2050-01-01' AND record_date != '2050-01-01'
+    """)
+    stats_result = db.session.execute(stats_query).fetchone()
+    stats = {
+        'total': stats_result[0] or 0,
+        'pending': stats_result[1] or 0,
+        'processing': stats_result[2] or 0,
+        'success': stats_result[3] or 0,
+        'failed': stats_result[4] or 0,
+        'avg_progress': stats_result[5] or 0,
+    }
+
+    return render_template('data/record_stock_minute.html', pagination=pagination, records=records, request=request, stats=stats)
 
 @data_bp.route('/record_stock_minute/add', methods=['POST'])
 def add_record_stock_minute():

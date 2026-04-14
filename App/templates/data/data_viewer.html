@@ -81,6 +81,24 @@
                 <div class="summary-placeholder">请选择一只股票查看数据</div>
             </div>
 
+            <!-- K线图 -->
+            <div class="chart-section" id="chartSection" style="display:none;">
+                <div class="chart-toolbar">
+                    <button class="btn-small" id="chartPrevDay" onclick="changeChartPage(-1)" title="向前翻页">&#9664;</button>
+                    <div class="chart-day-btns">
+                        <button class="btn-day" onclick="setChartDays(1)">1天</button>
+                        <button class="btn-day" onclick="setChartDays(3)">3天</button>
+                        <button class="btn-day active" onclick="setChartDays(5)">5天</button>
+                        <button class="btn-day" onclick="setChartDays(10)">10天</button>
+                        <button class="btn-day" onclick="setChartDays(20)">20天</button>
+                    </div>
+                    <select id="chartDateSelect" onchange="loadChartData(this.value)" title="结束日期"></select>
+                    <span id="chartRangeInfo" class="chart-range-info"></span>
+                    <button class="btn-small" id="chartNextDay" onclick="changeChartPage(1)" title="向后翻页">&#9654;</button>
+                </div>
+                <div id="klineChart" style="width:100%;height:450px;"></div>
+            </div>
+
             <!-- 数据表格 -->
             <div class="data-table-container">
                 <table class="data-table" id="dataTable">
@@ -452,8 +470,57 @@
         grid-template-columns: repeat(2, 1fr);
     }
 }
+
+/* K线图区域 */
+.chart-section {
+    border-bottom: 1px solid var(--border-color, #e5e7eb);
+}
+.chart-toolbar {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    background: var(--background-color);
+}
+.chart-toolbar select {
+    padding: 0.25rem 0.5rem;
+    border: 1px solid var(--border-color, #e5e7eb);
+    border-radius: 0.25rem;
+    font-size: 0.8rem;
+    min-width: 130px;
+}
+.chart-day-btns {
+    display: flex;
+    gap: 2px;
+    background: var(--border-color, #e5e7eb);
+    border-radius: 0.25rem;
+    padding: 2px;
+}
+.btn-day {
+    padding: 0.2rem 0.5rem;
+    border: none;
+    border-radius: 0.2rem;
+    font-size: 0.75rem;
+    cursor: pointer;
+    background: transparent;
+    color: var(--text-secondary, #6b7280);
+    transition: all 0.15s;
+}
+.btn-day:hover { background: rgba(255,255,255,0.6); }
+.btn-day.active {
+    background: var(--primary-color, #3b82f6);
+    color: white;
+    font-weight: 600;
+}
+.chart-range-info {
+    font-size: 0.72rem;
+    color: var(--text-secondary, #6b7280);
+    white-space: nowrap;
+}
 </style>
 
+<script src="{{ url_for('static', filename='js/echarts.js') }}"></script>
 <script>
 let currentStockPage = 1, totalStockPages = 1;
 let currentDataPage = 1, totalDataPages = 1;
@@ -507,7 +574,8 @@ function loadDataQuality() {
 }
 
 // 加载年份列表
-function loadYears(stockCode = null, callback = null) {
+// selectLatest=true 时强制选最新年份（切换股票时），否则尽量保持当前选择
+function loadYears(stockCode = null, callback = null, selectLatest = false) {
     let url = '{{ url_for("data_viewer.get_available_years") }}';
     if (stockCode) {
         url += `?stock_code=${encodeURIComponent(stockCode)}`;
@@ -521,8 +589,8 @@ function loadYears(stockCode = null, callback = null) {
                 select.innerHTML = data.years.map(y =>
                     `<option value="${y}">${y}年</option>`
                 ).join('');
-                // 尝试保持之前选择的年份，如果不存在则选择第一个
-                if (data.years.includes(parseInt(currentValue))) {
+                // 切换股票时选最新年份，手动切换年份时保持当前选择
+                if (!selectLatest && data.years.includes(parseInt(currentValue))) {
                     select.value = currentValue;
                 }
             }
@@ -598,11 +666,12 @@ function selectStock(code) {
         }
     });
 
-    // 先加载该股票有数据的年份，再加载数据
+    // 先加载该股票有数据的年份，默认选最新年份，再加载数据
     loadYears(code, () => {
         loadStockSummary(code);
         loadStockData(1);
-    });
+        loadChartData();
+    }, true);
 }
 
 // 加载股票概要
@@ -709,8 +778,9 @@ function loadStockData(page = 1) {
                 `<tr><td colspan="7" class="empty-cell">加载失败</td></tr>`;
         });
 
-    // 同时更新概要
+    // 同时更新概要和K线图
     loadStockSummary(selectedStock);
+    loadChartData();
 }
 
 // 打开数据文件夹
@@ -743,7 +813,252 @@ function refreshData() {
     if (selectedStock) {
         loadStockSummary(selectedStock);
         loadStockData(currentDataPage);
+        loadChartData();
     }
+}
+
+// ===== K线图相关 =====
+let klineChart = null;
+let chartTradingDates = [];
+let chartCurrentDate = null;
+let chartDays = 5;
+
+function setChartDays(days) {
+    chartDays = days;
+    // 更新按钮高亮
+    document.querySelectorAll('.btn-day').forEach(btn => {
+        btn.classList.toggle('active', parseInt(btn.textContent) === days);
+    });
+    loadChartData(chartCurrentDate);
+}
+
+function loadChartData(targetDate) {
+    if (!selectedStock) return;
+
+    const year = document.getElementById('yearSelect').value;
+    let url = `{{ url_for("data_viewer.get_chart_data", stock_code="PLACEHOLDER") }}`.replace('PLACEHOLDER', selectedStock);
+    url += `?year=${year}&days=${chartDays}`;
+    if (targetDate) url += `&date=${targetDate}`;
+
+    fetch(url)
+        .then(res => res.json())
+        .then(data => {
+            if (data.error || !data.data || data.data.length === 0) {
+                document.getElementById('chartSection').style.display = 'none';
+                return;
+            }
+
+            document.getElementById('chartSection').style.display = 'block';
+            chartTradingDates = data.trading_dates;
+            chartCurrentDate = data.current_date;
+
+            // 更新日期选择器（显示结束日期）
+            const dateSelect = document.getElementById('chartDateSelect');
+            dateSelect.innerHTML = chartTradingDates.map(d =>
+                `<option value="${d}" ${d === chartCurrentDate ? 'selected' : ''}>${d}</option>`
+            ).join('');
+
+            // 更新范围提示
+            if (data.date_range) {
+                const r = data.date_range;
+                document.getElementById('chartRangeInfo').textContent =
+                    r.count > 1 ? `${r.start} ~ ${r.end} (${r.count}天)` : r.start;
+            }
+
+            // 更新翻页按钮
+            const idx = chartTradingDates.indexOf(chartCurrentDate);
+            document.getElementById('chartPrevDay').disabled = (idx - chartDays + 1) <= 0;
+            document.getElementById('chartNextDay').disabled = idx >= chartTradingDates.length - 1;
+
+            setTimeout(() => {
+                renderKlineChart(data.data);
+                if (klineChart) klineChart.resize();
+            }, 50);
+        })
+        .catch(err => {
+            console.error('加载K线图数据失败:', err);
+            document.getElementById('chartSection').style.display = 'none';
+        });
+}
+
+function changeChartPage(direction) {
+    const idx = chartTradingDates.indexOf(chartCurrentDate);
+    const step = chartDays;
+    const newIdx = Math.max(0, Math.min(chartTradingDates.length - 1, idx + direction * step));
+    if (newIdx !== idx) {
+        loadChartData(chartTradingDates[newIdx]);
+    }
+}
+
+function renderKlineChart(data) {
+    const container = document.getElementById('klineChart');
+    if (!klineChart) {
+        klineChart = echarts.init(container);
+        window.addEventListener('resize', () => klineChart && klineChart.resize());
+    }
+
+    // 多天模式：用完整日期时间作为 x 轴，标记日期分界线
+    const times = data.map(d => d.date);  // "YYYY-MM-DD HH:MM"
+    const ohlc = data.map(d => [d.open, d.close, d.low, d.high]);
+    const volumes = data.map(d => d.volume);
+    const volumeColors = data.map(d => d.close >= d.open ? '#ef5350' : '#26a69a');
+
+    // 找到每天的分界点，用于 markLine
+    const dayBoundaries = [];
+    let lastDate = '';
+    times.forEach((t, i) => {
+        const day = t.substring(0, 10);
+        if (day !== lastDate && lastDate !== '') {
+            dayBoundaries.push({ xAxis: i, label: day });
+        }
+        lastDate = day;
+    });
+
+    const isMultiDay = chartDays > 1;
+
+    const option = {
+        animation: false,
+        tooltip: {
+            trigger: 'axis',
+            axisPointer: { type: 'cross' },
+            formatter: function(params) {
+                const k = params.find(p => p.seriesName === 'K线');
+                const v = params.find(p => p.seriesName === '成交量');
+                if (!k) return '';
+                const d = k.data;
+                const changeVal = (d[1] - d[0]).toFixed(2);
+                const changePct = d[0] !== 0 ? ((d[1] - d[0]) / d[0] * 100).toFixed(2) : '0.00';
+                const color = d[1] >= d[0] ? '#ef5350' : '#26a69a';
+                return `<b>${k.axisValue}</b><br/>` +
+                    `开: ${d[0].toFixed(2)}<br/>` +
+                    `收: <span style="color:${color};font-weight:bold">${d[1].toFixed(2)}</span><br/>` +
+                    `低: ${d[2].toFixed(2)}<br/>` +
+                    `高: ${d[3].toFixed(2)}<br/>` +
+                    `涨跌: <span style="color:${color}">${changeVal} (${changePct}%)</span><br/>` +
+                    (v ? `量: ${v.data.toLocaleString()}` : '');
+            }
+        },
+        axisPointer: {
+            link: [{ xAxisIndex: 'all' }]
+        },
+        grid: [
+            { left: 60, right: 20, top: 20, height: '60%' },
+            { left: 60, right: 20, top: '76%', height: '18%' }
+        ],
+        xAxis: [
+            {
+                type: 'category',
+                data: times,
+                gridIndex: 0,
+                axisLabel: { show: false },
+                axisTick: { show: false },
+                axisLine: { lineStyle: { color: '#ccc' } },
+                splitLine: { show: false },
+                boundaryGap: true,
+                min: 'dataMin',
+                max: 'dataMax'
+            },
+            {
+                type: 'category',
+                data: times,
+                gridIndex: 1,
+                axisLabel: {
+                    fontSize: 10,
+                    color: '#999',
+                    formatter: function(val) {
+                        const time = val.substring(11);
+                        if (isMultiDay) {
+                            // 多天：每天开盘时显示日期
+                            if (time === '09:31') return val.substring(5, 10);
+                            return '';
+                        } else {
+                            // 单天：显示关键时间点
+                            if (['09:30','10:00','10:30','11:00','11:30','13:00','13:30','14:00','14:30','15:00'].includes(time)) return time;
+                            return '';
+                        }
+                    }
+                },
+                axisTick: { show: false },
+                axisLine: { lineStyle: { color: '#ccc' } },
+                splitLine: { show: false },
+                boundaryGap: true,
+                min: 'dataMin',
+                max: 'dataMax'
+            }
+        ],
+        yAxis: [
+            {
+                gridIndex: 0,
+                scale: true,
+                splitArea: { show: false },
+                splitLine: { lineStyle: { color: '#f0f0f0' } },
+                axisLabel: { fontSize: 10, color: '#666' }
+            },
+            {
+                gridIndex: 1,
+                scale: true,
+                splitNumber: 2,
+                splitArea: { show: false },
+                splitLine: { lineStyle: { color: '#f0f0f0' } },
+                axisLabel: {
+                    fontSize: 10,
+                    color: '#666',
+                    formatter: function(val) {
+                        if (val >= 1e8) return (val / 1e8).toFixed(1) + '亿';
+                        if (val >= 1e4) return (val / 1e4).toFixed(0) + '万';
+                        return val;
+                    }
+                }
+            }
+        ],
+        dataZoom: [
+            {
+                type: 'inside',
+                xAxisIndex: [0, 1],
+                start: 0,
+                end: 100
+            }
+        ],
+        series: [
+            {
+                name: 'K线',
+                type: 'candlestick',
+                xAxisIndex: 0,
+                yAxisIndex: 0,
+                data: ohlc,
+                itemStyle: {
+                    color: '#ef5350',
+                    color0: '#26a69a',
+                    borderColor: '#ef5350',
+                    borderColor0: '#26a69a'
+                },
+                markLine: isMultiDay ? {
+                    silent: true,
+                    symbol: 'none',
+                    lineStyle: { color: '#ddd', type: 'dashed', width: 1 },
+                    label: { show: false },
+                    data: dayBoundaries.map(b => [
+                        { xAxis: b.xAxis, y: 0 },
+                        { xAxis: b.xAxis, y: '100%' }
+                    ])
+                } : undefined
+            },
+            {
+                name: '成交量',
+                type: 'bar',
+                xAxisIndex: 1,
+                yAxisIndex: 1,
+                data: volumes,
+                itemStyle: {
+                    color: function(params) {
+                        return volumeColors[params.dataIndex];
+                    }
+                }
+            }
+        ]
+    };
+
+    klineChart.setOption(option, true);
 }
 </script>
 {% endblock %}

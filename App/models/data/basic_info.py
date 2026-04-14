@@ -21,6 +21,23 @@ class StockInfo(db.Model):
     created_at = db.Column(db.TIMESTAMP, default=datetime.utcnow, comment='创建时间')
     updated_at = db.Column(db.TIMESTAMP, default=datetime.utcnow, onupdate=datetime.utcnow, comment='更新时间')
 
+    # snake_case 别名，兼容模板访问
+    @property
+    def es_code(self):
+        return self.EsCode
+
+    @property
+    def market_code(self):
+        return self.MarketCode
+
+    @property
+    def txd_market(self):
+        return self.TxdMarket
+
+    @property
+    def hs_market(self):
+        return self.HsMarket
+
     def __repr__(self):
         return f'<StockInfo {self.code}:{self.name}>'
 

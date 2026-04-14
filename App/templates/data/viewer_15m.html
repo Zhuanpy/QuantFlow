@@ -2,30 +2,27 @@
 {% block content %}
 <script src="{{ url_for('static', filename='js/echarts.js') }}"></script>
 <div class="viewer-container">
-    <!-- 顶部标题栏 -->
+    <!-- 顶部标题栏（合并统计） -->
     <div class="viewer-header">
         <div class="header-left">
             <button class="btn-toggle-panel" onclick="togglePanel()" title="展开/收起股票列表">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M3 12h18M3 6h18M3 18h18"/>
                 </svg>
-                <span style="margin-left:4px;font-size:0.8rem;">选股</span>
             </button>
-            <div>
-                <h2>15分钟数据查看器</h2>
-                <p class="header-desc">data/15m/ · <span id="headerStockInfo">未选择股票</span></p>
-            </div>
+            <h2>15分钟数据</h2>
+            <span class="header-stock-info" id="headerStockInfo"></span>
+            <span class="header-sep">|</span>
+            <span class="ov-item">股票 <b id="ovStockCount">-</b></span>
+            <span class="ov-item success">已下载 <b id="ovSuccessCount">-</b></span>
+            <span class="ov-item primary">数据截至 <b id="ovMaxDate">-</b></span>
         </div>
-        <div class="header-actions">
-            <div class="quick-search-wrap">
-                <input type="text" id="quickSearchInput" placeholder="输入代码或名称搜索..." class="quick-search-input"
-                       autocomplete="off" onfocus="onQuickSearchFocus()" oninput="onQuickSearchInput()">
-                <div class="quick-search-dropdown" id="quickSearchDropdown"></div>
-            </div>
-            <button class="btn-refresh" onclick="refreshAll()">刷新</button>
+        <div class="header-search-wrap">
+            <input type="text" id="headerSearch" class="header-search" placeholder="搜索代码/名称..."
+                   autocomplete="off" oninput="onHeaderSearchInput()" onfocus="onHeaderSearchInput()">
+            <div class="header-search-dropdown" id="headerSearchDropdown"></div>
         </div>
     </div>
-
 
     <!-- 主内容 -->
     <div class="main-content">
@@ -58,7 +55,10 @@
         <!-- 右侧：15m数据 -->
         <div class="detail-panel">
             <div class="panel-header">
-                <h3 id="detailTitle">15分钟数据</h3>
+                <div style="display:flex;align-items:center;gap:0.5rem;">
+                    <button class="btn-back" id="btnBackList" onclick="backToList()" style="display:none;" title="返回">&#9664; 返回</button>
+                    <h3 id="detailTitle">15分钟数据</h3>
+                </div>
                 <div class="detail-controls">
                     <div class="view-toggle">
                         <button class="btn-view active" id="btnChartView" onclick="switchView('chart')">K线图</button>
@@ -76,7 +76,7 @@
             </div>
 
             <!-- K线图区域 -->
-            <div class="chart-section" id="chartSection">
+            <div class="chart-section" id="chartSection" style="display:none;">
                 <div class="chart-toolbar">
                     <div class="chart-range-btns">
                         <button class="range-btn active" onclick="setChartRange(100)">100根</button>
@@ -135,55 +135,62 @@
 
 <style>
 /* ===== 全宽布局 ===== */
-.viewer-container { width: 100%; padding: 1rem 1.5rem; }
+.viewer-container { max-width: 1800px; margin: -0.5rem auto 0; padding: 0 1rem; }
 
 /* ===== 顶部标题 ===== */
 .viewer-header {
     display: flex; justify-content: space-between; align-items: center;
     background: linear-gradient(135deg, #0891b2, #0e7490);
-    color: white; padding: 0.75rem 1.5rem; border-radius: 0.75rem; margin-bottom: 1rem;
+    color: white; padding: 0.5rem 1.2rem; border-radius: 0.5rem; margin-bottom: 0.5rem;
 }
-.header-left { display: flex; align-items: center; gap: 0.75rem; }
-.viewer-header h2 { margin: 0; font-size: 1.25rem; }
-.header-desc { margin: 0.15rem 0 0; font-size: 0.8rem; opacity: 0.85; }
-.header-actions { display: flex; gap: 0.5rem; align-items: center; }
+.header-left { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; flex: 1; min-width: 0; }
+.viewer-header h2 { margin: 0; font-size: 1.05rem; white-space: nowrap; }
+.header-stock-info { font-size: 0.82rem; opacity: 0.85; white-space: nowrap; }
+.header-sep { color: rgba(255,255,255,0.3); }
 
-/* ===== 快速搜索 ===== */
-.quick-search-wrap { position: relative; }
-.quick-search-input {
-    padding: 0.45rem 0.75rem; border: none; border-radius: 0.5rem;
-    font-size: 0.85rem; width: 220px; background: rgba(255,255,255,0.9); outline: none;
+/* 统计项 */
+.ov-item { font-size: 0.75rem; color: rgba(255,255,255,0.7); white-space: nowrap; }
+.ov-item b { font-size: 0.78rem; color: #fff; margin-left: 1px; }
+.ov-item.success b { color: #6ee7b7; }
+.ov-item.primary b { color: #93c5fd; }
+
+/* 标题栏搜索 */
+.header-search-wrap { position: relative; flex-shrink: 0; }
+.header-search {
+    padding: 0.28rem 0.6rem; border: none; border-radius: 0.35rem;
+    font-size: 0.78rem; width: 150px; outline: none; background: rgba(255,255,255,0.9);
 }
-.quick-search-input:focus { background: white; box-shadow: 0 0 0 2px rgba(255,255,255,0.4); }
-.quick-search-dropdown {
-    display: none; position: absolute; top: 100%; left: 0; right: 0;
+.header-search:focus { background: #fff; box-shadow: 0 0 0 2px rgba(255,255,255,0.4); width: 200px; transition: width 0.2s; }
+.header-search-dropdown {
+    display: none; position: absolute; top: 100%; right: 0;
     margin-top: 4px; background: white; border-radius: 0.5rem;
     box-shadow: 0 8px 24px rgba(0,0,0,0.15); max-height: 320px; overflow-y: auto;
-    z-index: 300; min-width: 280px;
+    z-index: 300; min-width: 260px;
 }
-.quick-search-dropdown.show { display: block; }
-.qs-item {
+.header-search-dropdown.show { display: block; }
+.hs-item {
     display: flex; justify-content: space-between; align-items: center;
-    padding: 0.55rem 0.75rem; cursor: pointer; border-bottom: 1px solid #f3f4f6;
-    color: #1f2937; font-size: 0.82rem;
+    padding: 0.5rem 0.7rem; cursor: pointer; border-bottom: 1px solid #f3f4f6;
+    font-size: 0.8rem; color: #1f2937;
 }
-.qs-item:last-child { border-bottom: none; }
-.qs-item:hover { background: #ecfeff; }
-.qs-code { font-weight: 600; }
-.qs-name { color: #6b7280; margin-left: 0.5rem; }
-.qs-meta { font-size: 0.72rem; color: #9ca3af; }
-.qs-empty { padding: 1rem; text-align: center; color: #9ca3af; font-size: 0.82rem; }
+.hs-item:last-child { border-bottom: none; }
+.hs-item:hover { background: #ecfeff; }
+.hs-code { font-weight: 600; }
+.hs-name { color: #6b7280; margin-left: 0.4rem; }
+.hs-meta { font-size: 0.7rem; color: #9ca3af; }
+.hs-empty { padding: 0.75rem; text-align: center; color: #9ca3af; font-size: 0.8rem; }
 
-.btn-refresh {
-    padding: 0.45rem 1rem; background: rgba(255,255,255,0.2); color: white;
-    border: 1px solid rgba(255,255,255,0.3); border-radius: 0.5rem;
-    cursor: pointer; font-size: 0.85rem;
+/* 返回按钮 */
+.btn-back {
+    padding: 0.2rem 0.5rem; font-size: 0.75rem; border: 1px solid #d1d5db;
+    border-radius: 0.3rem; background: white; color: #374151; cursor: pointer;
 }
-.btn-refresh:hover { background: rgba(255,255,255,0.3); }
+.btn-back:hover { background: #f3f4f6; }
+
 .btn-toggle-panel {
     display: flex; align-items: center; justify-content: center;
-    width: 36px; height: 36px; border: 1px solid rgba(255,255,255,0.3);
-    border-radius: 0.5rem; background: rgba(255,255,255,0.15);
+    width: 30px; height: 30px; border: 1px solid rgba(255,255,255,0.3);
+    border-radius: 0.4rem; background: rgba(255,255,255,0.15);
     color: white; cursor: pointer; flex-shrink: 0;
 }
 .btn-toggle-panel:hover { background: rgba(255,255,255,0.3); }
@@ -239,14 +246,14 @@
 
 /* ===== 详情面板 ===== */
 .detail-panel {
-    background: var(--card-background); border-radius: 0.75rem;
-    box-shadow: var(--shadow-sm); overflow: hidden; width: 100%;
+    background: var(--card-background); border-radius: 0.5rem;
+    box-shadow: var(--shadow-sm); overflow: hidden; width: 100%; min-width: 0;
 }
 .panel-header {
     display: flex; justify-content: space-between; align-items: center;
-    padding: 0.75rem 1rem; background: var(--background-color); border-bottom: 1px solid #e5e7eb;
+    padding: 0.4rem 0.8rem; background: var(--background-color); border-bottom: 1px solid #e5e7eb;
 }
-.panel-header h3 { margin: 0; font-size: 1rem; font-weight: 600; }
+.panel-header h3 { margin: 0; font-size: 0.9rem; font-weight: 600; }
 .detail-controls { display: flex; align-items: center; gap: 0.4rem; }
 .detail-controls input[type="date"] {
     padding: 0.25rem 0.4rem; border: 1px solid #e5e7eb; border-radius: 0.25rem; font-size: 0.78rem;
@@ -258,18 +265,18 @@
 .btn-filter:hover { background: #0e7490; }
 
 /* ===== 摘要 ===== */
-.stock-summary { padding: 0.75rem 1rem; border-bottom: 1px solid #e5e7eb; }
-.summary-placeholder { text-align: center; color: var(--text-secondary); padding: 0.5rem; }
-.summary-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 0.75rem; }
-.summary-item { text-align: center; padding: 0.5rem; background: var(--background-color); border-radius: 0.5rem; }
-.summary-value { font-size: 1rem; font-weight: 600; color: var(--text-primary); }
-.summary-label { font-size: 0.7rem; color: var(--text-secondary); }
+.stock-summary { padding: 0.4rem 0.8rem; border-bottom: 1px solid #e5e7eb; }
+.summary-placeholder { text-align: center; color: var(--text-secondary); padding: 0.4rem; font-size: 0.82rem; }
+.summary-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 0.5rem; }
+.summary-item { text-align: center; padding: 0.35rem; background: var(--background-color); border-radius: 0.35rem; }
+.summary-value { font-size: 0.9rem; font-weight: 600; color: var(--text-primary); }
+.summary-label { font-size: 0.65rem; color: var(--text-secondary); }
 
 /* ===== 表格 ===== */
-.table-wrapper { max-height: calc(100vh - 340px); overflow: auto; }
-.data-table { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
+.table-wrapper { max-height: calc(100vh - 280px); overflow: auto; }
+.data-table { width: 100%; border-collapse: collapse; font-size: 0.73rem; }
 .data-table th, .data-table td {
-    padding: 0.35rem 0.5rem; text-align: right; border-bottom: 1px solid #e5e7eb; white-space: nowrap;
+    padding: 0.25rem 0.4rem; text-align: right; border-bottom: 1px solid #e5e7eb; white-space: nowrap;
 }
 .data-table th { font-weight: 600; position: sticky; top: 0; z-index: 1; }
 .data-table td:first-child {
@@ -322,10 +329,11 @@
 /* ===== K线图区域 ===== */
 .chart-section {
     background: var(--card-background); border-bottom: 1px solid #e5e7eb;
+    max-width: 100vw; overflow: hidden;
 }
 .chart-toolbar {
     display: flex; justify-content: space-between; align-items: center;
-    padding: 0.5rem 1rem; border-bottom: 1px solid #f1f5f9;
+    padding: 0.35rem 0.8rem; border-bottom: 1px solid #f1f5f9;
 }
 .chart-range-btns { display: flex; gap: 0.3rem; }
 .range-btn {
@@ -355,7 +363,8 @@
 
 /* ===== 响应式 ===== */
 @media (max-width: 768px) {
-    .viewer-header { flex-direction: column; gap: 0.75rem; }
+    .viewer-header { flex-direction: column; gap: 0.5rem; }
+    .header-left { flex-wrap: wrap; gap: 0.4rem; }
     .summary-grid { grid-template-columns: repeat(4, 1fr); }
     .stock-drawer { width: 300px; left: -300px; }
 }
@@ -373,6 +382,7 @@ let chartDataCache = null;  // 缓存图表数据
 let chartRange = 100;
 
 document.addEventListener('DOMContentLoaded', function() {
+    loadOverview();
     loadStockList(1);
 
     document.getElementById('searchInput').addEventListener('input', function() {
@@ -389,8 +399,54 @@ document.addEventListener('DOMContentLoaded', function() {
     const stockParam = urlParams.get('stock');
     if (stockParam) {
         selectStock(stockParam, '');
+    } else {
+        // 没有指定股票时自动打开抽屉方便选股
+        togglePanel();
     }
+
+    // 浏览器前进/后退
+    window.addEventListener('popstate', function() {
+        const params = new URLSearchParams(window.location.search);
+        const code = params.get('stock');
+        if (code && code !== selectedStock) {
+            selectStock(code, '');
+        } else if (!code && selectedStock) {
+            backToList();
+        }
+    });
 });
+
+/* ===== 总览统计 ===== */
+function loadOverview() {
+    fetch('{{ url_for("viewer_15m.get_overview") }}')
+        .then(r => r.json())
+        .then(d => {
+            if (d.error) return;
+            document.getElementById('ovStockCount').textContent = d.stock_count;
+            document.getElementById('ovSuccessCount').textContent = d.success_count;
+            document.getElementById('ovMaxDate').textContent = d.max_date;
+        })
+        .catch(() => {});
+}
+
+/* ===== 返回列表 ===== */
+function backToList() {
+    selectedStock = null;
+    const url = new URL(window.location);
+    url.searchParams.delete('stock');
+    history.pushState(null, '', url);
+    document.getElementById('btnBackList').style.display = 'none';
+    document.getElementById('detailTitle').textContent = '15分钟数据';
+    document.getElementById('headerStockInfo').textContent = '';
+    document.getElementById('stockSummary').innerHTML =
+        '<div class="summary-placeholder">点击左上角菜单按钮选择股票</div>';
+    document.getElementById('dataTableBody').innerHTML =
+        '<tr><td colspan="23" class="empty-cell">请选择一只股票查看数据</td></tr>';
+    document.getElementById('dataPagination').style.display = 'none';
+    document.getElementById('chartSection').style.display = 'none';
+    // 自动打开抽屉
+    if (!drawerOpen) togglePanel();
+}
 
 /* ===== 抽屉控制 ===== */
 function togglePanel() {
@@ -448,7 +504,15 @@ function selectStock(code, name) {
     selectedStock = code;
     currentDataPage = 1;
 
-    document.getElementById('headerStockInfo').textContent = `${code} ${name || ''}`;
+    // URL 同步
+    const url = new URL(window.location);
+    url.searchParams.set('stock', code);
+    history.pushState(null, '', url);
+
+    // 显示返回按钮
+    document.getElementById('btnBackList').style.display = '';
+
+    document.getElementById('headerStockInfo').textContent = `· ${code} ${name || ''}`;
 
     document.querySelectorAll('.stock-item').forEach(item => {
         item.classList.remove('active');
@@ -462,8 +526,18 @@ function selectStock(code, name) {
 
     if (drawerOpen) togglePanel();
     chartDataCache = null;
+
+    // 显示对应视图
     if (currentView === 'chart') {
-        loadChartData();
+        document.getElementById('chartSection').style.display = 'block';
+        document.getElementById('tableSection').style.display = 'none';
+        setTimeout(() => {
+            loadChartData();
+            if (klineChart) klineChart.resize();
+        }, 50);
+    } else {
+        document.getElementById('chartSection').style.display = 'none';
+        document.getElementById('tableSection').style.display = 'block';
     }
     load15mData(1);
 }
@@ -592,50 +666,43 @@ function ni(v) {
     return (v !== null && v !== undefined && v !== 0) ? Number(v).toLocaleString() : '-';
 }
 
-/* ===== 快速搜索 ===== */
-let qsTimeout = null;
-function onQuickSearchInput() {
-    clearTimeout(qsTimeout);
-    const val = document.getElementById('quickSearchInput').value.trim();
-    if (!val) {
-        document.getElementById('quickSearchDropdown').classList.remove('show');
-        return;
-    }
-    qsTimeout = setTimeout(() => {
+/* ===== 标题栏搜索 ===== */
+let hsTimeout = null;
+function onHeaderSearchInput() {
+    clearTimeout(hsTimeout);
+    const val = document.getElementById('headerSearch').value.trim();
+    const dd = document.getElementById('headerSearchDropdown');
+    if (!val) { dd.classList.remove('show'); return; }
+    hsTimeout = setTimeout(() => {
         fetch(`{{ url_for("viewer_15m.get_stocks") }}?page=1&per_page=10&search=${encodeURIComponent(val)}&sort_by=records`)
             .then(r => r.json())
             .then(d => {
-                const dd = document.getElementById('quickSearchDropdown');
                 if (d.error || d.stocks.length === 0) {
-                    dd.innerHTML = '<div class="qs-empty">未找到匹配股票</div>';
+                    dd.innerHTML = '<div class="hs-empty">未找到匹配股票</div>';
                 } else {
                     dd.innerHTML = d.stocks.map(s => `
-                        <div class="qs-item" onclick="quickSelectStock('${s.code}', '${s.name}')">
-                            <div><span class="qs-code">${s.code}</span><span class="qs-name">${s.name}</span></div>
-                            <div class="qs-meta">${s.records}条 · ${s.end_date}</div>
+                        <div class="hs-item" onclick="headerSelectStock('${s.code}', '${s.name}')">
+                            <div><span class="hs-code">${s.code}</span><span class="hs-name">${s.name}</span></div>
+                            <div class="hs-meta">${s.records}条 · ${s.end_date}</div>
                         </div>
                     `).join('');
                 }
                 dd.classList.add('show');
             });
-    }, 250);
+    }, 200);
 }
 
-function onQuickSearchFocus() {
-    const val = document.getElementById('quickSearchInput').value.trim();
-    if (val) onQuickSearchInput();
-}
-
-function quickSelectStock(code, name) {
-    document.getElementById('quickSearchDropdown').classList.remove('show');
-    document.getElementById('quickSearchInput').value = code + ' ' + name;
+function headerSelectStock(code, name) {
+    document.getElementById('headerSearchDropdown').classList.remove('show');
+    document.getElementById('headerSearch').value = '';
     selectStock(code, name);
 }
 
+// 点击外部关闭下拉
 document.addEventListener('click', function(e) {
-    const wrap = document.querySelector('.quick-search-wrap');
+    const wrap = document.querySelector('.header-search-wrap');
     if (wrap && !wrap.contains(e.target)) {
-        document.getElementById('quickSearchDropdown').classList.remove('show');
+        document.getElementById('headerSearchDropdown').classList.remove('show');
     }
 });
 

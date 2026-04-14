@@ -63,9 +63,35 @@ class BoardDownloader:
         logger.info(f"开始下载板块 {code} 的 {days} 天数据")
         logger.info("*" * 80)
 
-        # 第一阶段：优先使用东方财富 kline API（板块数据更快更稳定）
+        # 第一阶段：优先使用 pytdx（稳定、快速、无反爬限制）
         logger.info("=" * 60)
-        logger.info("第一阶段：使用东方财富 kline API（优先方案）")
+        logger.info("第一阶段：使用 pytdx 获取数据（优先方案）")
+        logger.info("=" * 60)
+
+        try:
+            from App.codes.downloads.DlPytdx import download_board_1m_pytdx
+
+            df_pytdx, end_date = download_board_1m_pytdx(code, days)
+
+            if not df_pytdx.empty:
+                logger.info(f"pytdx 成功获取 {len(df_pytdx)} 条数据")
+                show_download('1m', code)
+                logger.info("*" * 80)
+                logger.info(f"成功下载板块 {code} 的 {len(df_pytdx)} 条记录")
+                logger.info("*" * 80)
+                return df_pytdx
+            else:
+                logger.warning("pytdx 返回空数据，尝试备用方案")
+
+        except ImportError:
+            logger.warning("pytdx 未安装，跳过第一阶段")
+        except Exception as e:
+            logger.warning(f"pytdx 获取失败: {e}，尝试备用方案")
+
+        # 第二阶段：备用使用东方财富 kline API
+        logger.info("")
+        logger.info("=" * 60)
+        logger.info("第二阶段：使用东方财富 kline API（备用方案）")
         logger.info("=" * 60)
 
         # 计算需要的记录数量（每天约240根K线）
@@ -89,37 +115,11 @@ class BoardDownloader:
                     logger.info("*" * 80)
                     return dl
                 else:
-                    logger.warning(f"板块 {code} 东方财富数据解析后为空，尝试备用方案")
+                    logger.warning(f"板块 {code} 东方财富数据解析后为空")
             else:
-                logger.warning(f"东方财富返回空数据，尝试备用方案")
+                logger.warning(f"东方财富返回空数据")
         except Exception as e:
-            logger.warning(f"东方财富获取失败: {e}，尝试备用方案")
-
-        # 第二阶段：备用使用 pytdx
-        logger.info("")
-        logger.info("=" * 60)
-        logger.info("第二阶段：使用 pytdx 获取数据（备用方案）")
-        logger.info("=" * 60)
-
-        try:
-            from App.codes.downloads.DlPytdx import download_board_1m_pytdx
-
-            df_pytdx, end_date = download_board_1m_pytdx(code, days)
-
-            if not df_pytdx.empty:
-                logger.info(f"pytdx 成功获取 {len(df_pytdx)} 条数据")
-                show_download('1m', code)
-                logger.info("*" * 80)
-                logger.info(f"成功下载板块 {code} 的 {len(df_pytdx)} 条记录")
-                logger.info("*" * 80)
-                return df_pytdx
-            else:
-                logger.warning("pytdx 返回空数据")
-
-        except ImportError:
-            logger.warning("pytdx 未安装，跳过备用方案")
-        except Exception as e:
-            logger.warning(f"pytdx 获取失败: {e}")
+            logger.warning(f"东方财富获取失败: {e}")
 
         logger.error(f"所有数据源都失败，无法获取板块 {code} 的数据")
         return pd.DataFrame()
