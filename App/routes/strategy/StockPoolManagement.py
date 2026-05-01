@@ -95,6 +95,31 @@ def get_stocks():
         pagination = query.paginate(page=page, per_page=page_size, error_out=False)
         stocks = [stock.to_dict() for stock in pagination.items]
 
+        # 批量查最新日 K 的 close + date，注入到响应里（始终最新，无需手动同步）
+        if stocks:
+            from App.models.data.StockDaily import StockDaily
+            codes = [s['stock_code'] for s in stocks]
+            # 子查询：每个 stock_code 的最大 date
+            from sqlalchemy import func
+            sub = (db.session.query(StockDaily.stock_code,
+                                    func.max(StockDaily.date).label('max_date'))
+                   .filter(StockDaily.stock_code.in_(codes))
+                   .group_by(StockDaily.stock_code).subquery())
+            latest_rows = (db.session.query(StockDaily)
+                           .join(sub, and_(StockDaily.stock_code == sub.c.stock_code,
+                                           StockDaily.date == sub.c.max_date))
+                           .all())
+            latest_map = {r.stock_code: {'close': r.close, 'date': r.date.isoformat()}
+                          for r in latest_rows}
+            for s in stocks:
+                lk = latest_map.get(s['stock_code'])
+                if lk:
+                    s['latest_close'] = lk['close']
+                    s['latest_close_date'] = lk['date']
+                else:
+                    s['latest_close'] = None
+                    s['latest_close_date'] = None
+
         return jsonify({
             'success': True,
             'data': {
@@ -375,6 +400,335 @@ def update_data_quality():
 
     except Exception as e:
         logger.error(f"更新数据质量失败: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@stock_pool_bp.route('/api/filter_scan', methods=['POST'])
+def api_filter_scan():
+    """
+    扫描某池里"应被剔除"的股票，返回候选列表，由前端确认后再调 batch_update 归档。
+    body: {
+      pool_type: 'candidate' (必填),
+      filters: {
+        st: true,                    剔除名称含 ST 的
+        min_money_60d: 50000000,     近 60 日日均成交额阈值
+        min_market_cap: 5000000000   市值最小阈值（仅当字段有值时生效）
+      }
+    }
+    """
+    try:
+        from App.models.data.StockDaily import StockDaily
+        from datetime import timedelta
+
+        data = request.get_json(silent=True) or {}
+        pool_type = data.get('pool_type')
+        filters = data.get('filters', {})
+        if pool_type not in ('candidate', 'watching', 'trading', 'archived'):
+            return jsonify({'success': False, 'message': '需要有效的 pool_type'}), 400
+
+        stocks = StockPool.query.filter(
+            StockPool.pool_type == pool_type,
+            StockPool.is_active == True,
+            StockPool.is_excluded == False,
+        ).all()
+
+        cutoff = date.today() - timedelta(days=90)
+        to_remove = []
+        for s in stocks:
+            reasons = []
+
+            # 1) ST 名称识别
+            if filters.get('st'):
+                name = (s.stock_name or '').upper()
+                if 'ST' in name or '*ST' in name:
+                    reasons.append('ST 类股票')
+
+            # 2) 流动性：近 60 日日均成交额
+            min_money = filters.get('min_money_60d')
+            if min_money:
+                rows = (StockDaily.query
+                        .filter(StockDaily.stock_code == s.stock_code,
+                                StockDaily.date >= cutoff)
+                        .order_by(StockDaily.date.desc())
+                        .limit(60).all())
+                if rows:
+                    avg_money = sum((r.money or 0) for r in rows) / len(rows)
+                    if avg_money < float(min_money):
+                        reasons.append(f'近 {len(rows)} 日日均成交额 {avg_money:,.0f} < 阈值 {float(min_money):,.0f}')
+                else:
+                    reasons.append('无近 90 日日 K 数据')
+
+            # 3) 市值（仅当 StockPool.market_cap 有值时才能判）
+            min_cap = filters.get('min_market_cap')
+            if min_cap and s.market_cap is not None:
+                if s.market_cap < float(min_cap):
+                    reasons.append(f'市值 {s.market_cap:,.0f} < 阈值 {float(min_cap):,.0f}')
+
+            if reasons:
+                to_remove.append({
+                    'id': s.id,
+                    'stock_code': s.stock_code,
+                    'stock_name': s.stock_name,
+                    'reasons': reasons,
+                })
+
+        return jsonify({
+            'success': True,
+            'pool_type': pool_type,
+            'scanned': len(stocks),
+            'to_remove_count': len(to_remove),
+            'to_remove': to_remove,
+        })
+    except Exception as e:
+        logger.exception('filter_scan 失败')
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@stock_pool_bp.route('/api/apply_rules', methods=['POST'])
+def api_apply_rules():
+    """
+    应用一组自动化规则，返回每条规则触发的股票列表。
+    body: {
+      candidate_archive_days: 30,    candidate 在池中超过 N 天未晋升 → archived
+      degenerate_demote: {           watching 模型综合 DEGENERATE → candidate
+          enabled: true,
+          month: '2026-04',          检查健康度用的月份
+          sample_size: 30
+      }
+    }
+    """
+    try:
+        from datetime import timedelta
+        data = request.get_json(silent=True) or {}
+
+        results = {'archived_old_candidates': [], 'demoted_degenerate': []}
+
+        # 规则 1：candidate 超 N 天未晋升
+        days = int(data.get('candidate_archive_days', 30) or 30)
+        if days > 0:
+            cutoff = datetime.utcnow() - timedelta(days=days)
+            old_candidates = StockPool.query.filter(
+                StockPool.pool_type == 'candidate',
+                StockPool.is_active == True,
+                StockPool.is_excluded == False,
+                StockPool.created_at <= cutoff,
+            ).all()
+            for s in old_candidates:
+                old_pool = s.pool_type
+                s.pool_type = 'archived'
+                s.exclusion_reason = (s.exclusion_reason or '') + f' 候选超 {days} 天未晋升自动归档'
+                s.updated_at = datetime.utcnow()
+                results['archived_old_candidates'].append({
+                    'id': s.id, 'stock_code': s.stock_code, 'stock_name': s.stock_name,
+                    'created_at': s.created_at.isoformat() if s.created_at else None,
+                    'from': old_pool,
+                })
+
+        # 规则 2：watching 模型 DEGENERATE 降级
+        deg_cfg = data.get('degenerate_demote') or {}
+        if deg_cfg.get('enabled') and deg_cfg.get('month'):
+            month = deg_cfg['month']
+            sample_size = int(deg_cfg.get('sample_size', 30))
+            from App.routes.strategy.RnnStrategies import api_model_health  # 复用
+            from App.codes.RnnDataFile.stock_path import StockDataPath
+            import os, json as _json, numpy as _np
+            from App.codes.RnnModel.model_predictor import _get_cached_model
+            from App.codes.parsers.RnnParser import ModelName
+
+            watching = StockPool.query.filter(
+                StockPool.pool_type == 'watching',
+                StockPool.is_active == True,
+                StockPool.is_excluded == False,
+            ).all()
+
+            for s in watching:
+                # 直接复用 model_health 内部逻辑（精简版）
+                rank = []
+                for name in ModelName:
+                    x_path = StockDataPath.train_data_path(month, f'{name}_{s.stock_code}_x.npy')
+                    y_path = StockDataPath.train_data_path(month, f'{name}_{s.stock_code}_y.npy')
+                    m_path = StockDataPath.model_path(month, f'{name}_{s.stock_code}.h5')
+                    if not (os.path.exists(x_path) and os.path.exists(y_path) and os.path.exists(m_path)):
+                        continue
+                    try:
+                        x = _np.load(x_path)[:sample_size]
+                        y = _np.load(y_path)[:sample_size].flatten()
+                        model = _get_cached_model(month, f'{name}_{s.stock_code}.h5')
+                        pred = model.predict(x, verbose=0).flatten()
+                        ratio = (float(_np.std(pred)) / float(_np.std(y))) if _np.std(y) > 1e-9 else 0
+                        rank.append('HEALTHY' if ratio >= 0.30 else ('WEAK' if ratio >= 0.05 else 'DEGENERATE'))
+                    except Exception:
+                        continue
+                if rank and all(r == 'DEGENERATE' for r in rank):
+                    # 综合 DEGENERATE → 降级
+                    s.pool_type = 'candidate'
+                    s.notes = (s.notes or '') + f' 模型({month}) 全 DEGENERATE 自动降级'
+                    s.updated_at = datetime.utcnow()
+                    results['demoted_degenerate'].append({
+                        'id': s.id, 'stock_code': s.stock_code, 'stock_name': s.stock_name,
+                        'health_per_model': rank,
+                    })
+
+        db.session.commit()
+        return jsonify({
+            'success': True,
+            'archived_count': len(results['archived_old_candidates']),
+            'demoted_count': len(results['demoted_degenerate']),
+            'details': results,
+        })
+    except Exception as e:
+        db.session.rollback()
+        logger.exception('apply_rules 失败')
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@stock_pool_bp.route('/api/scan_market', methods=['POST'])
+def api_scan_market():
+    """
+    全市场评分扫描（v1）。
+    body: {
+      top_n: 100,                  返回 top N
+      exclude_st: true,            剔除 ST
+      exclude_chinext: true,       剔除创业板（300/301）
+      exclude_kechuang: false,     剔除科创板（688）
+      exclude_beijiao: false,      剔除北交所（8/4）
+      weights: {...} (可选，覆盖默认权重)
+    }
+    """
+    try:
+        from App.services.market_score_service import compute_market_scores
+        data = request.get_json(silent=True) or {}
+        results = compute_market_scores(
+            weights=data.get('weights'),
+            exclude_st=data.get('exclude_st', True),
+            exclude_chinext=data.get('exclude_chinext', True),
+            exclude_kechuang=data.get('exclude_kechuang', False),
+            exclude_beijiao=data.get('exclude_beijiao', False),
+            top_n=int(data.get('top_n', 100)),
+        )
+        return jsonify({
+            'success': True,
+            'count': len(results),
+            'data': results,
+        })
+    except Exception as e:
+        logger.exception('scan_market 失败')
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@stock_pool_bp.route('/api/batch_add_to_candidate', methods=['POST'])
+def api_batch_add_to_candidate():
+    """
+    把扫描结果（前 N 名）批量加入候选池。已存在的跳过。
+    body: { stocks: [{stock_code, stock_name, total_score}, ...] }
+    """
+    try:
+        data = request.get_json(silent=True) or {}
+        items = data.get('stocks', [])
+        if not items:
+            return jsonify({'success': False, 'message': '没有股票'}), 400
+        added, skipped = [], []
+        for it in items:
+            code = (it.get('stock_code') or '').strip()
+            if not code:
+                continue
+            existing = StockPool.query.filter_by(stock_code=code).first()
+            if existing:
+                skipped.append({'code': code, 'pool': existing.pool_type})
+                continue
+            StockPool.create_manual(
+                stock_code=code,
+                stock_name=it.get('stock_name', ''),
+                pool_type='candidate',
+                pool_priority=3,
+                score=float(it.get('total_score', 0)),
+                tags='市场扫描',
+                notes=f'来自全市场评分扫描，初始分 {it.get("total_score", 0)}',
+            )
+            added.append(code)
+        return jsonify({
+            'success': True,
+            'added_count': len(added),
+            'skipped_count': len(skipped),
+            'added': added,
+            'skipped': skipped,
+        })
+    except Exception as e:
+        logger.exception('batch_add_to_candidate 失败')
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@stock_pool_bp.route('/api/scan_health', methods=['POST'])
+def api_scan_health():
+    """
+    扫描指定池的所有股票模型健康度，返回每只股票的综合状态。
+    body: { pool_type: 'watching', month: '2026-04', sample_size: 30 }
+    """
+    try:
+        import os, numpy as _np
+        from App.codes.RnnDataFile.stock_path import StockDataPath
+        from App.codes.RnnModel.model_predictor import _get_cached_model
+        from App.codes.parsers.RnnParser import ModelName
+
+        data = request.get_json(silent=True) or {}
+        pool_type = data.get('pool_type', 'watching')
+        month = data.get('month')
+        sample_size = int(data.get('sample_size', 30))
+        if not month:
+            return jsonify({'success': False, 'message': '需要 month'}), 400
+
+        stocks = StockPool.query.filter(
+            StockPool.pool_type == pool_type,
+            StockPool.is_active == True,
+            StockPool.is_excluded == False,
+        ).all()
+
+        results = []
+        rank_order = {'HEALTHY': 3, 'WEAK': 2, 'DEGENERATE': 1, 'UNTRAINED': 0}
+        for s in stocks:
+            ranks = []
+            for name in ModelName:
+                x_path = StockDataPath.train_data_path(month, f'{name}_{s.stock_code}_x.npy')
+                y_path = StockDataPath.train_data_path(month, f'{name}_{s.stock_code}_y.npy')
+                m_path = StockDataPath.model_path(month, f'{name}_{s.stock_code}.h5')
+                if not (os.path.exists(x_path) and os.path.exists(y_path) and os.path.exists(m_path)):
+                    ranks.append('UNTRAINED')
+                    continue
+                try:
+                    x = _np.load(x_path)[:sample_size]
+                    y = _np.load(y_path)[:sample_size].flatten()
+                    model = _get_cached_model(month, f'{name}_{s.stock_code}.h5')
+                    pred = model.predict(x, verbose=0).flatten()
+                    ratio = (float(_np.std(pred)) / float(_np.std(y))) if _np.std(y) > 1e-9 else 0
+                    if ratio >= 0.30:
+                        ranks.append('HEALTHY')
+                    elif ratio >= 0.05:
+                        ranks.append('WEAK')
+                    else:
+                        ranks.append('DEGENERATE')
+                except Exception:
+                    ranks.append('UNTRAINED')
+            overall = min(ranks, key=lambda r: rank_order.get(r, 0)) if ranks else 'UNTRAINED'
+            healthy_n = sum(1 for r in ranks if r == 'HEALTHY')
+            results.append({
+                'id': s.id,
+                'stock_code': s.stock_code,
+                'stock_name': s.stock_name,
+                'overall': overall,
+                'per_model': ranks,
+                'healthy_count': healthy_n,
+                'total_models': len(ranks),
+            })
+
+        return jsonify({
+            'success': True,
+            'pool_type': pool_type,
+            'month': month,
+            'count': len(results),
+            'data': results,
+        })
+    except Exception as e:
+        logger.exception('scan_health 失败')
         return jsonify({'success': False, 'message': str(e)}), 500
 
 

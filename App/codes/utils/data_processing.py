@@ -164,15 +164,15 @@ class ResampleData:
         Raises:
             ValueError: 不支持的时间频率
         """
-        # 时间映射字典
+        # 时间映射字典（pandas 2.x 把 'T' 重命名为 'min'）
         time_mappings = {
-            '15m': '15T',
-            '30m': '30T',
-            '120m': '360T',
-            'day': '1440T',
-            'daily': '1440T',
-            'd': '1440T',
-            'D': '1440T'
+            '15m': '15min',
+            '30m': '30min',
+            '120m': '360min',
+            'day': '1440min',
+            'daily': '1440min',
+            'd': '1440min',
+            'D': '1440min'
         }
 
         if freq == '60m':

@@ -1,0 +1,232 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="rnn-container" style="padding: 1.5rem;">
+
+  <div class="page-tabs" style="margin-bottom: 1rem;">
+    <a class="tab-btn active" href="/RnnStrategies/training">训练管理</a>
+    <a class="tab-btn" href="/RnnStrategies/prediction">模型预测</a>
+  </div>
+
+  <!-- ========== 控制区 ========== -->
+  <div class="card" style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:1.5rem;margin-bottom:1rem;">
+    <h2 style="margin-top:0;">RNN 训练管理</h2>
+
+    <div style="display:flex;gap:1rem;flex-wrap:wrap;align-items:end;margin-bottom:1rem;">
+      <div>
+        <label style="display:block;font-size:0.85rem;color:#6b7280;">训练月份（parser_month）</label>
+        <select id="monthSelect" class="form-select" style="min-width:150px;"></select>
+      </div>
+      <div>
+        <label style="display:block;font-size:0.85rem;color:#6b7280;">手动输入月份</label>
+        <input id="monthInput" class="form-input" placeholder="如 2022-02" style="width:140px;">
+      </div>
+      <div>
+        <label style="display:block;font-size:0.85rem;color:#6b7280;">起始日期（生成数据用）</label>
+        <input id="startDateInput" type="date" class="form-input" value="2018-01-01">
+      </div>
+      <div>
+        <label style="display:block;font-size:0.85rem;color:#6b7280;">股票范围</label>
+        <select id="poolTypeSelect" class="form-select" style="min-width:160px;">
+          <option value="watching" selected>观察池（推荐）</option>
+          <option value="">全部 RnnTrainingRecords</option>
+          <option value="trading">交易池</option>
+          <option value="candidate">候选池</option>
+          <option value="archived">归档池</option>
+        </select>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+      <button id="btnDataStep" class="btn btn-primary">① 生成训练数据</button>
+      <button id="btnTrainStep" class="btn btn-primary">② 训练模型</button>
+      <button id="btnCheckStep" class="btn btn-primary">③ 历史检查</button>
+      <button id="btnStop" class="btn btn-danger" disabled>请求停止</button>
+      <button id="btnRefresh" class="btn btn-secondary">刷新记录</button>
+    </div>
+  </div>
+
+  <!-- ========== 进度区 ========== -->
+  <div class="card" style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:1.5rem;margin-bottom:1rem;">
+    <h3 style="margin-top:0;">当前任务</h3>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:1rem;margin-bottom:1rem;">
+      <div><div style="color:#6b7280;font-size:0.85rem;">任务类型</div><div id="stKind" style="font-weight:600;">-</div></div>
+      <div><div style="color:#6b7280;font-size:0.85rem;">状态</div><div id="stStatus" style="font-weight:600;">未开始</div></div>
+      <div><div style="color:#6b7280;font-size:0.85rem;">月份</div><div id="stMonth" style="font-weight:600;">-</div></div>
+      <div><div style="color:#6b7280;font-size:0.85rem;">开始时间</div><div id="stStarted" style="font-weight:600;">-</div></div>
+      <div><div style="color:#6b7280;font-size:0.85rem;">结束时间</div><div id="stFinished" style="font-weight:600;">-</div></div>
+    </div>
+    <div style="background:#f3f4f6;height:10px;border-radius:5px;overflow:hidden;">
+      <div id="stBar" style="background:#2563eb;height:100%;width:0%;transition:width .3s;"></div>
+    </div>
+    <div id="stProgressText" style="text-align:right;font-size:0.85rem;color:#6b7280;margin-top:0.25rem;">0%</div>
+    <div id="stMessage" style="color:#dc2626;font-size:0.85rem;margin-top:0.5rem;"></div>
+  </div>
+
+  <!-- ========== 训练记录表 ========== -->
+  <div class="card" style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:1.5rem;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
+      <h3 style="margin:0;">训练记录</h3>
+      <div>
+        <select id="recordMonthFilter" class="form-select" style="margin-right:0.5rem;"><option value="">全部月份</option></select>
+        <select id="recordStatusFilter" class="form-select">
+          <option value="">全部状态</option>
+          <option value="pending">pending</option>
+          <option value="processing">processing</option>
+          <option value="success">success</option>
+          <option value="failed">failed</option>
+        </select>
+      </div>
+    </div>
+    <div style="overflow-x:auto;">
+      <table style="width:100%;border-collapse:collapse;font-size:0.875rem;">
+        <thead style="background:#f9fafb;">
+          <tr>
+            <th style="padding:.5rem;text-align:left;">代码</th>
+            <th style="padding:.5rem;text-align:left;">名称</th>
+            <th style="padding:.5rem;text-align:left;">月份</th>
+            <th style="padding:.5rem;text-align:center;">数据</th>
+            <th style="padding:.5rem;text-align:center;">建模</th>
+            <th style="padding:.5rem;text-align:center;">检查</th>
+            <th style="padding:.5rem;text-align:left;">最后更新</th>
+          </tr>
+        </thead>
+        <tbody id="recordsBody"><tr><td colspan="7" style="text-align:center;padding:1rem;color:#9ca3af;">加载中…</td></tr></tbody>
+      </table>
+    </div>
+    <div id="recordsCount" style="margin-top:0.5rem;font-size:0.85rem;color:#6b7280;"></div>
+  </div>
+</div>
+
+<script>
+const API = '/RnnStrategies/api';
+let pollTimer = null;
+
+async function fetchJson(url, opts) {
+  const r = await fetch(url, opts);
+  return r.json();
+}
+
+function getSelectedMonth() {
+  const m = document.getElementById('monthInput').value.trim()
+         || document.getElementById('monthSelect').value;
+  return m;
+}
+
+async function loadMonths() {
+  const j = await fetchJson(`${API}/available_months`);
+  const sel = document.getElementById('monthSelect');
+  const filter = document.getElementById('recordMonthFilter');
+  sel.innerHTML = '<option value="">— 选择月份 —</option>';
+  filter.innerHTML = '<option value="">全部月份</option>';
+  if (j.success) {
+    j.data.forEach(m => {
+      sel.insertAdjacentHTML('beforeend', `<option value="${m}">${m}</option>`);
+      filter.insertAdjacentHTML('beforeend', `<option value="${m}">${m}</option>`);
+    });
+  }
+}
+
+async function startTrain(kind) {
+  const month = getSelectedMonth();
+  if (!month) { alert('请选择/输入月份'); return; }
+  const pool_type = document.getElementById('poolTypeSelect').value;
+  const body = { kind, month };
+  if (kind === 'data') body.start_date = document.getElementById('startDateInput').value;
+  if (pool_type) body.pool_type = pool_type;
+
+  const j = await fetchJson(`${API}/start_train`, {
+    method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body)
+  });
+  if (!j.success) { alert(j.message || '启动失败'); return; }
+  startPolling();
+}
+
+async function stopTrain() {
+  const j = await fetchJson(`${API}/stop_train`, { method:'POST' });
+  alert(j.message || '已请求停止');
+}
+
+function startPolling() {
+  if (pollTimer) return;
+  pollTimer = setInterval(refreshStatus, 1500);
+  refreshStatus();
+}
+
+function stopPolling() {
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+}
+
+async function refreshStatus() {
+  const j = await fetchJson(`${API}/train_status`);
+  if (!j.success) return;
+  const s = j.data;
+  document.getElementById('stKind').innerText = s.kind || '-';
+  document.getElementById('stStatus').innerText = s.status || '-';
+  document.getElementById('stMonth').innerText = s.month || '-';
+  document.getElementById('stStarted').innerText = s.started_at || '-';
+  document.getElementById('stFinished').innerText = s.finished_at || '-';
+  const pct = (s.progress || 0) + '%';
+  document.getElementById('stBar').style.width = pct;
+  document.getElementById('stProgressText').innerText = pct;
+  document.getElementById('stMessage').innerText = s.message || '';
+
+  const running = s.status === '进行中';
+  document.getElementById('btnStop').disabled = !running;
+  document.getElementById('btnDataStep').disabled = running;
+  document.getElementById('btnTrainStep').disabled = running;
+  document.getElementById('btnCheckStep').disabled = running;
+
+  if (!running && pollTimer) { stopPolling(); loadRecords(); }
+}
+
+async function loadRecords() {
+  const month = document.getElementById('recordMonthFilter').value;
+  const status = document.getElementById('recordStatusFilter').value;
+  const params = new URLSearchParams();
+  if (month) params.set('month', month);
+  if (status) params.set('status', status);
+  const j = await fetchJson(`${API}/training_records?${params}`);
+  const tbody = document.getElementById('recordsBody');
+  if (!j.success) { tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;padding:1rem;color:#dc2626;">${j.message||'加载失败'}</td></tr>`; return; }
+  if (!j.data || j.data.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:1rem;color:#9ca3af;">无记录</td></tr>';
+  } else {
+    tbody.innerHTML = j.data.map(r => `
+      <tr style="border-top:1px solid #e5e7eb;">
+        <td style="padding:.5rem;">${r.code||''}</td>
+        <td style="padding:.5rem;">${r.name||''}</td>
+        <td style="padding:.5rem;">${r.parser_month||''}</td>
+        <td style="padding:.5rem;text-align:center;">${badge(r.model_data)}</td>
+        <td style="padding:.5rem;text-align:center;">${badge(r.model_create)}</td>
+        <td style="padding:.5rem;text-align:center;">${badge(r.model_check)}</td>
+        <td style="padding:.5rem;color:#6b7280;font-size:0.8rem;">${r.model_check_timing || r.model_create_timing || r.model_data_timing || ''}</td>
+      </tr>`).join('');
+  }
+  document.getElementById('recordsCount').innerText = `共 ${j.count} 条`;
+}
+
+function badge(s) {
+  if (!s) return '<span style="color:#9ca3af;">-</span>';
+  const colors = {success:'#16a34a', failed:'#dc2626', error:'#dc2626', pending:'#6b7280', processing:'#2563eb'};
+  const c = colors[s] || '#374151';
+  return `<span style="background:${c}20;color:${c};padding:.15rem .5rem;border-radius:9999px;font-size:.75rem;">${s}</span>`;
+}
+
+document.getElementById('btnDataStep').onclick  = () => startTrain('data');
+document.getElementById('btnTrainStep').onclick = () => startTrain('train');
+document.getElementById('btnCheckStep').onclick = () => startTrain('check');
+document.getElementById('btnStop').onclick = stopTrain;
+document.getElementById('btnRefresh').onclick = loadRecords;
+document.getElementById('recordMonthFilter').onchange = loadRecords;
+document.getElementById('recordStatusFilter').onchange = loadRecords;
+
+(async () => {
+  await loadMonths();
+  await refreshStatus();
+  await loadRecords();
+  // 启动时如果有正在运行的任务，自动开始轮询
+  const j = await fetchJson(`${API}/train_status`);
+  if (j.success && j.data.status === '进行中') startPolling();
+})();
+</script>
+{% endblock %}

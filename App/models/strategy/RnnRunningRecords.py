@@ -137,10 +137,19 @@ class RnnRunningRecord(db.Model):
     def calculate_accuracy(self):
         """
         计算预测准确度
-        
+
         Returns:
             dict: 包含各种准确度指标的字典
         """
+        # 任何参与计算的字段为 None 时返回 0，避免 NoneType 算术异常刷日志
+        required = (self.predict_cycle_length, self.real_cycle_length,
+                    self.predict_cycle_change, self.real_cycle_change,
+                    self.predict_bar_change, self.real_bar_change,
+                    self.predict_bar_volume, self.real_bar_volume)
+        if any(v is None for v in required):
+            return {'cycle_length_accuracy': 0, 'cycle_change_accuracy': 0,
+                    'bar_change_accuracy': 0, 'bar_volume_accuracy': 0,
+                    'overall_accuracy': 0}
         try:
             # 周期长度准确度
             cycle_length_accuracy = 1 - abs(self.predict_cycle_length - self.real_cycle_length) / max(self.real_cycle_length, 1)

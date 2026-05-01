@@ -222,59 +222,76 @@ class TrainingDataCalculate(ModelData):
             data[self.stock_code] = {}
             ReadSaveFile.save_json(data, self.month, self.stock_code)
 
+    # 标准化时只看最近 N 个月的数据来确定 max/min。
+    # 月底重训会自动反映最新市场状态，避免远古异常值永久锚定 scale。
+    # 改大 → 范围更稳定；改小 → 对市场风格变化更敏感。
+    STANDARDIZATION_WINDOW_MONTHS = 24
+
     def stand_save_parser(self, data: pd.DataFrame, column: str, drop_duplicates: bool, drop_column: str) -> pd.DataFrame:
         """
-        标准化并保存指定列的数据
-        
-        使用中位数绝对偏差(MAD)方法进行异常值处理和标准化
-        
+        标准化并保存指定列的数据。
+
+        使用中位数绝对偏差(MAD)方法进行异常值处理，归一化到 [0, 1]。
+        统计量基于"近 N 个月"窗口内的数据计算（N = STANDARDIZATION_WINDOW_MONTHS），
+        但归一化应用到 data 的全部行——这样模型同时见到历史和当前样本，但 scale
+        由近期数据决定。
+
         Args:
-            data: 输入数据框
+            data: 输入数据框（该股票的完整 15m 历史）
             column: 需要标准化的列
-            drop_duplicates: 是否删除重复值
-            drop_column: 用于去重的列名
-            
+            drop_duplicates: 计算 MAD 时是否去重
+            drop_column: 去重依据列名
+
         Returns:
-            标准化后的数据框
+            标准化后的 DataFrame（与输入 data 行数相同）
         """
-        # 数据预处理
-        if drop_duplicates:
-            df = (data.dropna(subset=[SignalChoice]) if drop_column == SignalChoice 
-                  else data.drop_duplicates(subset=[column]))
-            med = df[column].median()
-            mad = abs(df[column] - med).median()
+        # 1. 截取近 N 个月数据用于统计 max/min
+        if 'date' in data.columns:
+            cutoff = pd.Timestamp.now() - pd.DateOffset(months=self.STANDARDIZATION_WINDOW_MONTHS)
+            recent = data[pd.to_datetime(data['date']) >= cutoff]
+            # 数据不足时回退到全量，避免样本太少导致 MAD 不稳定
+            if len(recent) < 100:
+                recent = data
         else:
-            med = data[column].median()
-            mad = abs(data[column] - med).median()
-        
-        # 计算上下限
+            recent = data
+
+        # 2. 在 recent 窗口上算 MAD
+        if drop_duplicates:
+            df_stats = (recent.dropna(subset=[SignalChoice]) if drop_column == SignalChoice
+                        else recent.drop_duplicates(subset=[column]))
+            med = df_stats[column].median()
+            mad = abs(df_stats[column] - med).median()
+        else:
+            med = recent[column].median()
+            mad = abs(recent[column] - med).median()
+
+        # 3. 计算上下限（±3 倍标准差，用 MAD 的 normal-consistent 近似 1.4826*mad ≈ std）
         high = round(med + (3 * 1.4826 * mad), 2)
         low = round(med - (3 * 1.4826 * mad), 2)
-        
-        # 读取历史参数并比较
-        try:
-            file_name = f"{self.stock_code}.json"
-            file_path, pre_month = find_file_in_paths(self.month, 'json', file_name)
-            parser_data = ReadSaveFile.read_json_by_path(file_path)
-            pre_high = parser_data[self.stock_code][column]['num_max']
-            pre_low = parser_data[self.stock_code][column]['num_min']
-            
-            # 更新上下限
-            high = max(high, pre_high)
-            low = min(low, pre_low)
-        except ValueError:
-            pass
-        
-        # 数据截断和归一化
+
+        # 4. 退化保护：mad=0 时 high==low，归一化会除零；给 high 加一个最小步进
+        if high == low:
+            high = low + 1e-6
+
+        # 5. 截断 + 归一化（应用到全部 data，不只 recent）
+        # 新版 pandas 不允许往 int 列写 float，先显式转 float64
+        if data[column].dtype != float:
+            data[column] = data[column].astype('float64')
         data.loc[data[column] > high, column] = high
         data.loc[data[column] < low, column] = low
         data[column] = (data[column] - low) / (high - low)
-        
-        # 保存参数
+
+        # 6. 保存本月参数（含元数据，方便日后审计/调试）
         parser_data = ReadSaveFile.read_json(self.month, self.stock_code)
-        parser_data[column] = {'num_max': high, 'num_min': low}
+        parser_data[column] = {
+            'num_max': high,
+            'num_min': low,
+            'window_months': self.STANDARDIZATION_WINDOW_MONTHS,
+            'sample_count': int(len(recent)),
+            'computed_at': pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S'),
+        }
         ReadSaveFile.save_json(parser_data, self.month, self.stock_code)
-        
+
         return data
 
     def stand_read_parser(self, data: pd.DataFrame, column: str, match: str) -> pd.DataFrame:
@@ -289,16 +306,24 @@ class TrainingDataCalculate(ModelData):
         Returns:
             标准化后的数据框
         """
-        # 读取标准化参数
-        parser_data = ReadSaveFile.read_json(self.month, self.stock_code)
-        num_max = parser_data[self.stock_code][match]['num_max']
-        num_min = parser_data[self.stock_code][match]['num_min']
-        
-        # 数据截断和归一化
+        # 读取标准化参数（扁平结构 {col: {num_max, num_min}}，与 stand_save_parser 一致）
+        parser_data = ReadSaveFile.read_json(self.month, self.stock_code) or {}
+        if match not in parser_data or 'num_max' not in parser_data[match]:
+            # 参数未保存（可能是 pre* 列在主列之前被处理，或第一次跑）
+            # 跳过标准化以免炸；调用方应保证调用顺序正确
+            return data
+
+        num_max = parser_data[match]['num_max']
+        num_min = parser_data[match]['num_min']
+
+        # 数据截断和归一化（防止往 int 列写 float）
+        if data[column].dtype != float:
+            data[column] = data[column].astype('float64')
         data.loc[data[column] > num_max, column] = num_max
         data.loc[data[column] < num_min, column] = num_min
-        data[column] = (data[column] - num_min) / (num_max - num_min)
-        
+        denom = num_max - num_min if num_max != num_min else 1e-6
+        data[column] = (data[column] - num_min) / denom
+
         return data
 
     def column_stand(self) -> pd.DataFrame:
@@ -384,15 +409,21 @@ class TrainingDataCalculate(ModelData):
         计算日成交量最大值
         用于数据标准化的基准
         """
-        _date = '2018-01-01'
-        self.data_1m = StockData1m.load_1m(self.stock_code, _date)
-        self.data_1m = self.data_1m[
-            self.data_1m['date'] > pd.to_datetime(_date)]
-        
+        # 用 self.data_1m（已由 data_1m_calculate 加载完整 start_date → 今）
+        # 不再重新调 StockData1m.load_1m（旧代码传日期字符串当 year，会 ValueError）
+        if self.data_1m is None or self.data_1m.empty:
+            today = pd.Timestamp.now().strftime('%Y-%m-%d')
+            self.data_1m = StockData1m.load_1m_by_date_range(
+                self.stock_code, self.start_date, today)
+
+        if self.data_1m.empty:
+            self.daily_volume_max = 0.0
+            return
+
         data_daily = ResampleData.resample_1m_data(
             data=self.data_1m, freq='daily')
         data_daily.loc[:, 'date'] = (
-            pd.to_datetime(data_daily['date']) + 
+            pd.to_datetime(data_daily['date']) +
             pd.Timedelta(minutes=585)
         )
         data_daily.loc[:, DailyVolEma] = (
@@ -400,8 +431,49 @@ class TrainingDataCalculate(ModelData):
             .rolling(90, min_periods=1)
             .mean()
         )
-        
+
         self.daily_volume_max = round(data_daily[DailyVolEma].max(), 2)
+
+    def data_1m_calculate(self) -> None:
+        """
+        加载并预处理 1 分钟数据（跨年范围）
+
+        从 self.start_date 到今天，跨年拼接 1m 数据到 self.data_1m。
+        历史代码这个方法在 RnnCreationData.TrainingDataCalculate 里缺失，
+        导致 calculation_single 链路根本跑不通——这里补全。
+        """
+        today = pd.Timestamp.now().strftime('%Y-%m-%d')
+        logger.info(f"加载 1 分钟数据: {self.stock_code}, {self.start_date} → {today}")
+
+        self.data_1m = StockData1m.load_1m_by_date_range(
+            self.stock_code, self.start_date, today)
+
+        if self.data_1m is None or self.data_1m.empty:
+            raise ValueError(
+                f"无法加载 1 分钟数据: {self.stock_code} (范围 {self.start_date} → {today})。"
+                f"请检查 data/data/quarters/ 里是否有该股票的 parquet 文件。"
+            )
+
+        # 标准化 date 列 + 去重排序
+        self.data_1m['date'] = pd.to_datetime(self.data_1m['date'])
+        self.data_1m = (self.data_1m
+                        .drop_duplicates(subset=['date'])
+                        .sort_values('date')
+                        .reset_index(drop=True))
+
+        # 缺失值处理
+        price_cols = ['open', 'high', 'low', 'close']
+        for c in price_cols:
+            if c in self.data_1m.columns:
+                self.data_1m[c] = self.data_1m[c].ffill()
+        if 'volume' in self.data_1m.columns:
+            self.data_1m['volume'] = self.data_1m['volume'].fillna(0)
+
+        self.start_date_1m = self.data_1m['date'].min().strftime('%Y-%m-%d %H:%M:%S')
+        logger.info(f"1m 数据加载完成: {self.stock_code}, {len(self.data_1m)} 条")
+
+        # 顺手算日成交量最大值（标准化时会用到）
+        self._calculate_daily_volume_max()
 
     def first_calculate(self) -> pd.DataFrame:
         """
@@ -429,7 +501,7 @@ class TrainingDataCalculate(ModelData):
         # 合并数据
         self.data_15m = self.data_15m.join([data_daily]).reset_index()
         self.data_15m[DailyVolEmaParser] = self.data_15m[
-            DailyVolEmaParser].fillna(method='ffill')
+            DailyVolEmaParser].ffill()
         
         # 排除最后一个信号周期
         last_signal_times = self.data_15m.iloc[-1][SignalTimes]
@@ -563,7 +635,7 @@ class TrainingDataCalculate(ModelData):
         
         # 填充缺失值
         fills = list(pre_dic.keys()) + list(next_dic.keys())
-        self.data_15m[fills] = self.data_15m[fills].fillna(method='ffill')
+        self.data_15m[fills] = self.data_15m[fills].ffill()
         
         return self.data_15m
 
@@ -631,22 +703,38 @@ class TrainingDataCalculate(ModelData):
 
     def _save_record_info(self):
         """
-        保存记录信息
+        保存记录信息（用于下次增量训练定位起点）。
+        老 schema 用的列名 SignalStartTime / SignalTimes 已重命名为
+        SignalStartIndex / SignalId（见 MacdParser），这里跟着改。
+        缺列时跳过对应字段而不抛异常，避免训练流程中断。
         """
-        record_info = {
-            'RecordEndDate': self.data_15m.iloc[-1]['date'].strftime(
-                '%Y-%m-%d %H:%M:%S'),
-            'RecordEndSignal': self.data_15m.iloc[-1]['Signal'],
-            'RecordEndSignalTimes': self.data_15m.iloc[-1]['SignalTimes'],
-            'RecordEndSignalStartTime': self.data_15m.iloc[-1][
-                'SignalStartTime'].strftime('%Y-%m-%d %H:%M:%S'),
-            'RecordNextStartDate': self.data_15m.drop_duplicates(
-                subset=[SignalTimes]).tail(6).iloc[0]['date'].strftime(
-                '%Y-%m-%d %H:%M:%S')
-        }
-        
-        records = ReadSaveFile.read_json(self.month, self.stock_code)
-        records.update(record_info)
+        last = self.data_15m.iloc[-1]
+        record_info = {}
+
+        def _safe(col, fmt=None):
+            if col not in self.data_15m.columns:
+                return None
+            v = last.get(col)
+            if v is None or pd.isna(v):
+                return None
+            return v.strftime(fmt) if (fmt and hasattr(v, 'strftime')) else v
+
+        record_info['RecordEndDate'] = _safe('date', '%Y-%m-%d %H:%M:%S')
+        record_info['RecordEndSignal'] = _safe('Signal')
+        record_info['RecordEndSignalTimes'] = _safe(SignalTimes)
+        # SignalStartIndex 是个 datetime（来自 SignalStartTime 重命名）
+        record_info['RecordEndSignalStartTime'] = _safe(SignalStartIndex, '%Y-%m-%d %H:%M:%S')
+
+        try:
+            sub = self.data_15m.drop_duplicates(subset=[SignalTimes]).tail(6)
+            if len(sub) > 0:
+                record_info['RecordNextStartDate'] = sub.iloc[0]['date'].strftime(
+                    '%Y-%m-%d %H:%M:%S')
+        except Exception:
+            pass
+
+        records = ReadSaveFile.read_json(self.month, self.stock_code) or {}
+        records.update({k: v for k, v in record_info.items() if v is not None})
         ReadSaveFile.save_json(records, self.month, self.stock_code)
 
     def data_15m_calculate(self) -> pd.DataFrame:
@@ -667,18 +755,23 @@ class TrainingDataCalculate(ModelData):
         """
         执行单个股票的计算流程
         """
+        # 读上一月份的 RecordEndDate（用于增量训练定位）
+        # find_file_in_paths 返回 (path, month) 二元组，老代码这里漏了解包
         try:
-            path = find_file_in_paths(
+            result = find_file_in_paths(
                 self.month, 'json', f'{self.stock_code}.json')
-            record = ReadSaveFile.read_json_by_path(path)
-            self.RecordEndDate = record[self.stock_code]['RecordEndDate']
-            self.RecordStartDate = record[self.stock_code]['NextStartDate']
-
-        except ValueError:
+            path = result[0] if isinstance(result, tuple) else result
+            if path:
+                record = ReadSaveFile.read_json_by_path(path)
+                if record and self.stock_code in record:
+                    self.RecordEndDate = record[self.stock_code].get('RecordEndDate')
+                    self.RecordStartDate = record[self.stock_code].get('NextStartDate')
+        except (ValueError, TypeError, KeyError):
+            # 第一次训练 / 上月没有记录 / 字段缺失，跳过
             pass
-        
+
         self.data_15m = self.data_15m_calculate()
-        
+
         # 处理不同模型的数据
         for i in range(4):
             x = self.x_columns[i]

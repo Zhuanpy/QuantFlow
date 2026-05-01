@@ -1,0 +1,348 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container">
+    <div class="bd-header">
+        <div>
+            <a href="{{ url_for('board_trend.page') }}" class="back-link">← 返回板块趋势打分</a>
+            <h1 id="bdTitle">{{ board_code }}</h1>
+            <div class="bd-meta" id="bdMeta">加载中...</div>
+        </div>
+        <div class="bd-actions">
+            <label>日 K
+                <select id="daysSel" onchange="loadChart()">
+                    <option value="60">60 日</option>
+                    <option value="120" selected>120 日</option>
+                    <option value="250">250 日</option>
+                    <option value="500">500 日</option>
+                </select>
+            </label>
+            <label>15m
+                <select id="barsSel" onchange="loadChart15m()">
+                    <option value="96">96 根 (5日)</option>
+                    <option value="192" selected>192 根 (10日)</option>
+                    <option value="480">480 根 (25日)</option>
+                    <option value="960">960 根 (50日)</option>
+                </select>
+            </label>
+            <label class="range-label">
+                区间
+                <input type="date" id="startDate">
+                <span>~</span>
+                <input type="date" id="endDate">
+                <button class="btn-apply" onclick="applyDateRange()">应用</button>
+                <button class="btn-clear" onclick="clearDateRange()">清除</button>
+            </label>
+            <span class="range-hint" id="rangeHint"></span>
+        </div>
+    </div>
+
+    <!-- 当前评分摘要 -->
+    <div class="score-card" id="scoreCard">
+        <div class="sc-stage" id="scStage">-</div>
+        <div class="sc-total"><span class="lbl">综合分</span><span class="val" id="scTotal">-</span></div>
+        <div class="sc-conf"><span class="lbl">置信</span><span class="val" id="scConf">-</span></div>
+        <div class="sc-strength"><span class="lbl">强度</span><span class="val" id="scStrength">-</span></div>
+        <div class="sc-signal"><span class="lbl">信号</span><span class="val" id="scSignal">-</span></div>
+        <div class="sc-breakdown" id="scBreakdown"></div>
+    </div>
+
+    <!-- 图表 -->
+    <div class="chart-title">日 K 线</div>
+    <div id="kChart" class="chart-box"></div>
+
+    <div class="chart-title">15 分钟 K 线（交易主周期）</div>
+    <div id="kChart15m" class="chart-box"></div>
+
+    <!-- 历史评分时间线 -->
+    <div class="history-wrap">
+        <h3>历史评分（最近 120 条）</h3>
+        <table class="hist-table">
+            <thead>
+                <tr><th>日期</th><th>阶段</th><th>置信</th><th>强度</th><th>信号</th>
+                    <th>价格</th><th>均线</th><th>MACD</th><th>量能</th><th>动量</th><th>波动率</th><th class="hl">综合分</th></tr>
+            </thead>
+            <tbody id="histBody"><tr><td colspan="12" class="empty">加载中...</td></tr></tbody>
+        </table>
+    </div>
+</div>
+
+<style>
+    .container { max-width:1400px; margin:1rem auto; padding:0 1rem; }
+    .back-link { color:#2563eb; font-size:.85rem; text-decoration:none; }
+    .back-link:hover { text-decoration:underline; }
+    .bd-header { display:flex; justify-content:space-between; align-items:flex-start;
+                 background:#fff; padding:1rem 1.25rem; border-radius:.6rem; box-shadow:var(--shadow-sm); margin-bottom:1rem; }
+    .bd-header h1 { margin:.25rem 0 0; }
+    .bd-meta { color:#6b7280; font-size:.85rem; margin-top:.25rem; }
+    .bd-actions select { padding:.3rem .5rem; border:1px solid #d1d5db; border-radius:.3rem; }
+
+    .score-card { display:flex; align-items:center; gap:1rem; flex-wrap:wrap;
+                  background:#fff; padding:.85rem 1rem; border-radius:.5rem; margin-bottom:.75rem; box-shadow:var(--shadow-sm); }
+    .sc-stage { padding:.4rem .8rem; border-radius:.35rem; font-weight:600; background:#f3f4f6; }
+    .sc-stage.up_early { background:#d1fae5; color:#065f46; }
+    .sc-stage.up_late { background:#dcfce7; color:#166534; }
+    .sc-stage.down_early { background:#ffedd5; color:#9a3412; }
+    .sc-stage.down_late { background:#fee2e2; color:#991b1b; }
+    .sc-stage.unknown { background:#f3f4f6; color:#4b5563; }
+    .score-card .lbl { color:#6b7280; font-size:.8rem; margin-right:.3rem; }
+    .score-card .val { font-weight:600; font-size:1rem; }
+    .sc-total .val { color:#2563eb; font-size:1.4rem; }
+    .sc-breakdown { margin-left:auto; font-size:.78rem; color:#4b5563; display:flex; gap:.6rem; flex-wrap:wrap; }
+    .sc-breakdown span b { color:#1f2937; }
+
+    .chart-title { font-size:.95rem; font-weight:600; color:#1f2937; margin:.25rem 0 .4rem; padding-left:.25rem; }
+    .chart-box { background:#fff; border-radius:.5rem; box-shadow:var(--shadow-sm);
+                 padding:.5rem; height:560px; margin-bottom:1rem; }
+    .bd-actions { display:flex; gap:.75rem; flex-wrap:wrap; align-items:center; }
+    .bd-actions label { font-size:.85rem; color:#374151; display:inline-flex; align-items:center; gap:.35rem; }
+    .bd-actions input[type=date] { padding:.25rem .4rem; border:1px solid #d1d5db; border-radius:.3rem; font-size:.85rem; }
+    .btn-apply, .btn-clear { padding:.3rem .65rem; border-radius:.3rem; border:1px solid #d1d5db;
+                             background:#fff; cursor:pointer; font-size:.8rem; }
+    .btn-apply { background:#2563eb; color:#fff; border-color:#2563eb; }
+    .btn-apply:hover { background:#1d4ed8; }
+    .btn-clear:hover { background:#f3f4f6; }
+    .range-hint { font-size:.78rem; color:#2563eb; }
+
+    .history-wrap { background:#fff; border-radius:.5rem; padding:.75rem 1rem; box-shadow:var(--shadow-sm); }
+    .history-wrap h3 { margin:0 0 .5rem; font-size:1rem; }
+    .hist-table { width:100%; border-collapse:collapse; font-size:.82rem; }
+    .hist-table th, .hist-table td { padding:.4rem .5rem; border-bottom:1px solid #f1f5f9; text-align:right; }
+    .hist-table th { background:#f9fafb; color:#374151; text-align:center; }
+    .hist-table td:first-child, .hist-table th:first-child { text-align:left; }
+    .hist-table td.hl, .hist-table th.hl { background:#eff6ff; font-weight:600; }
+    .empty { text-align:center !important; color:#9ca3af; padding:1.5rem; }
+    .stage-tag { display:inline-block; padding:.1rem .45rem; border-radius:.3rem; font-size:.75rem; }
+    .stage-tag.up_early { background:#d1fae5; color:#065f46; }
+    .stage-tag.up_late { background:#dcfce7; color:#166534; }
+    .stage-tag.down_early { background:#ffedd5; color:#9a3412; }
+    .stage-tag.down_late { background:#fee2e2; color:#991b1b; }
+    .stage-tag.unknown { background:#f3f4f6; color:#4b5563; }
+</style>
+
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<script>
+const BOARD_CODE = "{{ board_code }}";
+let chart = null;
+let chart15m = null;
+
+function fmtNum(v, n=1) {
+    if (v === null || v === undefined || v === '') return '-';
+    return Number(v).toFixed(n);
+}
+
+function getDateRange() {
+    const s = document.getElementById('startDate').value;
+    const e = document.getElementById('endDate').value;
+    return (s && e) ? { start: s, end: e } : null;
+}
+
+function rangeQuery() {
+    const r = getDateRange();
+    return r ? `&start_date=${r.start}&end_date=${r.end}` : '';
+}
+
+function applyDateRange() {
+    const s = document.getElementById('startDate').value;
+    const e = document.getElementById('endDate').value;
+    if (!s || !e) { alert('请同时选择起始日期和结束日期'); return; }
+    if (s > e) { alert('起始日期不能晚于结束日期'); return; }
+    document.getElementById('rangeHint').textContent = `区间生效：${s} ~ ${e}（覆盖左侧窗口/根数）`;
+    loadChart();
+    loadChart15m();
+}
+
+function clearDateRange() {
+    document.getElementById('startDate').value = '';
+    document.getElementById('endDate').value = '';
+    document.getElementById('rangeHint').textContent = '';
+    loadChart();
+    loadChart15m();
+}
+
+async function loadHistory() {
+    const r = await fetch(`/board_trend/api/board/${BOARD_CODE}/history`).then(r=>r.json());
+    if (!r.success) return;
+    const rows = r.data.rows || [];
+    document.getElementById('bdTitle').textContent = `${r.data.board_code}  ${r.data.board_name || ''}`;
+
+    // 最新一条 → 摘要
+    if (rows.length) {
+        const x = rows[0];
+        document.getElementById('bdMeta').textContent = `最新评分日期：${x.record_date} · 公式 ${x.formula_version || '-'}`;
+        const stageEl = document.getElementById('scStage');
+        stageEl.textContent = x.trend_stage || '-';
+        stageEl.className = 'sc-stage ' + (x.trend_stage || 'unknown');
+        document.getElementById('scTotal').textContent = fmtNum(x.total_score, 1);
+        document.getElementById('scConf').textContent = fmtNum(x.trend_stage_confidence, 0);
+        document.getElementById('scStrength').textContent = x.trend_strength || '-';
+        document.getElementById('scSignal').textContent = x.signal || '-';
+        const bd = document.getElementById('scBreakdown');
+        bd.innerHTML = `
+            <span>价格 <b>${fmtNum(x.price_structure_score)}</b></span>
+            <span>均线 <b>${fmtNum(x.ma_score)}</b></span>
+            <span>MACD <b>${fmtNum(x.macd_score)}</b></span>
+            <span>量能 <b>${fmtNum(x.volume_score)}</b></span>
+            <span>动量 <b>${fmtNum(x.momentum_score)}</b></span>
+            <span>波动率 <b>${fmtNum(x.volatility_score)}</b></span>
+        `;
+    } else {
+        document.getElementById('bdMeta').textContent = '该板块尚无打分记录。';
+    }
+
+    // 历史表
+    const tb = document.getElementById('histBody');
+    if (rows.length === 0) {
+        tb.innerHTML = `<tr><td colspan="12" class="empty">暂无历史</td></tr>`;
+    } else {
+        tb.innerHTML = rows.map(it => `
+            <tr>
+                <td>${it.record_date}</td>
+                <td><span class="stage-tag ${it.trend_stage || 'unknown'}">${it.trend_stage || 'unknown'}</span></td>
+                <td>${fmtNum(it.trend_stage_confidence, 0)}</td>
+                <td>${it.trend_strength || '-'}</td>
+                <td>${it.signal || '-'}</td>
+                <td>${fmtNum(it.price_structure_score)}</td>
+                <td>${fmtNum(it.ma_score)}</td>
+                <td>${fmtNum(it.macd_score)}</td>
+                <td>${fmtNum(it.volume_score)}</td>
+                <td>${fmtNum(it.momentum_score)}</td>
+                <td>${fmtNum(it.volatility_score)}</td>
+                <td class="hl">${fmtNum(it.total_score, 1)}</td>
+            </tr>
+        `).join('');
+    }
+}
+
+async function loadChart() {
+    const days = document.getElementById('daysSel').value;
+    const r = await fetch(`/board_trend/api/board/${BOARD_CODE}/chart?days=${days}${rangeQuery()}`).then(r=>r.json());
+    if (!r.success) {
+        document.getElementById('kChart').innerHTML =
+            `<div style="padding:2rem;text-align:center;color:#dc2626;">加载图表失败：${r.message}</div>`;
+        return;
+    }
+    const rows = r.data.rows;
+    const dates = rows.map(x => x.date);
+    const kdata = rows.map(x => [x.open, x.close, x.low, x.high]);   // ECharts 蜡烛图格式
+    const ma20  = rows.map(x => x.ma20);
+    const ma60  = rows.map(x => x.ma60);
+    const dif   = rows.map(x => x.dif);
+    const dea   = rows.map(x => x.dea);
+    const bar   = rows.map(x => x.bar);
+    const vol   = rows.map((x, i) => ({
+        value: x.volume,
+        itemStyle: { color: x.close >= x.open ? '#dc2626' : '#16a34a' }
+    }));
+
+    if (!chart) chart = echarts.init(document.getElementById('kChart'));
+    chart.setOption({
+        animation: false,
+        tooltip: { trigger: 'axis', axisPointer: { type: 'cross' } },
+        legend: { data: ['日K', 'MA20', 'MA60', 'DIF', 'DEA', 'MACD'] , top: 0 },
+        axisPointer: { link: [{ xAxisIndex: 'all' }] },
+        grid: [
+            { left: 60, right: 30, top: 30, height: '50%' },
+            { left: 60, right: 30, top: '62%', height: '15%' },
+            { left: 60, right: 30, top: '80%', height: '17%' },
+        ],
+        xAxis: [
+            { type: 'category', data: dates, scale: true, boundaryGap: false, axisLine: { onZero: false }, splitLine: { show: false } },
+            { type: 'category', gridIndex: 1, data: dates, axisLabel: { show: false }, axisLine: { onZero: false }, splitLine: { show: false } },
+            { type: 'category', gridIndex: 2, data: dates, axisLabel: { show: false }, axisLine: { onZero: false }, splitLine: { show: false } },
+        ],
+        yAxis: [
+            { scale: true, splitArea: { show: true } },
+            { scale: true, gridIndex: 1, splitNumber: 2, axisLabel: { show: true } },
+            { scale: true, gridIndex: 2, splitNumber: 2, axisLabel: { show: true } },
+        ],
+        dataZoom: [
+            { type: 'inside', xAxisIndex: [0,1,2], start: 60, end: 100 },
+            { show: true, xAxisIndex: [0,1,2], type: 'slider', bottom: 0, start: 60, end: 100 },
+        ],
+        series: [
+            { name: '日K', type: 'candlestick', data: kdata,
+              itemStyle: { color: '#dc2626', color0: '#16a34a', borderColor: '#dc2626', borderColor0: '#16a34a' } },
+            { name: 'MA20', type: 'line', data: ma20, smooth: true, showSymbol: false, lineStyle: { width: 1.2, color: '#f59e0b' } },
+            { name: 'MA60', type: 'line', data: ma60, smooth: true, showSymbol: false, lineStyle: { width: 1.2, color: '#8b5cf6' } },
+            { name: '量', type: 'bar', xAxisIndex: 1, yAxisIndex: 1, data: vol },
+            { name: 'DIF', type: 'line', xAxisIndex: 2, yAxisIndex: 2, data: dif, smooth: true, showSymbol: false, lineStyle: { color: '#2563eb' } },
+            { name: 'DEA', type: 'line', xAxisIndex: 2, yAxisIndex: 2, data: dea, smooth: true, showSymbol: false, lineStyle: { color: '#f59e0b' } },
+            { name: 'MACD', type: 'bar', xAxisIndex: 2, yAxisIndex: 2, data: bar.map(v => ({
+                value: v, itemStyle: { color: v >= 0 ? '#dc2626' : '#16a34a' }
+            })) },
+        ]
+    });
+}
+
+async function loadChart15m() {
+    const bars = document.getElementById('barsSel').value;
+    const r = await fetch(`/board_trend/api/board/${BOARD_CODE}/chart_15m?bars=${bars}${rangeQuery()}`).then(r=>r.json());
+    if (!r.success) {
+        document.getElementById('kChart15m').innerHTML =
+            `<div style="padding:2rem;text-align:center;color:#dc2626;">加载 15m 图表失败：${r.message}</div>`;
+        return;
+    }
+    const rows = r.data.rows;
+    const dates = rows.map(x => x.date);
+    const kdata = rows.map(x => [x.open, x.close, x.low, x.high]);
+    const ma20  = rows.map(x => x.ma20);
+    const ma60  = rows.map(x => x.ma60);
+    const dif   = rows.map(x => x.dif);
+    const dea   = rows.map(x => x.dea);
+    const bar   = rows.map(x => x.bar);
+    const vol   = rows.map(x => ({
+        value: x.volume,
+        itemStyle: { color: x.close >= x.open ? '#dc2626' : '#16a34a' }
+    }));
+
+    if (!chart15m) chart15m = echarts.init(document.getElementById('kChart15m'));
+    chart15m.setOption({
+        animation: false,
+        tooltip: { trigger: 'axis', axisPointer: { type: 'cross' } },
+        legend: { data: ['15mK', 'MA20', 'MA60', 'DIF', 'DEA', 'MACD'] , top: 0 },
+        axisPointer: { link: [{ xAxisIndex: 'all' }] },
+        grid: [
+            { left: 60, right: 30, top: 30, height: '50%' },
+            { left: 60, right: 30, top: '62%', height: '15%' },
+            { left: 60, right: 30, top: '80%', height: '17%' },
+        ],
+        xAxis: [
+            { type: 'category', data: dates, scale: true, boundaryGap: false, axisLine: { onZero: false }, splitLine: { show: false } },
+            { type: 'category', gridIndex: 1, data: dates, axisLabel: { show: false }, axisLine: { onZero: false }, splitLine: { show: false } },
+            { type: 'category', gridIndex: 2, data: dates, axisLabel: { show: false }, axisLine: { onZero: false }, splitLine: { show: false } },
+        ],
+        yAxis: [
+            { scale: true, splitArea: { show: true } },
+            { scale: true, gridIndex: 1, splitNumber: 2, axisLabel: { show: true } },
+            { scale: true, gridIndex: 2, splitNumber: 2, axisLabel: { show: true } },
+        ],
+        dataZoom: [
+            { type: 'inside', xAxisIndex: [0,1,2], start: 60, end: 100 },
+            { show: true, xAxisIndex: [0,1,2], type: 'slider', bottom: 0, start: 60, end: 100 },
+        ],
+        series: [
+            { name: '15mK', type: 'candlestick', data: kdata,
+              itemStyle: { color: '#dc2626', color0: '#16a34a', borderColor: '#dc2626', borderColor0: '#16a34a' } },
+            { name: 'MA20', type: 'line', data: ma20, smooth: true, showSymbol: false, lineStyle: { width: 1.2, color: '#f59e0b' } },
+            { name: 'MA60', type: 'line', data: ma60, smooth: true, showSymbol: false, lineStyle: { width: 1.2, color: '#8b5cf6' } },
+            { name: '量', type: 'bar', xAxisIndex: 1, yAxisIndex: 1, data: vol },
+            { name: 'DIF', type: 'line', xAxisIndex: 2, yAxisIndex: 2, data: dif, smooth: true, showSymbol: false, lineStyle: { color: '#2563eb' } },
+            { name: 'DEA', type: 'line', xAxisIndex: 2, yAxisIndex: 2, data: dea, smooth: true, showSymbol: false, lineStyle: { color: '#f59e0b' } },
+            { name: 'MACD', type: 'bar', xAxisIndex: 2, yAxisIndex: 2, data: bar.map(v => ({
+                value: v, itemStyle: { color: v >= 0 ? '#dc2626' : '#16a34a' }
+            })) },
+        ]
+    });
+}
+
+window.addEventListener('resize', () => {
+    if (chart) chart.resize();
+    if (chart15m) chart15m.resize();
+});
+
+loadHistory();
+loadChart();
+loadChart15m();
+</script>
+{% endblock %}

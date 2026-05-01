@@ -328,6 +328,11 @@ def download_fund_data():
         # 记录需要处理的基金记录总数
         logging.info(f"需要下载 {total_count} 条基金数据...")
 
+        # 清空当日 CSV，避免与上一次（可能不完整）的运行结果混在一起
+        # 后续每个 worker 通过 save_funds_holdings_to_csv 追加写入
+        from App.models.data.FundsAwkward import reset_funds_holdings_csv
+        reset_funds_holdings_csv(download_date)
+
     def process_single_fund(fund_id):
         """处理单个基金的下载任务"""
         try:
@@ -462,6 +467,19 @@ def download_fund_data():
         task_state.status = "已完成"  # 设置状态为"已完成"
         task_state.progress = 100  # 设置进度为 100%
         logging.info("所有基金数据下载任务已完成。")
+
+    # 自动把当日基金持仓聚合写回 data_stock_daily，无需用户手动触发
+    # 失败不影响下载主流程，仅记录日志
+    try:
+        from App.models.data.StockDaily import update_fund_holdings_data
+        with app.app_context():
+            ok = update_fund_holdings_data(download_date.strftime('%Y%m%d'))
+        if ok:
+            logging.info(f"已自动同步 {download_date} 基金持仓到 data_stock_daily")
+        else:
+            logging.warning(f"自动同步 {download_date} 基金持仓到 data_stock_daily 未成功（无数据或全部未匹配）")
+    except Exception as e:
+        logging.error(f"自动同步基金持仓到日K失败: {e}")
 
 
 @dl_funds_awkward_bp.route("/download_funds_awake_index")

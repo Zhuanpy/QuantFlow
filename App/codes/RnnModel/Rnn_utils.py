@@ -50,7 +50,8 @@ def rnn_data_path(month: str):
     :param month: 月份
     :return: 数据路径
     """
-    return os.path.join(file_root(), 'code_data', 'RnnData', month)
+    # 实际数据落在项目根 data/RnnData/，与 StockDataPath 保持一致
+    return os.path.join(file_root(), 'data', 'RnnData', month)
 
 
 def rnn_data_pre_month_list(month: str, class_file: str) -> tuple:
@@ -65,14 +66,16 @@ def rnn_data_pre_month_list(month: str, class_file: str) -> tuple:
 
     """
 
-    root_path = os.path.join(file_root(), 'code_data', 'RnnData')
+    # 实际数据落在 data/RnnData/，不是 code_data/RnnData/
+    root_path = os.path.join(file_root(), 'data', 'RnnData')
 
     # 获取RnnData文件夹下全部月份文件夹名称
     folder_names = sorted(
         [folder for folder in os.listdir(root_path) if os.path.isdir(os.path.join(root_path, folder))], reverse=True)
 
-    # 删除CommonFile文件夹
-    folder_names.remove('CommonFile')
+    # 删除CommonFile文件夹（如果存在）
+    if 'CommonFile' in folder_names:
+        folder_names.remove('CommonFile')
 
     # 移除当前月份及以后月份的文件夹
     folder_names = folder_names[folder_names.index(month) + 1:]

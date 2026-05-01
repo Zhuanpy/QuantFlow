@@ -5,6 +5,8 @@ col = Config.STOCK_COLUMNS
 # signal
 Signal = col['Signal']['1']
 SignalId = col['Signal']['2']
+# 兼容别名：历史代码大量使用 SignalTimes 这个名字，与 SignalId 指向同一列
+SignalTimes = SignalId
 SignalChoice = col['Signal']['3']
 SignalStartIndex = col['Signal']['4']
 up = col['Signal']['5']

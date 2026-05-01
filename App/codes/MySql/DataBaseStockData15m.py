@@ -138,6 +138,21 @@ class StockData15m:
         return StockData15m.save_15m(stock_code, data)
     
     @staticmethod
+    def get_data_15m_data_end_date(stock_code: str):
+        """
+        获取该股票 15m 数据的最新日期（用于增量追加）。
+        没数据时返回 1900-01-01，让追加逻辑等同于"全量插入"。
+        """
+        try:
+            df = StockData15m.load_15m(stock_code)
+            if df is None or df.empty:
+                return pd.Timestamp('1900-01-01')
+            return pd.to_datetime(df['date']).max()
+        except Exception as e:
+            logger.warning(f"取 {stock_code} 15m 最新日期失败: {e}")
+            return pd.Timestamp('1900-01-01')
+
+    @staticmethod
     def delete_15m(stock_code: str) -> bool:
         """
         删除股票15分钟数据

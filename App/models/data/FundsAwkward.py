@@ -5,28 +5,50 @@
 import pandas as pd
 import os
 import logging
+import threading
 from datetime import date
 
 logger = logging.getLogger(__name__)
+
+# 多线程下载会并发写入同一日的 CSV，使用模块级锁串行化追加写
+_csv_write_lock = threading.Lock()
 
 
 def get_funds_data_directory():
     """
     获取基金数据保存目录
-    
+
     Returns:
         str: 基金数据保存目录路径
     """
-    # 在项目根目录下创建 data/funds_holdings 目录
-    # 使用更简单的方法：从当前工作目录开始
-    import os
-    current_dir = os.getcwd()
-    funds_dir = os.path.join(current_dir, 'data', 'funds_holdings')
-    
-    # 确保目录存在
+    # 始终基于项目根目录定位 data/funds_holdings，避免受 os.getcwd() 漂移影响
+    # 否则下载 (save) 与分析 (read) 路径会不一致，导致新数据看不到
+    from config import Config
+    funds_dir = os.path.join(Config.get_project_root(), 'data', 'funds_holdings')
+
     os.makedirs(funds_dir, exist_ok=True)
-    
+
     return funds_dir
+
+
+def reset_funds_holdings_csv(download_date: date = None) -> None:
+    """
+    删除指定日期已存在的 CSV 文件。在批量下载开始前调用，
+    确保后续追加写入不会与上一次（可能不完整）的运行结果混在一起。
+    """
+    if download_date is None:
+        download_date = date.today()
+
+    filename = f"funds_holdings_{download_date.strftime('%Y%m%d')}.csv"
+    file_path = os.path.join(get_funds_data_directory(), filename)
+
+    with _csv_write_lock:
+        if os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+                logger.info(f"已清空当日基金持仓 CSV，准备重新下载: {file_path}")
+            except OSError as e:
+                logger.warning(f"清空 {file_path} 失败: {e}")
 
 
 def save_funds_holdings_to_csv(df: pd.DataFrame, download_date: date = None) -> bool:
@@ -51,11 +73,20 @@ def save_funds_holdings_to_csv(df: pd.DataFrame, download_date: date = None) -> 
         # 获取保存目录
         save_dir = get_funds_data_directory()
         file_path = os.path.join(save_dir, filename)
-        
-        # 保存到CSV文件
-        df.to_csv(file_path, index=False, encoding='utf-8-sig')
-        
-        logger.info(f"成功保存基金重仓数据到文件: {file_path}，共 {len(df)} 条记录")
+
+        # 多个基金会并发调用本函数写入同一日文件，必须追加而非覆盖，
+        # 否则只会保留最后一次写入的数据（导致分析页只看到 1 只基金的持仓）
+        with _csv_write_lock:
+            file_exists = os.path.exists(file_path)
+            df.to_csv(
+                file_path,
+                index=False,
+                encoding='utf-8-sig',
+                mode='a' if file_exists else 'w',
+                header=not file_exists,
+            )
+
+        logger.info(f"成功追加基金重仓数据到文件: {file_path}，本次 {len(df)} 条记录")
         return True
 
     except Exception as e:

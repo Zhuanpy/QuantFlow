@@ -249,7 +249,8 @@ def update_fund_holdings_data(analysis_date: str = None):
             analysis_date = available_dates[0]
 
         fund_date_obj = datetime.strptime(analysis_date, '%Y%m%d').date()
-        fund_data = get_funds_holdings_from_csv(fund_date_obj, limit_funds=500)
+        # 不限制基金数量，确保 fund_holdings_count 反映全部基金的真实持有数
+        fund_data = get_funds_holdings_from_csv(fund_date_obj, limit_funds=None)
 
         if fund_data.empty:
             logger.error(f"没有找到 {analysis_date} 的基金持仓数据")
@@ -258,7 +259,7 @@ def update_fund_holdings_data(analysis_date: str = None):
         logger.info(f"开始更新 {analysis_date} 的基金持仓数据，共 {len(fund_data)} 条记录")
 
         stock_fund_stats = fund_data.groupby('stock_code').agg({
-            'fund_code': 'count',
+            'fund_code': 'nunique',  # 去重后的基金数，避免同基金重复行导致计数虚高
             'holdings_ratio': ['sum', 'mean', 'max']
         }).round(4)
 
@@ -269,7 +270,18 @@ def update_fund_holdings_data(analysis_date: str = None):
         not_found_count = 0
 
         for _, row in stock_fund_stats.iterrows():
-            stock_code = row['stock_code']
+            # CSV 里 stock_code 被 pandas 默认解析为 int64（丢失前导 0）；
+            # DB 里是 VARCHAR '002475' — 必须 zfill 还原成 6 位字符串才能匹配
+            raw_code = row['stock_code']
+            s = str(raw_code).strip()
+            # 全数字（含 numpy 数字类型转 str 后）→ 补齐到 6 位
+            if s.replace('.', '').replace('-', '').isdigit():
+                # 处理 '600276.0' 这种浮点 str
+                if '.' in s:
+                    s = s.split('.')[0]
+                stock_code = s.zfill(6)
+            else:
+                stock_code = s
 
             daily_record = StockDaily.query.filter(
                 StockDaily.stock_code == stock_code,

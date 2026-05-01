@@ -85,9 +85,13 @@ def get_base_directory():
     return os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 
 def get_data_directory(year):
-    """获取数据目录的绝对路径"""
-    base_dir = get_base_directory()
-    return os.path.join(base_dir, 'static', 'data', 'years', str(year))
+    """获取数据目录的绝对路径
+
+    实际数据在项目根 data/data/years/<year>/，不是 App/static/...。
+    历史路径写错过；这里指向真实位置。
+    """
+    from config import Config
+    return os.path.join(Config.get_project_root(), 'data', 'data', 'years', str(year))
 
 class ProcessContext:
     def __init__(self, app, stock_code, year):
@@ -216,117 +220,16 @@ def get_stock_pool_stats():
         }), 500
 
 
+_DEPRECATED_MSG = (
+    '该功能已废弃。所有训练数据生成、模型训练、模型预测、模型健康度检查 '
+    '已统一迁移到 /RnnStrategies/training 和 /RnnStrategies/prediction。'
+)
+
+
 @RnnData.route('/api/process_stock_pool_data', methods=['POST'])
 def process_stock_pool_data():
-    """基于股票池处理RNN数据"""
-    try:
-        data = request.get_json()
-        pool_type = data.get('pool_type', 'training')
-        year = data.get('year')
-        quarter = data.get('quarter')
-        
-        if not year:
-            return jsonify({
-                'success': False,
-                'message': '请指定年份'
-            }), 400
-        
-        # 获取指定类型的股票池
-        stocks = StockPool.get_by_pool_type(pool_type, is_active=True)
-        
-        if not stocks:
-            return jsonify({
-                'success': False,
-                'message': f'没有找到{pool_type}类型的股票'
-            }), 400
-        
-        # 更新处理进度
-        global processing_progress
-        processing_progress = {
-            'status': 'processing',
-            'current': 0,
-            'total': len(stocks),
-            'message': f'开始处理{len(stocks)}只股票的数据...'
-        }
-        
-        # 在后台线程中处理数据
-        def process_data():
-            try:
-                from App.codes.RnnModel.QuarterlyDataProcessor import QuarterlyDataProcessor
-                
-                processor = QuarterlyDataProcessor()
-                success_count = 0
-                error_count = 0
-                
-                for i, stock in enumerate(stocks):
-                    try:
-                        # 更新进度
-                        processing_progress.update({
-                            'current': i + 1,
-                            'message': f'正在处理股票 {stock.stock_code} ({i+1}/{len(stocks)})...'
-                        })
-                        
-                        # 处理单个股票的数据
-                        if quarter:
-                            # 处理指定季度
-                            result = processor.process_quarter(year, quarter, [stock.stock_code])
-                        else:
-                            # 处理整年
-                            result = processor.process_multiple_quarters(year, [stock.stock_code])
-                        
-                        if result.get('success', False):
-                            success_count += 1
-                            # 更新股票的训练状态
-                            StockPool.update_training_status(
-                                stock.stock_code, 
-                                'completed', 
-                                datetime.now().date()
-                            )
-                        else:
-                            error_count += 1
-                            StockPool.update_training_status(
-                                stock.stock_code, 
-                                'failed'
-                            )
-                            
-                    except Exception as e:
-                        logger.error(f"处理股票 {stock.stock_code} 数据失败: {e}")
-                        error_count += 1
-                        StockPool.update_training_status(
-                            stock.stock_code, 
-                            'failed'
-                        )
-                
-                # 完成处理
-                processing_progress.update({
-                    'status': 'completed',
-                    'message': f'处理完成！成功: {success_count}, 失败: {error_count}'
-                })
-                
-            except Exception as e:
-                logger.error(f"批量处理股票池数据失败: {e}")
-                processing_progress.update({
-                    'status': 'failed',
-                    'message': f'处理失败: {str(e)}'
-                })
-        
-        # 启动后台处理线程
-        thread = threading.Thread(target=process_data)
-        thread.daemon = True
-        thread.start()
-        
-        return jsonify({
-            'success': True,
-            'message': f'开始处理{len(stocks)}只{pool_type}类型股票的数据',
-            'stock_count': len(stocks)
-        })
-        
-    except Exception as e:
-        logger.error(f"处理股票池数据失败: {e}")
-        return jsonify({
-            'success': False,
-            'message': f'处理失败: {str(e)}'
-        }), 500
+    """已废弃：见 /RnnStrategies/training（按月份处理整个流水线）"""
+    return jsonify({'success': False, 'message': _DEPRECATED_MSG}), 501
 
 # 获取统计数据
 @RnnData.route('/statistics', methods=['GET'])
@@ -416,224 +319,48 @@ def get_records():
 # 初始化年份数据
 @RnnData.route('/init_year/<year>', methods=['POST'])
 def init_year_data(year):
-    """初始化指定年份的数据处理状态"""
-    try:
-        # 验证年份
-        year = str(year)
-        if not (2000 <= int(year) <= 2099):
-            return jsonify({
-                'success': False,
-                'message': '年份必须在2000-2099之间'
-            }), 400
-        
-        # 初始化处理状态
-        success = RnnTrainingRecords.init_process_year(year)
-        
-        if success:
-            return jsonify({
-                'success': True,
-                'message': f'成功初始化 {year} 年的处理状态'
-            })
-        else:
-            return jsonify({
-                'success': False,
-                'message': '初始化失败'
-            }), 500
-            
-    except Exception as e:
-        logger.error(f"初始化年份数据失败: {e}")
-        return jsonify({
-            'success': False,
-            'message': str(e)
-        }), 500
+    """已废弃：初始化年份处理状态。现在 RnnStrategies 训练流水线无需预先 init。"""
+    return jsonify({'success': False, 'message': _DEPRECATED_MSG}), 501
 
-# 处理标准化15分钟数据
+# 处理标准化15分钟数据  ← 已废弃：原来只是把 status 标成 success 不做实事
 @RnnData.route('/standard_15M/<year>', methods=['POST'])
 def standard_15M(year):
-    """处理标准化15分钟数据"""
-    try:
-        # 验证年份
-        year = str(year)
-        if not (2000 <= int(year) <= 2099):
-            return jsonify({
-                'success': False,
-                'message': '年份必须在2000-2099之间'
-            }), 400
-        
-        # 获取需要处理的记录
-        records = RnnTrainingRecords.query.filter(
-            and_(
-                RnnTrainingRecords.original_15M_year == year,
-                RnnTrainingRecords.original_15M_status == RnnTrainingRecords.STATUS_SUCCESS,
-                or_(
-                    RnnTrainingRecords.standard_15M_status.is_(None),
-                    RnnTrainingRecords.standard_15M_status == RnnTrainingRecords.STATUS_FAILED
-                )
-            )
-        ).all()
-        
-        if not records:
-            return jsonify({
-                'success': True,
-                'message': f'{year} 年没有需要处理标准化数据的记录'
-            })
-        
-        # 处理记录
-        success_count = 0
-        failed_count = 0
-        
-        for record in records:
-            try:
-                # 这里应该调用实际的数据处理函数
-                # 暂时模拟处理过程
-                record.set_standard_status(RnnTrainingRecords.STATUS_SUCCESS, '处理完成')
-                success_count += 1
-            except Exception as e:
-                record.set_standard_status(RnnTrainingRecords.STATUS_FAILED, str(e))
-                failed_count += 1
-                logger.error(f"处理记录 {record.id} 失败: {e}")
-        
-        return jsonify({
-            'success': True,
-            'message': f'标准化数据处理完成，成功: {success_count}, 失败: {failed_count}'
-        })
-        
-    except Exception as e:
-        logger.error(f"处理标准化15分钟数据失败: {e}")
-        return jsonify({
-            'success': False,
-            'message': str(e)
-        }), 500
+    """已废弃：本函数原来只在数据库把状态标成 success，不做任何真处理。
+    标准化已经合并到 RnnStrategies 训练流水线（按月份），见 /RnnStrategies/training。
+    """
+    return jsonify({
+        'success': False,
+        'message': '该功能已废弃。请使用 /RnnStrategies/training 页面的"生成训练数据"按钮，'
+                   '它会自动跑完整管道（重采样 → MACD → 衍生特征 → 标准化 → .npy）。'
+    }), 501
 
-# 检查模型状态
+
+# 检查模型状态  ← 已废弃：原来只是把 processing 标成 success 不做实事
 @RnnData.route('/check_models', methods=['POST'])
 def check_models():
-    """检查模型状态"""
-    try:
-        # 获取所有记录
-        records = RnnTrainingRecords.query.all()
-        
-        updated_count = 0
-        for record in records:
-            # 这里应该实现实际的模型检查逻辑
-            # 暂时模拟检查过程
-            if record.model_check == RnnTrainingRecords.STATUS_PROCESSING:
-                # 模拟检查结果
-                record.model_check = RnnTrainingRecords.STATUS_SUCCESS
-                record.model_check_timing = datetime.utcnow()
-                record.model_error = None
-                updated_count += 1
-        
-        db.session.commit()
-        
-        return jsonify({
-            'success': True,
-            'message': f'模型状态检查完成，更新了 {updated_count} 条记录'
-        })
-        
-    except Exception as e:
-        logger.error(f"检查模型状态失败: {e}")
-        return jsonify({
-            'success': False,
-            'message': str(e)
-        }), 500
+    """已废弃：原来只把 processing 标成 success，不做模型完整性、loss、健康度等真检查。
+    模型健康度评估已迁移到 /RnnStrategies/api/model_health。
+    """
+    return jsonify({
+        'success': False,
+        'message': '该功能已废弃。请使用 /RnnStrategies/prediction 页面的"检查模型健康度"按钮，'
+                   '它会基于训练样本评估每只股票每个模型是否退化（HEALTHY/WEAK/DEGENERATE）。'
+    }), 501
+
+# （原 check_models mock 实现已删除，新的 501 版本见上面）
+
 
 # 处理季度数据
 @RnnData.route('/process_quarter/<int:year>/<int:quarter>', methods=['POST'])
 def process_quarter_data(year, quarter):
-    """处理指定季度的数据"""
-    try:
-        from App.codes.RnnModel.QuarterlyDataProcessor import QuarterlyDataProcessor
-        
-        # 验证参数
-        if not (1 <= quarter <= 4):
-            return jsonify({
-                'success': False,
-                'message': '季度必须在1-4之间'
-            }), 400
-        
-        if not (2000 <= year <= 2099):
-            return jsonify({
-                'success': False,
-                'message': '年份必须在2000-2099之间'
-            }), 400
-        
-        # 获取请求参数
-        data = request.get_json() or {}
-        stock_codes = data.get('stock_codes')  # 可选的股票代码列表
-        
-        # 初始化处理器
-        processor = QuarterlyDataProcessor()
-        
-        # 处理季度数据
-        success = processor.process_quarter(year, quarter, stock_codes)
-        
-        if success:
-            return jsonify({
-                'success': True,
-                'message': f'{year}年Q{quarter}季度数据处理完成'
-            })
-        else:
-            return jsonify({
-                'success': False,
-                'message': f'{year}年Q{quarter}季度数据处理失败'
-            }), 500
-            
-    except Exception as e:
-        logger.error(f"处理季度数据失败: {e}")
-        return jsonify({
-            'success': False,
-            'message': str(e)
-        }), 500
+    """已废弃：按季度处理数据。改用 /RnnStrategies/training（按月份）。"""
+    return jsonify({'success': False, 'message': _DEPRECATED_MSG}), 501
 
-# 处理多个季度数据
+
 @RnnData.route('/process_quarters/<int:year>', methods=['POST'])
 def process_multiple_quarters(year):
-    """处理指定年份的多个季度数据"""
-    try:
-        from App.codes.RnnModel.QuarterlyDataProcessor import QuarterlyDataProcessor
-        
-        # 验证年份
-        if not (2000 <= year <= 2099):
-            return jsonify({
-                'success': False,
-                'message': '年份必须在2000-2099之间'
-            }), 400
-        
-        # 获取请求参数
-        data = request.get_json() or {}
-        quarters = data.get('quarters', [1, 2, 3, 4])  # 默认处理所有季度
-        stock_codes = data.get('stock_codes')  # 可选的股票代码列表
-        
-        # 验证季度参数
-        if not all(1 <= q <= 4 for q in quarters):
-            return jsonify({
-                'success': False,
-                'message': '季度必须在1-4之间'
-            }), 400
-        
-        # 初始化处理器
-        processor = QuarterlyDataProcessor()
-        
-        # 处理多个季度数据
-        results = processor.process_multiple_quarters(year, quarters, stock_codes)
-        
-        # 统计结果
-        success_count = sum(1 for success in results.values() if success)
-        total_count = len(results)
-        
-        return jsonify({
-            'success': True,
-            'message': f'{year}年季度数据处理完成，成功: {success_count}/{total_count}',
-            'results': results
-        })
-        
-    except Exception as e:
-        logger.error(f"处理多季度数据失败: {e}")
-        return jsonify({
-            'success': False,
-            'message': str(e)
-        }), 500
+    """已废弃：按年/多季度批量处理数据。改用 /RnnStrategies/training。"""
+    return jsonify({'success': False, 'message': _DEPRECATED_MSG}), 501
 
 # 获取季度数据统计
 @RnnData.route('/quarter_stats/<int:year>', methods=['GET'])
@@ -750,328 +477,19 @@ def get_quarter_stats(year):
 # 计算15分钟原始数据
 @RnnData.route('/original_15M/<year>', methods=['POST'])
 def original_15M(year):
-    try:
-        # 验证年份
-        year = str(year)
-        if not (2000 <= int(year) <= 2099):
-            return jsonify({
-                'status': 'error',
-                'message': '年份必须在2000-2099之间'
-            }), 400
+    """已废弃：按年份多线程处理原始 15m 数据。改用 /RnnStrategies/training。"""
+    return jsonify({'success': False, 'message': _DEPRECATED_MSG}), 501
 
-        # 检查数据目录
-        data_dir = get_data_directory(year)
-        input_dir = os.path.join(data_dir, '1m')
-        output_dir = os.path.join(data_dir, '15m')
-        
-        if not os.path.exists(input_dir):
-            return jsonify({
-                'status': 'error',
-                'message': f'输入目录不存在: {input_dir}'
-            }), 400
 
-        # 获取需要处理的股票列表
-        stocks = RnnTrainingRecords.query.filter(
-            or_(
-                RnnTrainingRecords.original_15M_year.is_(None),
-                RnnTrainingRecords.original_15M_year != year,
-                and_(
-                    RnnTrainingRecords.original_15M_year == year,
-                    RnnTrainingRecords.original_15M_status.in_(['failed', 'pending'])
-                )
-            )
-        ).all()
-
-        if not stocks:
-            success_records = RnnTrainingRecords.query.filter(
-                and_(
-                    RnnTrainingRecords.original_15M_year == year,
-                    RnnTrainingRecords.original_15M_status == 'success'
-                )
-            ).count()
-            
-            total_records = RnnTrainingRecords.query.count()
-            
-            if success_records == total_records:
-                return jsonify({
-                    'status': 'success',
-                    'message': f'{year}年的所有数据已经处理完成',
-                    'data': {
-                        'success_count': success_records,
-                        'failed_count': 0
-                    }
-                })
-
-        # 初始化进度跟踪器
-        progress_tracker.reset()
-        progress_tracker.total = len(stocks)
-
-        # 更新所有股票状态为处理中
-        for stock in stocks:
-            stock.original_15M_year = year
-            stock.original_15M_status = 'pending'
-        db.session.commit()
-
-        # 获取当前应用实例
-        app = current_app._get_current_object()
-
-        # 使用线程池处理数据
-        with ThreadPoolExecutor(max_workers=min(8, len(stocks))) as executor:
-            futures = []
-            for stock in stocks:
-                process_context = ProcessContext(app, stock.code, year)
-                future = executor.submit(process_stock_with_progress, process_context)
-                futures.append(future)
-
-            # 等待所有任务完成
-            for future in futures:
-                try:
-                    future.result()
-                except Exception as e:
-                    logger.error(f"处理任务失败: {str(e)}")
-
-        # 获取最终进度
-        final_progress = progress_tracker.get_progress()
-
-        return jsonify({
-            'status': 'success',
-            'message': f'处理完成: 成功 {final_progress["success"]} 只，失败 {final_progress["failed"]} 只',
-            'data': {
-                'year': year,
-                'success_count': final_progress["success"],
-                'failed_count': final_progress["failed"],
-                'processed_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            }
-        })
-
-    except Exception as e:
-        db.session.rollback()
-        logger.error(f"处理过程出错: {str(e)}")
-        logger.error(traceback.format_exc())
-        return jsonify({
-            'status': 'error',
-            'message': f'处理失败: {str(e)}'
-        }), 500
-
-# 处理15分钟基础数据
 @RnnData.route('/process_base_data/<int:year>', methods=['POST'])
 def process_base_data(year):
-    try:
-        # 获取所有股票记录
-        records = RnnTrainingRecords.query.all()
-        
-        if not records:
-            # 如果没有记录，从股票列表创建新记录
-            # TODO: 从你的股票列表数据源获取股票代码和名称
-            stocks = [
-                {'code': '000001', 'name': '平安银行'},
-                # ... 其他股票
-            ]
-            for stock in stocks:
-                record = RnnTrainingRecords(
-                    stock_code=stock['code'],
-                    stock_name=stock['name']
-                )
-                db.session.add(record)
-            db.session.commit()
-            records = RnnTrainingRecords.query.all()
+    """已废弃：处理 15m 基础数据。改用 /RnnStrategies/training。"""
+    return jsonify({'success': False, 'message': _DEPRECATED_MSG}), 501
 
-        # 检查是否有正在处理的数据
-        processing_records = RnnTrainingRecords.query.filter(
-            and_(
-                RnnTrainingRecords.original_15M_year == year,
-                RnnTrainingRecords.original_15M_status.in_(['pending', 'failed'])
-            )
-        ).all()
 
-        if processing_records:
-            # 处理未完成或失败的记录
-            for record in processing_records:
-                try:
-                    # TODO: 在这里添加你的15分钟数据处理逻辑
-                    process_15min_data(record.stock_code, year)
-                    record.original_15M_status = 'success'
-                except Exception as e:
-                    record.original_15M_status = 'failed'
-                    print(f"处理失败 {record.stock_code}: {str(e)}")
-                db.session.commit()
-        else:
-            # 开始新的处理
-            for record in records:
-                record.original_15M_year = year
-                record.original_15M_status = 'pending'
-                db.session.commit()
-                
-                try:
-                    # TODO: 在这里添加你的15分钟数据处理逻辑
-                    process_15min_data(record.stock_code, year)
-                    record.original_15M_status = 'success'
-                except Exception as e:
-                    record.original_15M_status = 'failed'
-                    print(f"处理失败 {record.stock_code}: {str(e)}")
-                db.session.commit()
-
-        # 获取处理结果统计
-        success_count = RnnTrainingRecords.query.filter(
-            and_(
-                RnnTrainingRecords.original_15M_year == year,
-                RnnTrainingRecords.original_15M_status == 'success'
-            )
-        ).count()
-        
-        failed_count = RnnTrainingRecords.query.filter(
-            and_(
-                RnnTrainingRecords.original_15M_year == year,
-                RnnTrainingRecords.original_15M_status == 'failed'
-            )
-        ).count()
-
-        return jsonify({
-            'status': 'success',
-            'message': f'处理完成。成功: {success_count}, 失败: {failed_count}',
-            'data': {
-                'success_count': success_count,
-                'failed_count': failed_count
-            }
-        })
-
-    except Exception as e:
-        db.session.rollback()
-        return jsonify({
-            'status': 'error',
-            'message': f'处理过程中发生错误: {str(e)}'
-        }), 500
-
-def process_15min_data(stock_code, year):
-    """
-    处理15分钟数据的具体逻辑
-    这里需要实现你的数据处理逻辑
-    """
-    # TODO: 实现你的15分钟数据处理逻辑
-    pass
-
-# 处理15分钟标准化数据
 @RnnData.route('/process_standard_data/<year>/<quarter>', methods=['POST'])
 def process_standard_data(year, quarter):
-
-    try:
-        # 验证年份
-        year = str(year)
-        if not (2000 <= int(year) <= 2099):
-            return jsonify({
-                'status': 'error',
-                'message': '年份必须在2000-2099之间'
-            }), 400
-
-        # 获取已完成基础数据处理的股票
-        stocks = RnnTrainingRecords.query.filter(
-            getattr(RnnTrainingRecords, f'processed_{year}') == RnnTrainingRecords.STATUS_SUCCESS
-        ).all()
-
-        if not stocks:
-            return jsonify({
-                'status': 'error',
-                'message': f'没有找到{year}年已完成基础数据处理的股票'
-            }), 400
-
-        success_count = 0
-        failed_count = 0
-
-        # 处理全年数据
-        if quarter == 'full':
-            for stock in stocks:
-                try:
-                    result = process_full_year_data(year, stock.code)
-                    if result['status'] == 'success':
-                        success_count += 1
-                    else:
-                        failed_count += 1
-                except Exception as e:
-                    failed_count += 1
-                    logging.error(f"处理股票 {stock.code} 全年数据时出错: {str(e)}")
-            
-            message = f'{year}年全年数据标准化处理完成'
-        else:
-            # 验证季度
-            quarter = int(quarter)
-            if not (1 <= quarter <= 4):
-                return jsonify({
-                    'status': 'error',
-                    'message': '季度必须在1-4之间'
-                }), 400
-            
-            for stock in stocks:
-                try:
-                    result = process_quarter_data(year, quarter, stock.code)
-                    if result['status'] == 'success':
-                        success_count += 1
-                    else:
-                        failed_count += 1
-                except Exception as e:
-                    failed_count += 1
-                    logging.error(f"处理股票 {stock.code} 第{quarter}季度数据时出错: {str(e)}")
-            
-            message = f'{year}年第{quarter}季度数据标准化处理完成'
-
-        return jsonify({
-            'status': 'success',
-            'message': message,
-            'data': {
-                'year': year,
-                'quarter': quarter,
-                'success_count': success_count,
-                'failed_count': failed_count,
-                'processed_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            }
-        })
-
-    except Exception as e:
-        logging.error(f"处理标准化数据时出错: {str(e)}")
-        logging.error(traceback.format_exc())
-        return jsonify({
-            'status': 'error',
-            'message': f'处理失败: {str(e)}'
-        }), 500
-
-def process_full_year_data(year, stock_code):
-    """处理全年数据的具体实现"""
-    try:
-        # 这里添加处理全年数据的具体逻辑
-        return {
-            'status': 'success',
-            'stock_code': stock_code,
-            'year': year,
-            'message': '全年数据处理成功'
-        }
-    except Exception as e:
-        logging.error(f"处理全年数据时出错: {str(e)}")
-
-        return {
-            'status': 'failed',
-            'stock_code': stock_code,
-            'year': year,
-            'message': str(e)
-        }
-
-def process_quarter_data(year, quarter, stock_code):
-    """处理季度数据的具体实现"""
-    try:
-        # 这里添加处理季度数据的具体逻辑
-        return {
-            'status': 'success',
-            'stock_code': stock_code,
-            'year': year,
-            'quarter': quarter,
-            'message': '季度数据处理成功'
-        }
-    except Exception as e:
-        logging.error(f"处理季度数据时出错: {str(e)}")
-        return {
-            'status': 'failed',
-            'stock_code': stock_code,
-            'year': year,
-            'quarter': quarter,
-            'message': str(e)
-        }
+    """已废弃：处理 15m 标准化数据。改用 /RnnStrategies/training。"""
+    return jsonify({'success': False, 'message': _DEPRECATED_MSG}), 501
 
 # 生成及保存模型训练数据

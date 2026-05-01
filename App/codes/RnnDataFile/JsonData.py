@@ -144,7 +144,8 @@ class MyJsonData:
             Path: JSON文件路径
         """
         root = file_root()
-        return Path(root) / 'App' / 'codes' / 'code_data' / 'RnnData' / month / 'json' / f'{stock_code}.json'
+        # 实际数据落盘在 data/RnnData/，与 StockDataPath / Rnn_utils 保持一致
+        return Path(root) / 'data' / 'RnnData' / month / 'json' / f'{stock_code}.json'
 
 
 if __name__ == '__main__':

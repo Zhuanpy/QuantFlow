@@ -13,6 +13,17 @@
                 <button class="logout-btn" style="display: none;">退出登录</button>
             </div>
         </div>
+        <div style="margin-top:1rem;display:flex;gap:.5rem;align-items:center;">
+            <input id="stockSearchInput" type="text" placeholder="输入股票代码（如 002475）查看详情" style="flex:1;max-width:380px;padding:.5rem .75rem;border:1px solid #d1d5db;border-radius:6px;font-size:.95rem;" onkeydown="if(event.key==='Enter') goStockDetail()">
+            <button class="button" style="padding:.5rem 1rem;" onclick="goStockDetail()">查看个股详情</button>
+        </div>
+        <script>
+        function goStockDetail() {
+            const v = document.getElementById('stockSearchInput').value.trim();
+            if (!v) { alert('请输入股票代码'); return; }
+            window.location.href = '/stock/' + encodeURIComponent(v);
+        }
+        </script>
     </div>
 
     <div class="grid">
@@ -57,8 +68,8 @@
             <div class="button-group">
         <a href="{{ url_for('RnnData.rnn_data_page') }}" class="button">模型数据</a>
         <a href="{{ url_for('RnnData.data_statistics_page') }}" class="button">数据统计</a>
-                <a href="#" class="button disabled">模型训练</a>
-                <a href="#" class="button disabled">模型测试</a>
+                <a href="{{ url_for('rnn_strategies_bp.training_page') }}" class="button">模型训练</a>
+                <a href="{{ url_for('rnn_strategies_bp.prediction_page') }}" class="button">模型预测</a>
             </div>
         </div>
 
@@ -66,6 +77,7 @@
             <h2>交易系统</h2>
             <div class="button-group">
                 <a href="{{ url_for('stock_pool.stock_pool_page') }}" class="button">股票池管理</a>
+                <a href="{{ url_for('board_trend.page') }}" class="button">板块趋势打分</a>
                 <a href="{{ url_for('trade_plan.trade_page') }}" class="button">交易管理</a>
                 <a href="{{ url_for('trade_plan.simulate_trade_page') }}" class="button">模拟交易</a>
                 <a href="{{ url_for('trade_plan.real_trade_page') }}" class="button button-real">实盘交易</a>

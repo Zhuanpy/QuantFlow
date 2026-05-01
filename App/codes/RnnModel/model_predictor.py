@@ -5,10 +5,13 @@
 提供 RNN 模型的预测功能
 """
 
+import os
+import threading
+from collections import OrderedDict
+
 import numpy as np
 import pandas as pd
 from keras.models import load_model
-from keras import backend as k
 
 from App.codes.RnnModel.rnn_base import RnnBase
 from App.codes.RnnDataFile.stock_path import StockDataPath
@@ -16,6 +19,78 @@ from App.codes.parsers.RnnParser import (
     ModelName, XColumn, Signal,
     nextCycleLengthMax, nextCycleAmplitudeMax, CycleAmplitudeMax
 )
+
+
+# ==================== 模型缓存 ====================
+# 每次预测都 load_model 太慢；按 (month, file_name) 缓存模型对象
+# 用 OrderedDict + 容量上限实现简易 LRU，避免占用过多内存
+_MODEL_CACHE_CAPACITY = 64
+_model_cache: "OrderedDict[tuple, object]" = OrderedDict()
+_cache_lock = threading.Lock()
+
+
+def _build_model_from_weights(month_parsers: str, file_name: str):
+    """
+    用 create_model() 重建网络拓扑，再加载同名 weight 文件。
+    用于规避旧 .h5（Keras 2.x 序列化）在 Keras 3 下加载失败的问题：
+    旧 Conv2D 层的 input_shape 反序列化后会多 batch 维度，导致 kernel shape 不匹配。
+
+    权重文件命名（按时间顺序的两种约定）：
+      新（Keras 3 强制）：weight_{model_name}_{stock_code}.weights.h5
+      旧（Keras 2 时代）：weight_{model_name}_{stock_code}.h5
+    """
+    from App.codes.RnnModel.RnnCreationModel import create_model
+    model = create_model()
+    # file_name 形如 'CycleLength4_002475.h5'
+    base = file_name[:-3] if file_name.endswith('.h5') else file_name
+    candidates = [
+        f'weight_{base}.weights.h5',
+        f'weight_{base}.h5',
+    ]
+    for cand in candidates:
+        weight_path = StockDataPath.model_weight_path(month_parsers, cand)
+        if os.path.exists(weight_path):
+            model.load_weights(weight_path)
+            return model
+    raise FileNotFoundError(
+        f'权重文件不存在，已尝试: {candidates}\n'
+        f'（旧 .h5 在新 Keras 下无法直接加载，需要 weight 文件重建）'
+    )
+
+
+def _get_cached_model(month_parsers: str, file_name: str):
+    """
+    按 (month, file_name) 缓存模型。命中则返回，未命中则 load 并放入缓存。
+    超出容量时按 LRU 淘汰最旧条目。
+
+    加载策略：先尝试 load_model（新格式），失败则回退到从 weights 重建。
+    """
+    key = (month_parsers, file_name)
+    with _cache_lock:
+        if key in _model_cache:
+            _model_cache.move_to_end(key)
+            return _model_cache[key]
+
+    # load 不在锁内，避免阻塞其他读
+    path = StockDataPath.model_path(month_parsers, file_name)
+    try:
+        model = load_model(path)
+    except (ValueError, TypeError, OSError):
+        # 旧 .h5 格式不兼容，从 weights 重建
+        model = _build_model_from_weights(month_parsers, file_name)
+
+    with _cache_lock:
+        _model_cache[key] = model
+        _model_cache.move_to_end(key)
+        while len(_model_cache) > _MODEL_CACHE_CAPACITY:
+            _model_cache.popitem(last=False)
+    return model
+
+
+def clear_model_cache():
+    """清空模型缓存。训练完新模型后建议调用，避免读到旧版本。"""
+    with _cache_lock:
+        _model_cache.clear()
 
 
 class DlModel(RnnBase):
@@ -56,7 +131,7 @@ class DlModel(RnnBase):
 
     def predictive_value(self, model_name: str, x: np.ndarray) -> float:
         """
-        使用模型进行预测
+        使用模型进行预测（命中缓存时 O(1) 返回模型对象）
 
         Args:
             model_name: 模型名称
@@ -65,11 +140,9 @@ class DlModel(RnnBase):
         Returns:
             float: 预测值
         """
-        k.clear_session()
         file_name = f'{model_name}_{self.stock_code}.h5'
-        path = StockDataPath.model_path(self.month_parsers, file_name)
-        model = load_model(path)
-        val = model.predict(x)
+        model = _get_cached_model(self.month_parsers, file_name)
+        val = model.predict(x, verbose=0)
         val = val[0][0]
         return val
 

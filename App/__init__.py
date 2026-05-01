@@ -101,6 +101,12 @@ def register_blueprints(app):
         print(f"警告: 无法导入 data_viewer_route 蓝图: {e}")
 
     try:
+        from App.routes.data.stock_detail_route import stock_detail_bp
+        app.register_blueprint(stock_detail_bp)
+    except ImportError as e:
+        print(f"警告: 无法导入 stock_detail_route 蓝图: {e}")
+
+    try:
         from App.routes.data.tdx_download_route import tdx_bp
         app.register_blueprint(tdx_bp)
     except ImportError as e:
@@ -144,6 +150,12 @@ def register_blueprints(app):
         app.register_blueprint(stock_pool_bp)
     except ImportError as e:
         print(f"警告: 无法导入 StockPoolManagement 蓝图: {e}")
+
+    try:
+        from App.routes.strategy.BoardTrendScoring import board_trend_bp
+        app.register_blueprint(board_trend_bp)
+    except ImportError as e:
+        print(f"警告: 无法导入 BoardTrendScoring 蓝图: {e}")
     
     try:
         from App.routes.strategy.RnnData import RnnData

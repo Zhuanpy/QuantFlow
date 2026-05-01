@@ -16,7 +16,7 @@ class ReadSaveFile:
     """文件读写工具类"""
 
     @classmethod
-    def read_json(cls, months: str, code: str) -> Optional[Dict]:
+    def read_json(cls, months: str, code: str) -> Dict:
         """
         读取 RNN 数据的 JSON 文件
 
@@ -25,22 +25,25 @@ class ReadSaveFile:
             code: 股票代码
 
         Returns:
-            Dict: JSON 内容，读取失败返回 None
+            Dict: JSON 内容；文件不存在或读取失败返回空 dict（便于调用方直接 d[k] = v）
         """
         try:
             from config import Config
-            # 构建JSON文件路径: App/codes/code_data/RnnData/{months}/json/{code}.json
+            # 实际数据落在 data/RnnData/，与 StockDataPath / Rnn_utils / JsonData 一致
             project_root = Config.get_project_root()
             path = os.path.join(
                 project_root,
-                'App', 'codes', 'code_data', 'RnnData',
+                'data', 'RnnData',
                 months, 'json', f'{code}.json'
             )
             with open(path, 'r', encoding='utf-8') as lf:
                 return json.load(lf)
-        except (ValueError, FileNotFoundError, ImportError) as e:
+        except FileNotFoundError:
+            # 第一次写入新月份/新股票时文件还不存在，返回空 dict 让调用方继续
+            return {}
+        except (ValueError, ImportError, json.JSONDecodeError) as e:
             print(f"读取JSON文件失败: {e}")
-            return None
+            return {}
 
     @classmethod
     def read_json_by_path(cls, path: str) -> Optional[Dict]:
@@ -75,11 +78,11 @@ class ReadSaveFile:
         """
         try:
             from config import Config
-            # 构建JSON文件路径: App/codes/code_data/RnnData/{months}/json/{code}.json
+            # 实际数据落在 data/RnnData/
             project_root = Config.get_project_root()
             path = os.path.join(
                 project_root,
-                'App', 'codes', 'code_data', 'RnnData',
+                'data', 'RnnData',
                 months, 'json', f'{code}.json'
             )
             os.makedirs(os.path.dirname(path), exist_ok=True)

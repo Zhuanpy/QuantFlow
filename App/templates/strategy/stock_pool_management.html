@@ -74,6 +74,15 @@
         </div>
     </div>
 
+    <!-- 高级工具栏：过滤 / 自动化 / 健康度 -->
+    <div class="advanced-bar" style="background:#fff;border-radius:.5rem;padding:.6rem .75rem;margin-bottom:.75rem;display:flex;gap:.4rem;flex-wrap:wrap;align-items:center;box-shadow:var(--shadow-sm);font-size:.85rem;">
+        <strong style="color:#6b7280;">高级操作:</strong>
+        <button class="btn btn-sm btn-outline" onclick="openMarketScan()">🌐 全市场评分扫描</button>
+        <button class="btn btn-sm btn-outline" onclick="openFilterDialog()">🔍 批量过滤当前池</button>
+        <button class="btn btn-sm btn-outline" onclick="openRulesDialog()">⚙ 应用自动化规则</button>
+        <button class="btn btn-sm btn-outline" onclick="openHealthScan()">💓 扫描观察池健康度</button>
+    </div>
+
     <!-- 股票列表 -->
     <div class="stock-list" id="stockList">
         <div class="loading">加载中...</div>
@@ -278,11 +287,116 @@
     </div>
 </div>
 
+<!-- 批量过滤对话框 -->
+<div class="modal" id="filterModal">
+    <div class="modal-content" style="max-width:600px;">
+        <div class="modal-header">
+            <h3>批量过滤当前池（<span id="filterPoolLabel">-</span>）</h3>
+            <button class="close-btn" onclick="closeModal('filterModal')">&times;</button>
+        </div>
+        <div class="modal-body" style="padding:1rem;">
+            <label style="display:flex;align-items:center;gap:.4rem;margin-bottom:.5rem;">
+                <input type="checkbox" id="fltST" checked> 剔除 ST 股票（名称含 "ST"）
+            </label>
+            <label style="display:block;margin-bottom:.5rem;">
+                近 60 日日均成交额阈值（元，留空跳过）：
+                <input type="number" id="fltMoney" placeholder="例如 50000000 = 5000 万" style="width:100%;padding:.4rem;margin-top:.2rem;">
+            </label>
+            <label style="display:block;margin-bottom:.5rem;">
+                市值阈值（元，留空跳过；仅 market_cap 字段有值时生效）：
+                <input type="number" id="fltCap" placeholder="例如 5000000000 = 50 亿" style="width:100%;padding:.4rem;margin-top:.2rem;">
+            </label>
+            <div id="filterResultArea" style="margin-top:1rem;font-size:.85rem;color:#6b7280;"></div>
+        </div>
+        <div class="modal-footer" style="padding:.75rem 1rem;display:flex;gap:.5rem;justify-content:flex-end;">
+            <button class="btn btn-outline" onclick="closeModal('filterModal')">取消</button>
+            <button class="btn btn-primary" onclick="runFilterScan()">扫描</button>
+            <button class="btn btn-danger" id="filterApplyBtn" onclick="applyFilterRemove()" style="display:none;">确认全部归档</button>
+        </div>
+    </div>
+</div>
+
+<!-- 自动化规则对话框 -->
+<div class="modal" id="rulesModal">
+    <div class="modal-content" style="max-width:600px;">
+        <div class="modal-header">
+            <h3>应用自动化规则</h3>
+            <button class="close-btn" onclick="closeModal('rulesModal')">&times;</button>
+        </div>
+        <div class="modal-body" style="padding:1rem;">
+            <label style="display:block;margin-bottom:.6rem;">
+                候选池超过多少天未晋升 → 自动归档（设 0 跳过）：
+                <input type="number" id="rulesDays" value="30" min="0" max="365" style="width:100%;padding:.4rem;margin-top:.2rem;">
+            </label>
+            <label style="display:flex;align-items:center;gap:.4rem;margin-bottom:.4rem;">
+                <input type="checkbox" id="rulesDegEnabled"> 检查观察池模型健康度（4 个全 DEGENERATE → 降级到候选）
+            </label>
+            <label style="display:block;margin-bottom:.6rem;color:#6b7280;font-size:.85rem;">
+                月份模型（如 2026-04）：
+                <input type="text" id="rulesDegMonth" placeholder="如 2026-04" style="width:100%;padding:.4rem;margin-top:.2rem;">
+            </label>
+            <div id="rulesResultArea" style="margin-top:.75rem;font-size:.85rem;color:#6b7280;"></div>
+        </div>
+        <div class="modal-footer" style="padding:.75rem 1rem;display:flex;gap:.5rem;justify-content:flex-end;">
+            <button class="btn btn-outline" onclick="closeModal('rulesModal')">取消</button>
+            <button class="btn btn-primary" onclick="runApplyRules()">应用规则</button>
+        </div>
+    </div>
+</div>
+
+<!-- 全市场扫描对话框 -->
+<div class="modal" id="marketScanModal">
+    <div class="modal-content" style="max-width:1000px;">
+        <div class="modal-header">
+            <h3>全市场评分扫描</h3>
+            <button class="close-btn" onclick="closeModal('marketScanModal')">&times;</button>
+        </div>
+        <div class="modal-body" style="padding:1rem;">
+            <div style="display:flex;gap:1rem;flex-wrap:wrap;align-items:end;margin-bottom:.75rem;">
+                <label style="display:flex;align-items:center;gap:.4rem;"><input type="checkbox" id="scanExST" checked> 排除 ST</label>
+                <label style="display:flex;align-items:center;gap:.4rem;"><input type="checkbox" id="scanExChinext" checked> 排除创业板（300/301）</label>
+                <label style="display:flex;align-items:center;gap:.4rem;"><input type="checkbox" id="scanExKechuang"> 排除科创板（688）</label>
+                <label style="display:flex;align-items:center;gap:.4rem;"><input type="checkbox" id="scanExBeijiao"> 排除北交所（8/4）</label>
+                <label>Top N：<input type="number" id="scanTopN" value="100" min="10" max="500" style="width:80px;padding:.3rem;"></label>
+                <button class="btn btn-primary btn-sm" onclick="runMarketScan()">开始扫描</button>
+                <button class="btn btn-success btn-sm" id="addToCandidateBtn" onclick="addScanResultsToCandidate()" style="display:none;">+ 全部加入候选池</button>
+            </div>
+            <div id="marketScanResult" style="font-size:.82rem;color:#6b7280;">点"开始扫描"后，按综合评分排序的股票列表会显示在这里</div>
+        </div>
+    </div>
+</div>
+
+<!-- 健康度扫描对话框 -->
+<div class="modal" id="healthModal">
+    <div class="modal-content" style="max-width:760px;">
+        <div class="modal-header">
+            <h3>扫描观察池模型健康度</h3>
+            <button class="close-btn" onclick="closeModal('healthModal')">&times;</button>
+        </div>
+        <div class="modal-body" style="padding:1rem;">
+            <label style="display:block;margin-bottom:.6rem;">
+                月份模型：
+                <input type="text" id="healthMonth" placeholder="如 2026-04" style="width:100%;padding:.4rem;margin-top:.2rem;">
+            </label>
+            <div id="healthResult" style="margin-top:.75rem;font-size:.85rem;max-height:400px;overflow-y:auto;"></div>
+        </div>
+        <div class="modal-footer" style="padding:.75rem 1rem;display:flex;gap:.5rem;justify-content:flex-end;">
+            <button class="btn btn-outline" onclick="closeModal('healthModal')">关闭</button>
+            <button class="btn btn-primary" onclick="runHealthScan()">开始扫描</button>
+        </div>
+    </div>
+</div>
+
 <!-- Toast -->
 <div class="toast-box" id="toastBox"></div>
 
 <style>
-.container { max-width: 1400px; margin: 0 auto; padding: 1rem 2rem; }
+.container { max-width: min(1920px, 98vw); margin: 0 auto; padding: 1rem 1.25rem; }
+/* 表格在窄屏上允许横向滚动，避免列被挤压 */
+.stock-list { overflow-x: auto; }
+.stock-table { min-width: 1400px; }
+.stock-table td, .stock-table th { white-space: nowrap; }
+.notes-preview { max-width: 240px; }
 
 /* 头部 */
 .pool-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1.5rem; }
@@ -301,17 +415,21 @@
 .btn-sm { padding: 0.35rem 0.75rem; font-size: 0.8rem; background: #fff; border: 1px solid #e2e8f0; border-radius: 0.4rem; }
 .btn-sm:hover { border-color: var(--primary-color); color: var(--primary-color); }
 
-/* 统计行 */
-.stats-row { display: grid; grid-template-columns: repeat(5, 1fr); gap: 1rem; margin-bottom: 1.5rem; }
-.stat-card { background: #fff; border-radius: 0.75rem; padding: 1.2rem; text-align: center; box-shadow: var(--shadow-sm); border-top: 3px solid #e2e8f0; transition: transform 0.2s; }
-.stat-card:hover { transform: translateY(-2px); }
-.stat-card.trading { border-top-color: #ef4444; }
-.stat-card.watching { border-top-color: #f59e0b; }
-.stat-card.candidate { border-top-color: #3b82f6; }
-.stat-card.archived { border-top-color: #9ca3af; }
-.stat-card.score { border-top-color: #10b981; }
-.stat-num { font-size: 2rem; font-weight: 700; color: var(--text-primary); }
-.stat-text { font-size: 0.85rem; color: var(--text-secondary); margin-top: 0.2rem; }
+/* 统计行 — 紧凑横条 */
+.stats-row { display: flex; gap: .5rem; margin-bottom: .75rem; flex-wrap: wrap; }
+.stat-card {
+    background: #fff; border-radius: .5rem; padding: .35rem .75rem;
+    box-shadow: var(--shadow-sm); border-left: 3px solid #e2e8f0;
+    display: flex; align-items: baseline; gap: .5rem;
+    flex: 1 1 auto; min-width: 130px;
+}
+.stat-card.trading   { border-left-color: #ef4444; }
+.stat-card.watching  { border-left-color: #f59e0b; }
+.stat-card.candidate { border-left-color: #3b82f6; }
+.stat-card.archived  { border-left-color: #9ca3af; }
+.stat-card.score     { border-left-color: #10b981; }
+.stat-num  { font-size: 1.25rem; font-weight: 700; color: var(--text-primary); line-height: 1.1; }
+.stat-text { font-size: .78rem; color: var(--text-secondary); }
 
 /* Tab 栏 */
 .tab-bar { display: flex; align-items: center; gap: 0.25rem; background: #fff; padding: 0.5rem; border-radius: 0.75rem; margin-bottom: 1rem; box-shadow: var(--shadow-sm); flex-wrap: wrap; }
@@ -370,6 +488,16 @@
 .act-btn.del:hover { background: #fecaca; }
 .act-btn.move { background: #f0fdf4; color: #16a34a; }
 .act-btn.move:hover { background: #dcfce7; }
+/* 上下文按钮（晋升/降级/排除）— 文字按钮，宽度自适应 */
+.act-btn[class*="ctx-"] { width: auto; padding: 0 .55rem; font-size: .76rem; font-weight: 600; }
+.act-btn.ctx-green { background: #dcfce7; color: #15803d; }
+.act-btn.ctx-green:hover { background: #bbf7d0; }
+.act-btn.ctx-blue { background: #dbeafe; color: #1d4ed8; }
+.act-btn.ctx-blue:hover { background: #bfdbfe; }
+.act-btn.ctx-gray { background: #f3f4f6; color: #4b5563; }
+.act-btn.ctx-gray:hover { background: #e5e7eb; }
+.act-btn.ctx-red { background: #fee2e2; color: #b91c1c; }
+.act-btn.ctx-red:hover { background: #fecaca; }
 
 /* 备注预览 */
 .notes-preview { max-width: 200px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 0.82rem; color: var(--text-secondary); }
@@ -516,6 +644,20 @@ function renderTable(stocks) {
         return;
     }
 
+    // 观察池：尝试从 sessionStorage 读取最近一次健康度扫描结果
+    const showHealth = currentPoolType === 'watching';
+    let healthMap = {};
+    if (showHealth) {
+        // 取最新的 cache（任意月份；多个月份取最新写入的）
+        for (let i = sessionStorage.length - 1; i >= 0; i--) {
+            const k = sessionStorage.key(i);
+            if (k && k.startsWith('health_')) {
+                try { healthMap = JSON.parse(sessionStorage.getItem(k)) || {}; break; } catch (e) {}
+            }
+        }
+    }
+    const healthCol = showHealth ? '<th>健康度</th>' : '';
+
     let html = `<table class="stock-table">
         <thead><tr>
             <th class="col-cb"><input type="checkbox" onchange="toggleAll(this)"></th>
@@ -523,21 +665,58 @@ function renderTable(stocks) {
             <th>名称</th>
             <th>池</th>
             <th>评分</th>
+            ${healthCol}
             <th>优先级</th>
             <th>行业</th>
             <th>目标价</th>
             <th>止损价</th>
+            <th>现价</th>
             <th>标签</th>
             <th>备注</th>
             <th>更新</th>
             <th>操作</th>
         </tr></thead><tbody>`;
 
+    // 现价单元格：根据目标/止损价用颜色提示
+    const priceCell = (s) => {
+        const cur = s.latest_close;
+        if (cur == null) return '<span style="color:#9ca3af;font-size:.78rem;">-</span>';
+        let color = '#374151', hint = '';
+        if (s.target_price && cur >= s.target_price) {
+            color = '#16a34a';  // 已达目标价 — 绿
+            hint = '↑达标';
+        } else if (s.stop_loss_price && cur <= s.stop_loss_price) {
+            color = '#dc2626';  // 已破止损 — 红
+            hint = '↓止损';
+        } else if (s.target_price && s.stop_loss_price) {
+            // 在区间内：按位置计算颜色（接近目标=绿；接近止损=红）
+            const span = s.target_price - s.stop_loss_price;
+            if (span > 0) {
+                const pos = (cur - s.stop_loss_price) / span;
+                if (pos >= 0.7) color = '#16a34a';
+                else if (pos >= 0.3) color = '#ca8a04';
+                else color = '#dc2626';
+            }
+        }
+        const dateStr = s.latest_close_date ? `<div style="color:#9ca3af;font-size:.7rem;">${s.latest_close_date}</div>` : '';
+        return `<div><span style="color:${color};font-weight:600;font-family:monospace;">${cur.toFixed(2)}</span>
+                <span style="color:${color};font-size:.7rem;margin-left:.2rem;">${hint}</span>${dateStr}</div>`;
+    };
+
+    const healthBadge = (h) => {
+        if (!h) return '<span style="color:#9ca3af;font-size:.78rem;">未扫描</span>';
+        const palette = {HEALTHY:'#16a34a', WEAK:'#ca8a04', DEGENERATE:'#dc2626', UNTRAINED:'#9ca3af'};
+        const c = palette[h.overall] || '#374151';
+        return `<span style="color:${c};font-weight:600;font-size:.78rem;" title="per_model: ${h.per_model.join(' / ')}">${h.overall}</span>
+                <span style="color:#6b7280;font-size:.72rem;margin-left:.25rem;">${h.healthy_count}/${h.total_models}</span>`;
+    };
+
     stocks.forEach(s => {
         const scoreColor = s.score >= 80 ? '#10b981' : s.score >= 60 ? '#f59e0b' : s.score >= 40 ? '#3b82f6' : '#9ca3af';
         const trendIcon = s.score_trend > 0 ? '<span class="score-trend up">&#9650;</span>' : s.score_trend < 0 ? '<span class="score-trend down">&#9660;</span>' : '';
         const stars = '★'.repeat(s.pool_priority) + '☆'.repeat(5 - s.pool_priority);
         const tags = s.tags ? s.tags.split(',').map(t => `<span class="tag">${t.trim()}</span>`).join('') : '';
+        const healthCell = showHealth ? `<td>${healthBadge(healthMap[s.stock_code])}</td>` : '';
 
         html += `<tr>
             <td class="col-cb"><input type="checkbox" value="${s.id}" ${selectedIds.has(s.id)?'checked':''} onchange="toggleSel(${s.id})"></td>
@@ -549,16 +728,19 @@ function renderTable(stocks) {
                 <div class="score-bar"><div class="score-fill" style="width:${s.score}%;background:${scoreColor}"></div></div>
                 ${trendIcon}
             </div></td>
+            ${healthCell}
             <td><span class="priority-stars">${stars}</span></td>
             <td>${s.industry || '-'}</td>
             <td>${s.target_price ? s.target_price.toFixed(2) : '-'}</td>
             <td>${s.stop_loss_price ? s.stop_loss_price.toFixed(2) : '-'}</td>
+            <td>${priceCell(s)}</td>
             <td><div class="tag-list">${tags || '-'}</div></td>
             <td><div class="notes-preview" title="${(s.notes||'').replace(/"/g,'&quot;')}">${s.notes || '-'}</div></td>
             <td>${s.updated_at || '-'}</td>
             <td><div class="row-actions">
+                ${renderContextActions(s)}
                 <button class="act-btn edit" onclick="editStock(${s.id})" title="编辑">&#9998;</button>
-                <button class="act-btn move" onclick="showMoveMenu(event,${s.id})" title="移动">&#8644;</button>
+                <button class="act-btn move" onclick="showMoveMenu(event,${s.id})" title="其它移动">&#8644;</button>
                 <button class="act-btn del" onclick="deleteStock(${s.id})" title="删除">&#10005;</button>
             </div></td>
         </tr>`;
@@ -633,6 +815,44 @@ async function moveStock(stockId, poolType) {
         if (d.success) { toast(d.message, 'ok'); loadStats(); loadStocks(); }
         else toast(d.message, 'err');
     } catch(e) { toast('操作失败', 'err'); }
+}
+
+// 按当前 pool_type 返回上下文相关的快捷按钮
+// 候选 → 晋升观察 / 排除
+// 观察 → 买入(交易) / 降级候选 / 排除
+// 交易 → 降级观察 / 清仓归档
+// 归档 → 重新激活(候选)
+function renderContextActions(s) {
+    const t = s.pool_type;
+    const id = s.id;
+    const code = s.stock_code;
+    const promoteBtn = (target, label, color) =>
+        `<button class="act-btn ctx-${color}" onclick="confirmAndMove(${id},'${target}','${code}','${label}')" title="${label}">${label}</button>`;
+    if (t === 'candidate') {
+        return promoteBtn('watching', '↑观察', 'green') +
+               promoteBtn('archived', '✗排除', 'red');
+    }
+    if (t === 'watching') {
+        return promoteBtn('trading', '↑买入', 'blue') +
+               promoteBtn('candidate', '↓候选', 'gray') +
+               promoteBtn('archived', '✗排除', 'red');
+    }
+    if (t === 'trading') {
+        return promoteBtn('archived', '✓清仓', 'gray') +
+               promoteBtn('watching', '↓观察', 'gray');
+    }
+    if (t === 'archived') {
+        return promoteBtn('candidate', '↻激活', 'green');
+    }
+    return '';
+}
+
+async function confirmAndMove(stockId, poolType, code, action) {
+    // 关键操作（清仓、买入）需要确认
+    if (action.includes('买入') || action.includes('清仓')) {
+        if (!confirm(`确定 ${action} ${code} ?`)) return;
+    }
+    return moveStock(stockId, poolType);
 }
 
 // === 批量操作 ===
@@ -769,6 +989,267 @@ async function deleteStock(id) {
 function exportStocks() {
     const params = new URLSearchParams({ pool_type: currentPoolType, is_active: 'true' });
     window.open('/stock_pool/api/export?' + params, '_blank');
+}
+
+// === 高级操作：全市场扫描 ===
+let _marketScanResult = null;
+
+function openMarketScan() {
+    document.getElementById('marketScanResult').innerHTML = '点"开始扫描"后，按综合评分排序的股票列表会显示在这里';
+    document.getElementById('addToCandidateBtn').style.display = 'none';
+    _marketScanResult = null;
+    document.getElementById('marketScanModal').classList.add('show');
+}
+
+async function runMarketScan() {
+    const body = {
+        exclude_st:       document.getElementById('scanExST').checked,
+        exclude_chinext:  document.getElementById('scanExChinext').checked,
+        exclude_kechuang: document.getElementById('scanExKechuang').checked,
+        exclude_beijiao:  document.getElementById('scanExBeijiao').checked,
+        top_n:            parseInt(document.getElementById('scanTopN').value) || 100,
+    };
+    const area = document.getElementById('marketScanResult');
+    area.innerHTML = '<em>扫描中…（一般 1-3 秒）</em>';
+    document.getElementById('addToCandidateBtn').style.display = 'none';
+    try {
+        const r = await fetch('/stock_pool/api/scan_market', {
+            method: 'POST', headers: {'Content-Type':'application/json'},
+            body: JSON.stringify(body)
+        });
+        const d = await r.json();
+        if (!d.success) { area.innerHTML = `<span style="color:#dc2626;">${d.message}</span>`; return; }
+        if (!d.data.length) { area.innerHTML = '无可评分的股票'; return; }
+        _marketScanResult = d.data;
+
+        const rows = d.data.map((s, i) => {
+            const ss = s.sub_scores || {};
+            const fmt = (k) => ss[k] != null ? ss[k] : '—';
+            const drawColor = s.max_drawdown_pct < -25 ? '#dc2626' : s.max_drawdown_pct < -15 ? '#ca8a04' : '#16a34a';
+            const retColor = s.ret_60d > 20 ? '#16a34a' : s.ret_60d > 0 ? '#374151' : '#dc2626';
+            return `<tr style="border-top:1px solid #e5e7eb;">
+              <td style="padding:.3rem .5rem;color:#9ca3af;">${i+1}</td>
+              <td style="padding:.3rem .5rem;font-family:monospace;"><a href="/stock/${s.stock_code}" target="_blank" style="color:#2563eb;text-decoration:none;">${s.stock_code}</a></td>
+              <td style="padding:.3rem .5rem;">${s.stock_name||'-'}</td>
+              <td style="padding:.3rem .5rem;text-align:right;font-weight:600;color:#2563eb;">${s.total_score.toFixed(1)}</td>
+              <td style="padding:.3rem .5rem;text-align:right;color:${retColor};">${s.ret_60d.toFixed(1)}%</td>
+              <td style="padding:.3rem .5rem;text-align:right;">${s.latest_fc}</td>
+              <td style="padding:.3rem .5rem;text-align:right;color:${s.fund_momentum_raw > 0 ? '#16a34a' : (s.fund_momentum_raw < 0 ? '#dc2626' : '#9ca3af')};">${s.fund_momentum_raw >= 0 ? '+' : ''}${s.fund_momentum_raw}</td>
+              <td style="padding:.3rem .5rem;text-align:right;color:${drawColor};">${s.max_drawdown_pct.toFixed(1)}%</td>
+              <td style="padding:.3rem .5rem;color:#6b7280;font-size:.72rem;">趋势:${fmt('stock_trend')} RPS:${fmt('rps_60d')} 流:${fmt('liquidity')} 基:${fmt('fund_count')} 动:${fmt('fund_momentum')} 撤:${fmt('risk_drawdown')}</td>
+            </tr>`;
+        }).join('');
+
+        area.innerHTML = `
+            <div style="margin-bottom:.5rem;">扫描完成，共 ${d.count} 只（按综合分降序）</div>
+            <div style="max-height:520px;overflow-y:auto;border:1px solid #e5e7eb;border-radius:.4rem;">
+              <table style="width:100%;font-size:.78rem;border-collapse:collapse;">
+                <thead style="background:#f9fafb;position:sticky;top:0;">
+                  <tr>
+                    <th style="padding:.3rem .5rem;text-align:left;">#</th>
+                    <th style="padding:.3rem .5rem;text-align:left;">代码</th>
+                    <th style="padding:.3rem .5rem;text-align:left;">名称</th>
+                    <th style="padding:.3rem .5rem;text-align:right;">总分</th>
+                    <th style="padding:.3rem .5rem;text-align:right;">60d</th>
+                    <th style="padding:.3rem .5rem;text-align:right;">基金</th>
+                    <th style="padding:.3rem .5rem;text-align:right;">动量</th>
+                    <th style="padding:.3rem .5rem;text-align:right;">回撤</th>
+                    <th style="padding:.3rem .5rem;text-align:left;">子分（趋势/RPS/流动性/基金/动量/回撤）</th>
+                  </tr>
+                </thead>
+                <tbody>${rows}</tbody>
+              </table>
+            </div>`;
+        document.getElementById('addToCandidateBtn').style.display = '';
+    } catch (e) {
+        area.innerHTML = `<span style="color:#dc2626;">异常：${e.message}</span>`;
+    }
+}
+
+async function addScanResultsToCandidate() {
+    if (!_marketScanResult || !_marketScanResult.length) return;
+    if (!confirm(`把 ${_marketScanResult.length} 只股票加入候选池？已存在的会跳过。`)) return;
+    const stocks = _marketScanResult.map(s => ({
+        stock_code: s.stock_code,
+        stock_name: s.stock_name,
+        total_score: s.total_score,
+    }));
+    try {
+        const r = await fetch('/stock_pool/api/batch_add_to_candidate', {
+            method: 'POST', headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({ stocks })
+        });
+        const d = await r.json();
+        if (d.success) {
+            toast(`新增 ${d.added_count} 只到候选池，跳过 ${d.skipped_count} 只（已在池中）`, 'ok');
+            loadStats(); loadStocks();
+        } else {
+            toast(d.message, 'err');
+        }
+    } catch (e) { toast('请求失败', 'err'); }
+}
+
+// === 高级操作：批量过滤 ===
+let _filterScanResult = null;
+
+function openFilterDialog() {
+    if (!currentPoolType) {
+        toast('请先切换到具体的池（不是"全部"）', 'err');
+        return;
+    }
+    document.getElementById('filterPoolLabel').textContent = poolName(currentPoolType);
+    document.getElementById('filterResultArea').innerHTML = '';
+    document.getElementById('filterApplyBtn').style.display = 'none';
+    _filterScanResult = null;
+    document.getElementById('filterModal').classList.add('show');
+}
+
+async function runFilterScan() {
+    const filters = { st: document.getElementById('fltST').checked };
+    const m = document.getElementById('fltMoney').value.trim();
+    const c = document.getElementById('fltCap').value.trim();
+    if (m) filters.min_money_60d = parseFloat(m);
+    if (c) filters.min_market_cap = parseFloat(c);
+
+    const area = document.getElementById('filterResultArea');
+    area.innerHTML = '<em>扫描中…（成交额查询会扫每只股票的近 60 日 K 线，请稍候）</em>';
+    try {
+        const r = await fetch('/stock_pool/api/filter_scan', {
+            method: 'POST', headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({ pool_type: currentPoolType, filters })
+        });
+        const d = await r.json();
+        if (!d.success) { area.innerHTML = `<span style="color:#dc2626;">${d.message}</span>`; return; }
+        _filterScanResult = d.to_remove;
+        if (!d.to_remove_count) {
+            area.innerHTML = `<span style="color:#16a34a;">✓ 扫描了 ${d.scanned} 只，无需剔除</span>`;
+            document.getElementById('filterApplyBtn').style.display = 'none';
+            return;
+        }
+        const rows = d.to_remove.map(s =>
+            `<tr><td style="padding:.25rem .5rem;">${s.stock_code}</td>
+             <td style="padding:.25rem .5rem;">${s.stock_name||'-'}</td>
+             <td style="padding:.25rem .5rem;color:#6b7280;font-size:.78rem;">${s.reasons.join('；')}</td></tr>`).join('');
+        area.innerHTML = `
+            <div style="margin-bottom:.5rem;">扫描了 ${d.scanned} 只 → <strong style="color:#dc2626;">${d.to_remove_count} 只待剔除</strong></div>
+            <div style="max-height:240px;overflow-y:auto;border:1px solid #e5e7eb;border-radius:.4rem;">
+              <table style="width:100%;font-size:.78rem;border-collapse:collapse;">
+                <thead style="background:#f9fafb;"><tr><th style="padding:.25rem .5rem;text-align:left;">代码</th><th style="padding:.25rem .5rem;text-align:left;">名称</th><th style="padding:.25rem .5rem;text-align:left;">原因</th></tr></thead>
+                <tbody>${rows}</tbody>
+              </table>
+            </div>`;
+        document.getElementById('filterApplyBtn').style.display = '';
+    } catch (e) {
+        area.innerHTML = `<span style="color:#dc2626;">异常：${e.message}</span>`;
+    }
+}
+
+async function applyFilterRemove() {
+    if (!_filterScanResult || !_filterScanResult.length) return;
+    if (!confirm(`确定把 ${_filterScanResult.length} 只股票全部归档？`)) return;
+    const ids = _filterScanResult.map(s => s.id);
+    try {
+        const r = await fetch('/stock_pool/api/batch_update', {
+            method: 'POST', headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({ stock_ids: ids, updates: { pool_type: 'archived' }})
+        });
+        const d = await r.json();
+        if (d.success) {
+            toast(`已归档 ${ids.length} 只`, 'ok');
+            closeModal('filterModal');
+            loadStats(); loadStocks();
+        } else {
+            toast(d.message, 'err');
+        }
+    } catch (e) { toast('操作失败', 'err'); }
+}
+
+// === 高级操作：自动化规则 ===
+function openRulesDialog() {
+    document.getElementById('rulesResultArea').innerHTML = '';
+    document.getElementById('rulesModal').classList.add('show');
+}
+
+async function runApplyRules() {
+    const days = parseInt(document.getElementById('rulesDays').value) || 0;
+    const degEnabled = document.getElementById('rulesDegEnabled').checked;
+    const month = document.getElementById('rulesDegMonth').value.trim();
+    if (degEnabled && !month) { toast('启用降级检查时必须填月份', 'err'); return; }
+
+    const body = {
+        candidate_archive_days: days,
+        degenerate_demote: { enabled: degEnabled, month: month, sample_size: 30 }
+    };
+    const area = document.getElementById('rulesResultArea');
+    area.innerHTML = '<em>规则应用中…（健康度检查会逐只加载模型，可能需要几十秒）</em>';
+    try {
+        const r = await fetch('/stock_pool/api/apply_rules', {
+            method: 'POST', headers: {'Content-Type':'application/json'},
+            body: JSON.stringify(body)
+        });
+        const d = await r.json();
+        if (!d.success) { area.innerHTML = `<span style="color:#dc2626;">${d.message}</span>`; return; }
+        const a1 = d.details.archived_old_candidates;
+        const a2 = d.details.demoted_degenerate;
+        let html = `<div style="margin-bottom:.5rem;">
+            <strong>归档 ${d.archived_count} 只</strong>（候选超期）
+            ・<strong>降级 ${d.demoted_count} 只</strong>（模型退化）
+        </div>`;
+        if (a1.length) html += `<div><b>归档:</b> ${a1.map(x => x.stock_code).join(', ')}</div>`;
+        if (a2.length) html += `<div style="margin-top:.3rem;"><b>降级:</b> ${a2.map(x => `${x.stock_code} (${x.health_per_model.join('/')})`).join(', ')}</div>`;
+        area.innerHTML = html;
+        toast('规则应用完成', 'ok');
+        loadStats();
+        if (currentPoolType === 'candidate' || currentPoolType === 'watching' || currentPoolType === 'archived') loadStocks();
+    } catch (e) {
+        area.innerHTML = `<span style="color:#dc2626;">异常：${e.message}</span>`;
+    }
+}
+
+// === 高级操作：健康度扫描 ===
+function openHealthScan() {
+    document.getElementById('healthResult').innerHTML = '';
+    document.getElementById('healthModal').classList.add('show');
+}
+
+async function runHealthScan() {
+    const month = document.getElementById('healthMonth').value.trim();
+    if (!month) { toast('请填月份', 'err'); return; }
+    const area = document.getElementById('healthResult');
+    area.innerHTML = '<em>扫描中…（每只股票要加载 4 个模型，预计每只 1 秒）</em>';
+    try {
+        const r = await fetch('/stock_pool/api/scan_health', {
+            method: 'POST', headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({ pool_type: 'watching', month, sample_size: 30 })
+        });
+        const d = await r.json();
+        if (!d.success) { area.innerHTML = `<span style="color:#dc2626;">${d.message}</span>`; return; }
+        if (!d.data.length) { area.innerHTML = '观察池为空'; return; }
+        // 缓存供观察池表格使用
+        sessionStorage.setItem(`health_${month}`, JSON.stringify(
+            Object.fromEntries(d.data.map(x => [x.stock_code, x]))
+        ));
+        const rows = d.data.map(s => {
+            const colors = {HEALTHY:'#16a34a', WEAK:'#ca8a04', DEGENERATE:'#dc2626', UNTRAINED:'#9ca3af'};
+            const c = colors[s.overall] || '#374151';
+            return `<tr style="border-top:1px solid #e5e7eb;">
+              <td style="padding:.25rem .5rem;">${s.stock_code}</td>
+              <td style="padding:.25rem .5rem;">${s.stock_name||'-'}</td>
+              <td style="padding:.25rem .5rem;"><span style="color:${c};font-weight:600;">${s.overall}</span></td>
+              <td style="padding:.25rem .5rem;font-family:monospace;font-size:.78rem;">${s.healthy_count}/${s.total_models}</td>
+              <td style="padding:.25rem .5rem;color:#6b7280;font-size:.78rem;">${s.per_model.join(' / ')}</td>
+            </tr>`;
+        }).join('');
+        area.innerHTML = `
+            <div style="margin-bottom:.5rem;">扫描了 ${d.count} 只观察股票（${month} 月份模型）</div>
+            <table style="width:100%;font-size:.85rem;border-collapse:collapse;">
+              <thead style="background:#f9fafb;">
+                <tr><th style="padding:.3rem .5rem;text-align:left;">代码</th><th style="padding:.3rem .5rem;text-align:left;">名称</th><th style="padding:.3rem .5rem;text-align:left;">综合</th><th style="padding:.3rem .5rem;text-align:left;">HEALTHY</th><th style="padding:.3rem .5rem;text-align:left;">详情</th></tr>
+              </thead><tbody>${rows}</tbody>
+            </table>`;
+    } catch (e) {
+        area.innerHTML = `<span style="color:#dc2626;">异常：${e.message}</span>`;
+    }
 }
 
 // === 工具 ===

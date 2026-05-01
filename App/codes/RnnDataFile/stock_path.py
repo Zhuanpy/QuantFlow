@@ -15,12 +15,17 @@ def file_root():
 class StockDataPath:
     """股票数据路径管理类"""
     data_path = None
-    
+
     @classmethod
     def _get_data_path(cls):
-        """获取数据路径（延迟初始化）"""
+        """获取数据路径（延迟初始化）
+
+        实际训练样本/模型/json 都落在项目根的 data/ 目录下
+        （`data/RnnData/<month>/...`），不是 App/codes/code_data/。
+        早期路径写错过，现在统一指向真实落盘位置。
+        """
         if cls.data_path is None:
-            cls.data_path = os.path.join(file_root(), 'App', 'codes', 'code_data')
+            cls.data_path = os.path.join(file_root(), 'data')
         return cls.data_path
     
     @classmethod
@@ -81,12 +86,15 @@ class StockDataPath:
 class AnalysisDataPath:
     """分析数据路径管理类"""
     data_path = None
-    
+
     @classmethod
     def _get_data_path(cls):
-        """获取数据路径（延迟初始化）"""
+        """获取数据路径（延迟初始化）
+
+        与 StockDataPath 一致，使用项目根的 data/ 目录。
+        """
         if cls.data_path is None:
-            cls.data_path = os.path.join(file_root(), 'App', 'codes', 'code_data')
+            cls.data_path = os.path.join(file_root(), 'data')
         return cls.data_path
     
     @classmethod

@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import os
 from ..MySql.LoadMysql import LoadRnnModel
 
 from keras import Sequential
@@ -7,7 +8,7 @@ from keras.layers import Flatten
 from keras.layers import Conv2D
 from keras.layers import AveragePooling2D
 
-from keras.optimizers import adam_v2  # Adam
+from keras.optimizers import Adam
 from App.codes.utils.Normal import ReadSaveFile as rf
 from ..MySql.sql_utils import Stocks
 import numpy as np
@@ -49,14 +50,14 @@ class BuiltModel:
 
         k.clear_session()  # 清除缓存
 
+        # find_file_in_paths 找的是历史月份；当月文件用 StockDataPath 直接拼
         x_name = f'{model_name}_{self.code}_x.npy'
-        data_x_path = find_file_in_paths(self.months, 'train_data', x_name)
-
         y_name = f'{model_name}_{self.code}_y.npy'
-        data_y_path = find_file_in_paths(self.months, 'train_data', y_name)
+        data_x_path = StockDataPath.train_data_path(self.months, x_name)
+        data_y_path = StockDataPath.train_data_path(self.months, y_name)
 
-        data_x = np.load(data_x_path, f'{model_name}_{self.code}_x.npy')
-        data_y = np.load(data_y_path, f'{model_name}_{self.code}_y.npy')
+        data_x = np.load(data_x_path)
+        data_y = np.load(data_y_path)
 
         # 数据拆分
         len_data = int(data_y.shape[0] * 0.8)
@@ -70,17 +71,21 @@ class BuiltModel:
         # 搭建模型
         model = create_model()
 
+        # 尝试用上一月份的权重做增量训练（incremental fine-tune）；
+        # find_file_in_paths 返回 (path, month) 元组，要解包
+        epochs = 500
         try:
-            # 读取历史权重数据
-            f = f'weight_{model_name}_{self.code}.h5'
-            weight_path = find_file_in_paths(self.months, 'weight', f)
-            model.load_weights(filepath=weight_path)
-            epochs = 100
+            wf = f'weight_{model_name}_{self.code}.h5'
+            result = find_file_in_paths(self.months, 'weight', wf)
+            weight_path = result[0] if isinstance(result, tuple) else result
+            if weight_path and os.path.exists(weight_path):
+                model.load_weights(filepath=weight_path)
+                epochs = 100   # 已有历史权重时 fine-tune 用更少 epoch
+        except (OSError, ValueError, TypeError):
+            # 历史权重不可用（不存在 / 格式不兼容），从头训练
+            pass
 
-        except OSError:
-            epochs = 500
-
-        model.compile(loss='mean_squared_error', optimizer=adam_v2.Adam(lr))  # 编译
+        model.compile(loss='mean_squared_error', optimizer=Adam(learning_rate=lr))  # 编译
         model.fit(train_x, train_y, epochs=epochs, batch_size=num_train)  # 训练
         loss = model.evaluate(test_x, test_y, batch_size=num_test)  # 评估
         print(loss)
@@ -90,15 +95,16 @@ class BuiltModel:
         records[model_name] = loss
         rf.save_json(records, self.months, self.code)
 
-        # 保存权重
-        weight_file_name = 'weight_{model_name}_{self.code}.h5'
+        # 保存权重（Keras 3 强制权重文件后缀 .weights.h5）
+        weight_file_name = f'weight_{model_name}_{self.code}.weights.h5'
         weight_path = StockDataPath.model_weight_path(self.months, weight_file_name)
-        model.save_weights(weight_path)  # 保存参数
+        model.save_weights(weight_path)
 
-        # 保存模型
+        # 保存完整模型，仍使用 .h5 后缀以兼容现有 model_predictor 的查找逻辑
+        # （Keras 3 仍支持 .h5 模型保存，只是 weight 必须 .weights.h5）
         model_file_name = f'{model_name}_{self.code}.h5'
-        model_path = StockDataPath.model_weight_path(self.months, model_file_name)
-        model.save(model_path)  # 保存模型
+        model_path = StockDataPath.model_path(self.months, model_file_name)
+        model.save(model_path)
 
     def model_one(self, model_name: str):
         self.train_model(model_name)

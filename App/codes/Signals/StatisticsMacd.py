@@ -212,7 +212,7 @@ class StatisticsMACD:
 
         # fill nan
         fills = [EndPrice, EndPriceIndex, StartPrice, StartPriceIndex]
-        data[fills] = data[fills].fillna(method='ffill')
+        data[fills] = data[fills].ffill()
 
         # reset 'date' to column
         data = data.reset_index()
@@ -368,7 +368,8 @@ class StatisticsMACD:
             data.loc[conditions, CycleLengthMax] = ed_index - st_index
 
             # 计算每个bar在周期中的位置，并填充到'CycleLengthPerBar'列中
-            data.loc[conditions, CycleLengthPerBar] = data[conditions].index - st_index
+            # 新版 pandas 会对左右值做 index 对齐，这里用 .values 转为位置赋值
+            data.loc[conditions, CycleLengthPerBar] = (data[conditions].index - st_index).values
 
         return data
 

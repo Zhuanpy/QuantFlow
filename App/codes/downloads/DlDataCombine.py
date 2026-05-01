@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
-from DlJuQuan import DownloadData as Download_juquan
+# Download_juquan 依赖 jqdatasdk，未安装时不应阻塞整个模块加载
+try:
+    from DlJuQuan import DownloadData as Download_juquan
+except Exception:
+    Download_juquan = None
 from DlEastMoney import DownloadData as Download_east
 import pandas as pd
 import time

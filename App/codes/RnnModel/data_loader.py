@@ -37,38 +37,62 @@ class ModelData(RnnBase):
 
     def read_1m_by_15m_record(self) -> pd.DataFrame:
         """
-        根据 15 分钟记录读取 1 分钟数据
+        根据 15 分钟记录读取 1 分钟数据。
 
-        Returns:
-            pd.DataFrame: 1 分钟股票数据
+        改造：
+        - 优先用 self.check_date 锚定窗口（点-in-time 预测最合理）
+        - 没 check_date 时退化到 RnnRunningRecord 历史时间 + 10 天回溯
+        - 都没有时回退到最近 150 天
+        - 用 load_1m_by_date_range 跨年安全
         """
-        # 加载 RNN 模型运行记录
-        self.records = LoadRnnModel.load_run_record()
+        # 1) 锚点：优先用 check_date；其次用历史 RnnRunningRecord；最后今天
+        anchor = None
+        if hasattr(self, 'check_date') and self.check_date is not None:
+            anchor = pd.to_datetime(self.check_date)
 
-        # 筛选出特定股票代码的记录
-        self.records = self.records[self.records['code'] == self.stock_code]
-        self.record_last_15m_time = self.records.iloc[0]['Time15m']
-        data_last_150_days = pd.Timestamp('today') + pd.Timedelta(days=-150)
+        self.record_last_15m_time = None
+        if anchor is None:
+            # 没有指定日期，尝试用最近一条预测记录
+            try:
+                self.records = LoadRnnModel.load_run_record()
+                if (self.records is not None and not self.records.empty
+                        and 'code' in self.records.columns):
+                    matched = self.records[self.records['code'] == self.stock_code]
+                    if not matched.empty and 'Time15m' in matched.columns:
+                        ts = matched.iloc[0]['Time15m']
+                        if pd.notna(ts):
+                            self.record_last_15m_time = ts
+                            anchor = pd.to_datetime(ts)
+            except Exception as ex:
+                print(f'[predict] 读取 RnnRunningRecord 失败: {ex}')
 
-        try:
-            # 如果记录的 15 分钟级别数据时间在 150 天内，则向前推 10 天
-            select_15m_time = (
-                self.record_last_15m_time + pd.Timedelta(days=-10)
-                if self.record_last_15m_time > data_last_150_days
-                else data_last_150_days
+        if anchor is None:
+            anchor = pd.Timestamp('today')
+
+        # 2) 窗口：以 anchor 为终点，往前 150 天
+        select_15m_time = anchor + pd.Timedelta(days=-150)
+        end_date = anchor + pd.Timedelta(days=2)
+
+        # 3) 加载 1m
+        data_1m = StockData1m.load_1m_by_date_range(
+            self.stock_code,
+            select_15m_time.strftime('%Y-%m-%d'),
+            end_date.strftime('%Y-%m-%d'),
+        )
+
+        if data_1m is None or data_1m.empty:
+            data_1m = StockData1m.load_1m(self.stock_code, str(anchor.year))
+
+        if data_1m is None or data_1m.empty:
+            raise ValueError(
+                f'无 1m 数据可用: stock={self.stock_code}, '
+                f'范围 {select_15m_time.date()} → {end_date.date()}'
             )
-        except Exception as ex:
-            select_15m_time = data_last_150_days
-            print(f'Select 1m data Date Error: {ex}')
 
-        # 从 StockData1m 加载 1 分钟级别的股票数据
-        data_1m = StockData1m.load_1m(self.stock_code, str(data_last_150_days.year))
-
-        # 筛选出所需的 1m 数据
-        data_1m = data_1m[data_1m['date'] > select_15m_time].drop_duplicates(
-            subset=['date']
-        ).reset_index(drop=True)
-
+        data_1m['date'] = pd.to_datetime(data_1m['date'])
+        data_1m = (data_1m[data_1m['date'] > select_15m_time]
+                   .drop_duplicates(subset=['date'])
+                   .reset_index(drop=True))
         return data_1m
 
     def monitor_read_1m(self) -> pd.DataFrame:
@@ -237,9 +261,13 @@ class ModelData(RnnBase):
 
         data_daily = self.daily_data()
 
-        self.data_15m = self.data_1m[
-            self.data_1m['date'] > pd.to_datetime(self.record_last_15m_time)
-        ].reset_index(drop=True)
+        # 历史定位时间存在就过滤，否则用全部 1m（首次预测时无历史）
+        if self.record_last_15m_time is not None and pd.notna(self.record_last_15m_time):
+            self.data_15m = self.data_1m[
+                self.data_1m['date'] > pd.to_datetime(self.record_last_15m_time)
+            ].reset_index(drop=True)
+        else:
+            self.data_15m = self.data_1m.copy().reset_index(drop=True)
 
         self.data_15m = ResampleData.resample_1m_data(data=self.data_15m, freq='15m')
         self.data_15m = SignalMethod.signal_by_MACD_3ema(data=self.data_15m, data1m=self.data_1m)
@@ -267,14 +295,22 @@ class ModelData(RnnBase):
             self.Bar1mVolumeMax, args=(5,)
         )
 
-        # 保存 15m 新数据
-        self.update_15m()
+        # 保存 15m 新数据（DB 写入失败不应让预测主流程失败）
+        try:
+            self.update_15m()
+        except Exception as e:
+            print(f'[predict] update_15m 失败（不影响预测）: {e}')
 
-        # 运行趋势辨别模块
-        distinguish = TrendDistinguishModel()
-        self.trendLabel, self.trendValue = distinguish.distinguish_freq(
-            self.stock_code, self.data_15m
-        )
+        # 运行趋势辨别模块（独立的 MACD 趋势分类器，模型可能未训）
+        try:
+            distinguish = TrendDistinguishModel()
+            self.trendLabel, self.trendValue = distinguish.distinguish_freq(
+                self.stock_code, self.data_15m
+            )
+        except (FileNotFoundError, OSError, Exception) as e:
+            print(f'[predict] 趋势辨别模块不可用（默认 unknown）: {e}')
+            self.trendLabel = 'unknown'
+            self.trendValue = 0.0
 
         return self.data_15m
 

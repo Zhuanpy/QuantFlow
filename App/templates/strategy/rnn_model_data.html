@@ -1,1372 +1,245 @@
 {% extends "base.html" %}
-
 {% block content %}
-<div class="container">
-    <div class="header">
-        <h1>RNN模型数据管理</h1>
-        <div class="header-actions">
-            <button id="refreshBtn" class="btn btn-secondary">刷新数据</button>
-            <a href="{{ url_for('RnnData.data_statistics_page') }}" class="btn btn-info">数据统计</a>
-        <a href="{{ url_for('stock_pool.stock_pool_page') }}" class="btn btn-warning">股票池管理</a>
-            <a href="{{ url_for('main_bp.index') }}" class="btn btn-outline">返回首页</a>
-        </div>
-    </div>
+<div class="container" style="max-width:1400px;margin:0 auto;padding:1.25rem;">
 
-    <!-- 统计概览 -->
-    <div class="stats-overview">
-        <div class="stat-card">
-            <div class="stat-icon">📊</div>
-            <div class="stat-content">
-                <h3>训练记录总数</h3>
-                <div class="stat-number" id="totalRecords">-</div>
-            </div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-icon">✅</div>
-            <div class="stat-content">
-                <h3>处理成功</h3>
-                <div class="stat-number" id="successRecords">-</div>
-            </div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-icon">⏳</div>
-            <div class="stat-content">
-                <h3>待处理</h3>
-                <div class="stat-number" id="pendingRecords">-</div>
-            </div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-icon">❌</div>
-            <div class="stat-content">
-                <h3>处理失败</h3>
-                <div class="stat-number" id="failedRecords">-</div>
-            </div>
-        </div>
+  <!-- ========== 顶部 ========== -->
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;border-bottom:2px solid #e5e7eb;padding-bottom:.75rem;">
+    <div>
+      <h1 style="margin:0;font-size:1.5rem;">RNN 模型数据 — 状态监控</h1>
+      <div style="color:#6b7280;font-size:.85rem;margin-top:.25rem;">
+        只读视图：查看训练记录状态。所有"处理 / 训练 / 检查"操作已迁移到 RnnStrategies。
+      </div>
     </div>
+    <div style="display:flex;gap:.5rem;">
+      <button id="refreshBtn" class="btn btn-secondary">刷新</button>
+      <a href="{{ url_for('RnnData.data_statistics_page') }}" class="btn btn-info">数据统计</a>
+      <a href="{{ url_for('main_bp.index') }}" class="btn btn-outline">返回首页</a>
+    </div>
+  </div>
 
-    <!-- 操作面板 -->
-    <div class="operation-panel">
-        <div class="panel-header">
-            <h2>数据处理操作</h2>
-        </div>
-        <div class="panel-content">
-            <div class="form-row">
-                <div class="form-group">
-                    <label for="yearSelect">选择年份</label>
-                    <select id="yearSelect" class="form-control">
-                        <option value="">请选择年份</option>
-                        <option value="2025">2025年</option>
-                        <option value="2024">2024年</option>
-                        <option value="2023">2023年</option>
-                        <option value="2022">2022年</option>
-                        <option value="2021">2021年</option>
-                        <option value="2020">2020年</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label for="quarterSelect">选择季度（可选）</label>
-                    <select id="quarterSelect" class="form-control">
-                        <option value="">请选择季度</option>
-                        <option value="1">第一季度 (Q1)</option>
-                        <option value="2">第二季度 (Q2)</option>
-                        <option value="3">第三季度 (Q3)</option>
-                        <option value="4">第四季度 (Q4)</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label for="stockCodeInput">股票代码（可选）</label>
-                    <input type="text" id="stockCodeInput" class="form-control" placeholder="例如: 000001,000002">
-                </div>
-            </div>
-            <div class="button-group">
-                <button id="initYearBtn" class="btn btn-primary">初始化年份数据</button>
-                <button id="processOriginalBtn" class="btn btn-success">处理原始15分钟数据</button>
-                <button id="processStandardBtn" class="btn btn-info">处理标准化15分钟数据</button>
-                <button id="processQuarterBtn" class="btn btn-primary">处理季度数据</button>
-                <button id="processYearBtn" class="btn btn-success">处理整年数据</button>
-                <button id="processStockPoolBtn" class="btn btn-primary">基于股票池处理</button>
-                <button id="checkModelBtn" class="btn btn-warning">检查模型状态</button>
-            </div>
-        </div>
+  <!-- ========== 操作迁移横幅 ========== -->
+  <div style="background:#eff6ff;border:1px solid #93c5fd;border-radius:8px;padding:1rem 1.25rem;margin-bottom:1rem;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem;">
+    <div>
+      <div style="font-weight:600;color:#1e40af;">所有处理 / 训练 / 预测 / 检查操作 → 请去 RnnStrategies</div>
+      <div style="color:#3b82f6;font-size:.85rem;margin-top:.25rem;">
+        本页只用来监控训练记录的状态，不再触发任何处理。原"处理标准化数据"和"检查模型状态"按钮被验证为只是改 DB status 不做实事，已废弃。
+      </div>
     </div>
+    <div style="display:flex;gap:.5rem;">
+      <a href="/RnnStrategies/training" class="btn btn-primary" style="white-space:nowrap;">→ 模型训练</a>
+      <a href="/RnnStrategies/prediction" class="btn btn-success" style="white-space:nowrap;">→ 模型预测</a>
+    </div>
+  </div>
 
-    <!-- 进度显示 -->
-    <div class="progress-panel" id="progressPanel" style="display: none;">
-        <div class="progress-header">
-            <h3>处理进度</h3>
-            <button id="cancelBtn" class="btn btn-danger btn-sm">取消处理</button>
-        </div>
-        <div class="progress-content">
-            <div class="progress-bar">
-                <div class="progress-fill" id="progressFill"></div>
-            </div>
-            <div class="progress-text">
-                <span id="progressText">准备中...</span>
-                <span id="progressPercent">0%</span>
-            </div>
-            <div class="progress-details">
-                <div class="detail-item">
-                    <span>总数量:</span>
-                    <span id="totalCount">0</span>
-                </div>
-                <div class="detail-item">
-                    <span>已完成:</span>
-                    <span id="completedCount">0</span>
-                </div>
-                <div class="detail-item">
-                    <span>成功:</span>
-                    <span id="successCount">0</span>
-                </div>
-                <div class="detail-item">
-                    <span>失败:</span>
-                    <span id="failedCount">0</span>
-                </div>
-            </div>
-        </div>
+  <!-- ========== 统计概览 ========== -->
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:1rem;margin-bottom:1rem;">
+    <div class="stat-card" style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:1rem;display:flex;align-items:center;gap:.75rem;">
+      <div style="font-size:1.75rem;">📊</div>
+      <div>
+        <div style="color:#6b7280;font-size:.8rem;">训练记录总数</div>
+        <div style="font-size:1.75rem;font-weight:700;color:#1f2937;" id="totalRecords">—</div>
+      </div>
     </div>
+    <div class="stat-card" style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:1rem;display:flex;align-items:center;gap:.75rem;">
+      <div style="font-size:1.75rem;">✅</div>
+      <div>
+        <div style="color:#6b7280;font-size:.8rem;">model_check = success</div>
+        <div style="font-size:1.75rem;font-weight:700;color:#16a34a;" id="successRecords">—</div>
+      </div>
+    </div>
+    <div class="stat-card" style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:1rem;display:flex;align-items:center;gap:.75rem;">
+      <div style="font-size:1.75rem;">⏳</div>
+      <div>
+        <div style="color:#6b7280;font-size:.8rem;">model_check = pending</div>
+        <div style="font-size:1.75rem;font-weight:700;color:#ca8a04;" id="pendingRecords">—</div>
+      </div>
+    </div>
+    <div class="stat-card" style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:1rem;display:flex;align-items:center;gap:.75rem;">
+      <div style="font-size:1.75rem;">❌</div>
+      <div>
+        <div style="color:#6b7280;font-size:.8rem;">model_check = failed</div>
+        <div style="font-size:1.75rem;font-weight:700;color:#dc2626;" id="failedRecords">—</div>
+      </div>
+    </div>
+  </div>
 
-    <!-- 季度统计面板 -->
-    <div class="quarter-stats-panel" id="quarterStatsPanel" style="display: none;">
-        <div class="panel-header">
-            <h2>季度数据统计</h2>
-            <button id="refreshQuarterStatsBtn" class="btn btn-sm btn-secondary">刷新</button>
-        </div>
-        <div class="quarter-stats-content" id="quarterStatsContent">
-            <!-- 季度统计内容将在这里动态加载 -->
-        </div>
+  <!-- ========== 季度统计面板（折叠） ========== -->
+  <div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:1.25rem;margin-bottom:1rem;">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem;">
+      <h2 style="margin:0;font-size:1.125rem;">季度数据统计</h2>
+      <div style="display:flex;gap:.5rem;align-items:center;">
+        <select id="quarterStatsYear" class="form-select" style="min-width:120px;">
+          <option value="">— 选择年份 —</option>
+        </select>
+        <button id="loadQuarterStatsBtn" class="btn btn-secondary btn-sm">加载</button>
+      </div>
     </div>
+    <div id="quarterStatsContent" style="margin-top:.75rem;color:#6b7280;font-size:.85rem;">选择年份后查看该年各季度的数据情况。</div>
+  </div>
 
-    <!-- 数据表格 -->
-    <div class="data-table-panel">
-        <div class="table-header">
-            <h2>训练记录详情</h2>
-            <div class="table-controls">
-                <input type="text" id="searchInput" placeholder="搜索股票代码或名称..." class="form-control">
-                <select id="statusFilter" class="form-control">
-                    <option value="">全部状态</option>
-                    <option value="pending">待处理</option>
-                    <option value="processing">处理中</option>
-                    <option value="success">成功</option>
-                    <option value="failed">失败</option>
-                </select>
-                <button id="showQuarterStatsBtn" class="btn btn-sm btn-info">显示季度统计</button>
-            </div>
-        </div>
-        <div class="table-container">
-            <table class="data-table" id="recordsTable">
-                <thead>
-                    <tr>
-                        <th>ID</th>
-                        <th>股票代码</th>
-                        <th>股票名称</th>
-                        <th>解析月份</th>
-                        <th>原始数据状态</th>
-                        <th>标准化数据状态</th>
-                        <th>模型检查状态</th>
-                        <th>创建时间</th>
-                        <th>操作</th>
-                    </tr>
-                </thead>
-                <tbody id="recordsTableBody">
-                    <!-- 数据将通过JavaScript动态加载 -->
-                </tbody>
-            </table>
-        </div>
-        <div class="table-pagination">
-            <button id="prevPageBtn" class="btn btn-outline">上一页</button>
-            <span id="pageInfo">第 1 页，共 1 页</span>
-            <button id="nextPageBtn" class="btn btn-outline">下一页</button>
-        </div>
+  <!-- ========== 数据表格 ========== -->
+  <div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:1.25rem;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.75rem;flex-wrap:wrap;gap:.5rem;">
+      <h2 style="margin:0;font-size:1.125rem;">训练记录详情</h2>
+      <div style="display:flex;gap:.5rem;align-items:center;">
+        <input type="text" id="searchInput" placeholder="搜索股票代码或名称…" class="form-input" style="width:220px;">
+        <select id="statusFilter" class="form-select">
+          <option value="">全部 model_check 状态</option>
+          <option value="pending">待处理</option>
+          <option value="processing">处理中</option>
+          <option value="success">成功</option>
+          <option value="failed">失败</option>
+        </select>
+      </div>
     </div>
+    <div style="overflow-x:auto;">
+      <table style="width:100%;border-collapse:collapse;font-size:.875rem;">
+        <thead style="background:#f9fafb;">
+          <tr>
+            <th style="padding:.5rem;text-align:left;">ID</th>
+            <th style="padding:.5rem;text-align:left;">代码</th>
+            <th style="padding:.5rem;text-align:left;">名称</th>
+            <th style="padding:.5rem;text-align:left;">解析月份</th>
+            <th style="padding:.5rem;text-align:center;">原始 15m</th>
+            <th style="padding:.5rem;text-align:center;">标准化 15m</th>
+            <th style="padding:.5rem;text-align:center;">model_check</th>
+            <th style="padding:.5rem;text-align:left;">创建</th>
+            <th style="padding:.5rem;text-align:left;">操作</th>
+          </tr>
+        </thead>
+        <tbody id="recordsTableBody"><tr><td colspan="9" style="text-align:center;color:#9ca3af;padding:1rem;">加载中…</td></tr></tbody>
+      </table>
+    </div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:.75rem;font-size:.85rem;color:#6b7280;">
+      <button id="prevPageBtn" class="btn btn-outline btn-sm">上一页</button>
+      <span id="pageInfo">第 1 页 / 共 1 页</span>
+      <button id="nextPageBtn" class="btn btn-outline btn-sm">下一页</button>
+    </div>
+  </div>
 </div>
 
-<style>
-.container {
-    max-width: 1400px;
-    margin: 0 auto;
-    padding: 20px;
-}
-
-.header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 30px;
-    padding-bottom: 20px;
-    border-bottom: 2px solid var(--border-color);
-}
-
-.header h1 {
-    color: var(--text-primary);
-    margin: 0;
-    font-size: 2rem;
-}
-
-.header-actions {
-    display: flex;
-    gap: 10px;
-}
-
-.stats-overview {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-    gap: 20px;
-    margin-bottom: 30px;
-}
-
-.stat-card {
-    background: var(--card-background);
-    border-radius: 12px;
-    padding: 20px;
-    box-shadow: var(--shadow-sm);
-    display: flex;
-    align-items: center;
-    gap: 15px;
-    transition: transform 0.2s ease;
-}
-
-.stat-card:hover {
-    transform: translateY(-2px);
-    box-shadow: var(--shadow-md);
-}
-
-.stat-icon {
-    font-size: 2rem;
-    opacity: 0.8;
-}
-
-.stat-content h3 {
-    margin: 0 0 8px 0;
-    color: var(--text-secondary);
-    font-size: 0.9rem;
-    font-weight: 500;
-}
-
-.stat-number {
-    font-size: 2rem;
-    font-weight: bold;
-    color: var(--primary-color);
-}
-
-.operation-panel {
-    background: var(--card-background);
-    border-radius: 12px;
-    padding: 25px;
-    margin-bottom: 30px;
-    box-shadow: var(--shadow-sm);
-}
-
-.panel-header h2 {
-    margin: 0 0 20px 0;
-    color: var(--text-primary);
-    font-size: 1.3rem;
-}
-
-.form-row {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 20px;
-    margin-bottom: 20px;
-}
-
-.form-group {
-    display: flex;
-    flex-direction: column;
-}
-
-.form-group label {
-    margin-bottom: 8px;
-    color: var(--text-primary);
-    font-weight: 500;
-}
-
-.form-control {
-    padding: 10px 12px;
-    border: 1px solid var(--border-color);
-    border-radius: 6px;
-    font-size: 14px;
-    transition: border-color 0.2s ease;
-}
-
-.form-control:focus {
-    outline: none;
-    border-color: var(--primary-color);
-    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
-}
-
-.button-group {
-    display: flex;
-    gap: 10px;
-    flex-wrap: wrap;
-}
-
-.btn {
-    padding: 10px 20px;
-    border: none;
-    border-radius: 6px;
-    cursor: pointer;
-    font-size: 14px;
-    font-weight: 500;
-    transition: all 0.2s ease;
-    text-decoration: none;
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-}
-
-.btn-primary {
-    background: var(--primary-color);
-    color: white;
-}
-
-.btn-primary:hover {
-    background: var(--primary-dark);
-}
-
-.btn-success {
-    background: var(--success-color);
-    color: white;
-}
-
-.btn-success:hover {
-    background: var(--success-dark);
-}
-
-.btn-info {
-    background: var(--info-color);
-    color: white;
-}
-
-.btn-info:hover {
-    background: var(--info-dark);
-}
-
-.btn-warning {
-    background: var(--warning-color);
-    color: white;
-}
-
-.btn-warning:hover {
-    background: var(--warning-dark);
-}
-
-.btn-danger {
-    background: var(--danger-color);
-    color: white;
-}
-
-.btn-danger:hover {
-    background: var(--danger-dark);
-}
-
-.btn-secondary {
-    background: var(--secondary-color);
-    color: white;
-}
-
-.btn-secondary:hover {
-    background: var(--secondary-dark);
-}
-
-.btn-outline {
-    background: transparent;
-    color: var(--primary-color);
-    border: 1px solid var(--primary-color);
-}
-
-.btn-outline:hover {
-    background: var(--primary-color);
-    color: white;
-}
-
-.progress-panel {
-    background: var(--card-background);
-    border-radius: 12px;
-    padding: 25px;
-    margin-bottom: 30px;
-    box-shadow: var(--shadow-sm);
-}
-
-.progress-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 20px;
-}
-
-.progress-header h3 {
-    margin: 0;
-    color: var(--text-primary);
-}
-
-.progress-bar {
-    width: 100%;
-    height: 8px;
-    background: var(--border-color);
-    border-radius: 4px;
-    overflow: hidden;
-    margin-bottom: 15px;
-}
-
-.progress-fill {
-    height: 100%;
-    background: linear-gradient(90deg, var(--primary-color), var(--success-color));
-    width: 0%;
-    transition: width 0.3s ease;
-}
-
-.progress-text {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 15px;
-    font-weight: 500;
-}
-
-.progress-details {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-    gap: 15px;
-}
-
-.detail-item {
-    display: flex;
-    justify-content: space-between;
-    padding: 8px 12px;
-    background: var(--background-color);
-    border-radius: 6px;
-    font-size: 0.9rem;
-}
-
-.data-table-panel {
-    background: var(--card-background);
-    border-radius: 12px;
-    padding: 25px;
-    box-shadow: var(--shadow-sm);
-}
-
-.table-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 20px;
-    flex-wrap: wrap;
-    gap: 15px;
-}
-
-.table-header h2 {
-    margin: 0;
-    color: var(--text-primary);
-}
-
-.table-controls {
-    display: flex;
-    gap: 10px;
-    flex-wrap: wrap;
-}
-
-.table-container {
-    overflow-x: auto;
-    margin-bottom: 20px;
-}
-
-.data-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 14px;
-}
-
-.data-table th,
-.data-table td {
-    padding: 12px 8px;
-    text-align: left;
-    border-bottom: 1px solid var(--border-color);
-}
-
-.data-table th {
-    background: var(--background-color);
-    font-weight: 600;
-    color: var(--text-primary);
-    position: sticky;
-    top: 0;
-}
-
-.data-table td {
-    color: var(--text-secondary);
-}
-
-.data-table tbody tr:hover {
-    background: var(--background-color);
-}
-
-.status-badge {
-    padding: 4px 8px;
-    border-radius: 4px;
-    font-size: 12px;
-    font-weight: 500;
-    text-transform: uppercase;
-}
-
-.status-pending {
-    background: var(--warning-light);
-    color: var(--warning-dark);
-}
-
-.status-processing {
-    background: var(--info-light);
-    color: var(--info-dark);
-}
-
-.status-success {
-    background: var(--success-light);
-    color: var(--success-dark);
-}
-
-.status-failed {
-    background: var(--danger-light);
-    color: var(--danger-dark);
-}
-
-.table-pagination {
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    gap: 15px;
-}
-
-#pageInfo {
-    color: var(--text-secondary);
-    font-size: 14px;
-}
-
-.loading {
-    display: inline-block;
-    width: 20px;
-    height: 20px;
-    border: 2px solid var(--border-color);
-    border-radius: 50%;
-    border-top-color: var(--primary-color);
-    animation: spin 1s ease-in-out infinite;
-}
-
-@keyframes spin {
-    to { transform: rotate(360deg); }
-}
-
-@media (max-width: 768px) {
-    .form-row {
-        grid-template-columns: 1fr;
-    }
-    
-    .button-group {
-        flex-direction: column;
-    }
-    
-    .header {
-        flex-direction: column;
-        gap: 15px;
-        align-items: stretch;
-    }
-    
-    .table-controls {
-        flex-direction: column;
-    }
-}
-
-/* 季度统计面板样式 */
-.quarter-stats-panel {
-    background: white;
-    border-radius: 8px;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-    margin-bottom: 20px;
-    padding: 20px;
-}
-
-.quarter-stats-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-    gap: 20px;
-    margin-top: 15px;
-}
-
-.quarter-stat-card {
-    border: 1px solid #dee2e6;
-    border-radius: 8px;
-    padding: 15px;
-    background: white;
-    transition: all 0.3s ease;
-}
-
-.quarter-stat-card:hover {
-    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
-    transform: translateY(-2px);
-}
-
-.quarter-stat-card.success {
-    border-left: 4px solid #28a745;
-}
-
-.quarter-stat-card.warning {
-    border-left: 4px solid #ffc107;
-}
-
-.quarter-stat-card.danger {
-    border-left: 4px solid #dc3545;
-}
-
-.quarter-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 10px;
-}
-
-.quarter-header h3 {
-    margin: 0;
-    color: #333;
-}
-
-.status-badge {
-    padding: 4px 8px;
-    border-radius: 12px;
-    font-size: 12px;
-    font-weight: 600;
-}
-
-.status-badge.success {
-    background-color: #d4edda;
-    color: #155724;
-}
-
-.status-badge.warning {
-    background-color: #fff3cd;
-    color: #856404;
-}
-
-.status-badge.danger {
-    background-color: #f8d7da;
-    color: #721c24;
-}
-
-.quarter-details {
-    margin-bottom: 15px;
-}
-
-.quarter-details .detail-item {
-    display: flex;
-    justify-content: space-between;
-    margin-bottom: 5px;
-    font-size: 14px;
-}
-
-.quarter-actions {
-    text-align: right;
-}
-</style>
-
 <script>
-// 全局变量
 let currentPage = 1;
-let pageSize = 20;
+const pageSize = 20;
 let totalPages = 1;
-let isProcessing = false;
 
-// 页面加载完成后初始化
-document.addEventListener('DOMContentLoaded', function() {
-    // 设置默认年份为当前年份
-    const currentYear = new Date().getFullYear();
-    const yearSelect = document.getElementById('yearSelect');
-    yearSelect.value = currentYear;
-    
-    initializePage();
-    bindEvents();
-    loadStatistics();
-    loadRecords();
-});
-
-// 初始化页面
-function initializePage() {
-    console.log('RNN模型数据管理页面初始化完成');
+async function fetchJson(url) {
+  try { const r = await fetch(url); return await r.json(); }
+  catch (e) { return { success: false, message: e.message }; }
 }
 
-// 绑定事件
-function bindEvents() {
-    // 刷新按钮
-    document.getElementById('refreshBtn').addEventListener('click', function() {
-        loadStatistics();
-        loadRecords();
-    });
-    
-    // 初始化年份数据
-    document.getElementById('initYearBtn').addEventListener('click', function() {
-        const year = document.getElementById('yearSelect').value;
-        if (!year) {
-            alert('请选择年份');
-            return;
-        }
-        initYearData(year);
-    });
-    
-    // 处理原始15分钟数据
-    document.getElementById('processOriginalBtn').addEventListener('click', function() {
-        const year = document.getElementById('yearSelect').value;
-        if (!year) {
-            alert('请选择年份');
-            return;
-        }
-        processOriginalData(year);
-    });
-    
-    // 处理标准化15分钟数据
-    document.getElementById('processStandardBtn').addEventListener('click', function() {
-        const year = document.getElementById('yearSelect').value;
-        if (!year) {
-            alert('请选择年份');
-            return;
-        }
-        processStandardData(year);
-    });
-    
-    // 处理季度数据
-    document.getElementById('processQuarterBtn').addEventListener('click', function() {
-        const year = document.getElementById('yearSelect').value;
-        const quarter = document.getElementById('quarterSelect').value;
-        
-        if (!year) {
-            alert('请选择年份');
-            return;
-        }
-        
-        if (!quarter) {
-            // 如果没有选择季度，弹出选择框
-            const quarterInput = prompt('请输入季度 (1-4):');
-            if (!quarterInput || !['1', '2', '3', '4'].includes(quarterInput)) {
-                alert('请输入有效的季度 (1-4)');
-                return;
-            }
-            processQuarterData(parseInt(year), parseInt(quarterInput));
-        } else {
-            processQuarterData(parseInt(year), parseInt(quarter));
-        }
-    });
-    
-    // 处理整年数据
-    document.getElementById('processYearBtn').addEventListener('click', function() {
-        const year = document.getElementById('yearSelect').value;
-        const quarter = document.getElementById('quarterSelect').value;
-        
-        if (!year) {
-            alert('请选择年份');
-            return;
-        }
-        
-        if (quarter) {
-            // 如果选择了特定季度，只处理该季度
-            if (!confirm(`确定要处理 ${year} 年第${quarter}季度的数据吗？`)) {
-                return;
-            }
-            processQuarterData(parseInt(year), parseInt(quarter));
-        } else {
-            // 如果没有选择季度，处理所有季度
-            if (!confirm(`确定要处理 ${year} 年所有季度的数据吗？`)) {
-                return;
-            }
-            processYearData(parseInt(year));
-        }
-    });
-    
-    // 检查模型状态
-    document.getElementById('checkModelBtn').addEventListener('click', function() {
-        checkModelStatus();
-    });
-    
-    // 基于股票池处理
-    document.getElementById('processStockPoolBtn').addEventListener('click', function() {
-        showStockPoolProcessModal();
-    });
-    
-    // 取消处理
-    document.getElementById('cancelBtn').addEventListener('click', function() {
-        cancelProcessing();
-    });
-    
-    // 搜索功能
-    document.getElementById('searchInput').addEventListener('input', function() {
-        loadRecords();
-    });
-    
-    // 状态筛选
-    document.getElementById('statusFilter').addEventListener('change', function() {
-        loadRecords();
-    });
-    
-    // 分页按钮
-    document.getElementById('prevPageBtn').addEventListener('click', function() {
-        if (currentPage > 1) {
-            currentPage--;
-            loadRecords();
-        }
-    });
-    
-    document.getElementById('nextPageBtn').addEventListener('click', function() {
-        if (currentPage < totalPages) {
-            currentPage++;
-            loadRecords();
-        }
-    });
-    
-    // 显示季度统计
-    document.getElementById('showQuarterStatsBtn').addEventListener('click', function() {
-        const year = document.getElementById('yearSelect').value;
-        if (!year) {
-            alert('请先选择年份');
-            return;
-        }
-        loadQuarterStats(parseInt(year));
-    });
-    
-    // 刷新季度统计
-    document.getElementById('refreshQuarterStatsBtn').addEventListener('click', function() {
-        const year = document.getElementById('yearSelect').value;
-        if (year) {
-            loadQuarterStats(parseInt(year));
-        }
-    });
+// 状态徽章
+function badge(status) {
+  if (!status) return '<span style="color:#9ca3af;">—</span>';
+  const palette = {
+    success:    {bg:'#dcfce7', fg:'#16a34a'},
+    pending:    {bg:'#fef9c3', fg:'#ca8a04'},
+    processing: {bg:'#dbeafe', fg:'#2563eb'},
+    failed:     {bg:'#fee2e2', fg:'#dc2626'},
+    error:      {bg:'#fee2e2', fg:'#dc2626'},
+  };
+  const c = palette[status] || {bg:'#f3f4f6', fg:'#6b7280'};
+  return `<span style="background:${c.bg};color:${c.fg};padding:.15rem .5rem;border-radius:9999px;font-size:.72rem;font-weight:600;">${status}</span>`;
 }
 
-// 加载统计数据
 async function loadStatistics() {
-    try {
-        const response = await fetch('/RnnData/statistics');
-        const data = await response.json();
-        
-        if (data.success) {
-            document.getElementById('totalRecords').textContent = data.total || 0;
-            document.getElementById('successRecords').textContent = data.success || 0;
-            document.getElementById('pendingRecords').textContent = data.pending || 0;
-            document.getElementById('failedRecords').textContent = data.failed || 0;
-        }
-    } catch (error) {
-        console.error('加载统计数据失败:', error);
-    }
+  const j = await fetchJson('/RnnData/statistics');
+  if (j.success) {
+    document.getElementById('totalRecords').textContent = j.total ?? '—';
+    document.getElementById('successRecords').textContent = j.success ?? '—';
+    document.getElementById('pendingRecords').textContent = j.pending ?? '—';
+    document.getElementById('failedRecords').textContent = j.failed ?? '—';
+  }
 }
 
-// 加载记录列表
 async function loadRecords() {
-    try {
-        const searchTerm = document.getElementById('searchInput').value;
-        const statusFilter = document.getElementById('statusFilter').value;
-        
-        const params = new URLSearchParams({
-            page: currentPage,
-            page_size: pageSize,
-            search: searchTerm,
-            status: statusFilter
-        });
-        
-        const response = await fetch(`/RnnData/records?${params}`);
-        const data = await response.json();
-        
-        if (data.success) {
-            renderRecordsTable(data.records);
-            updatePagination(data.pagination);
-        }
-    } catch (error) {
-        console.error('加载记录列表失败:', error);
-    }
+  const search = document.getElementById('searchInput').value;
+  const status = document.getElementById('statusFilter').value;
+  const params = new URLSearchParams({ page: currentPage, page_size: pageSize, search, status });
+  const j = await fetchJson(`/RnnData/records?${params}`);
+  const tbody = document.getElementById('recordsTableBody');
+  if (!j.success) {
+    tbody.innerHTML = `<tr><td colspan="9" style="color:#dc2626;text-align:center;padding:1rem;">${j.message || '加载失败'}</td></tr>`;
+    return;
+  }
+  if (!j.records.length) {
+    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:#9ca3af;padding:1rem;">暂无数据</td></tr>';
+  } else {
+    tbody.innerHTML = j.records.map(r => {
+      const original = r.original_15M?.status;
+      const standard = r.standard_15M?.status;
+      const ts = r.created_at ? new Date(r.created_at).toLocaleDateString() : '—';
+      const code = r.code || '';
+      return `<tr style="border-top:1px solid #e5e7eb;">
+        <td style="padding:.4rem .5rem;color:#9ca3af;">${r.id}</td>
+        <td style="padding:.4rem .5rem;font-family:monospace;">
+          ${code ? `<a href="/stock/${code}" target="_blank" style="color:#2563eb;text-decoration:none;">${code}</a>` : '—'}
+        </td>
+        <td style="padding:.4rem .5rem;">${r.name || '—'}</td>
+        <td style="padding:.4rem .5rem;">${r.parser_month || '—'}</td>
+        <td style="padding:.4rem .5rem;text-align:center;">${badge(original)}</td>
+        <td style="padding:.4rem .5rem;text-align:center;">${badge(standard)}</td>
+        <td style="padding:.4rem .5rem;text-align:center;">${badge(r.model_check)}</td>
+        <td style="padding:.4rem .5rem;color:#6b7280;font-size:.78rem;">${ts}</td>
+        <td style="padding:.4rem .5rem;">
+          ${code ? `<a href="/stock/${code}" target="_blank" class="btn btn-outline btn-sm" style="padding:.2rem .5rem;font-size:.78rem;">详情</a>` : ''}
+        </td>
+      </tr>`;
+    }).join('');
+  }
+  currentPage = j.pagination.current_page;
+  totalPages  = j.pagination.total_pages || 1;
+  document.getElementById('pageInfo').textContent = `第 ${currentPage} 页 / 共 ${totalPages} 页（${j.pagination.total_items} 条）`;
+  document.getElementById('prevPageBtn').disabled = currentPage <= 1;
+  document.getElementById('nextPageBtn').disabled = currentPage >= totalPages;
 }
 
-// 渲染记录表格
-function renderRecordsTable(records) {
-    const tbody = document.getElementById('recordsTableBody');
-    tbody.innerHTML = '';
-    
-    if (records.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="9" style="text-align: center; padding: 40px;">暂无数据</td></tr>';
-        return;
-    }
-    
-    records.forEach(record => {
-        const row = document.createElement('tr');
-        row.innerHTML = `
-            <td>${record.id}</td>
-            <td>${record.code || '-'}</td>
-            <td>${record.name || '-'}</td>
-            <td>${record.parser_month || '-'}</td>
-            <td><span class="status-badge status-${record.original_15M?.status || 'pending'}">${record.original_15M?.status || 'pending'}</span></td>
-            <td><span class="status-badge status-${record.standard_15M?.status || 'pending'}">${record.standard_15M?.status || 'pending'}</span></td>
-            <td><span class="status-badge status-${record.model_check || 'pending'}">${record.model_check || 'pending'}</span></td>
-            <td>${record.created_at ? new Date(record.created_at).toLocaleString() : '-'}</td>
-            <td>
-                <button class="btn btn-sm btn-outline" onclick="viewRecord(${record.id})">查看</button>
-            </td>
-        `;
-        tbody.appendChild(row);
-    });
+async function loadQuarterStatsYears() {
+  // 通过 statistics 接口里 records 的 parser_month 推断可用年份；简化版直接给固定区间
+  const sel = document.getElementById('quarterStatsYear');
+  const thisYear = new Date().getFullYear();
+  let html = '<option value="">— 选择年份 —</option>';
+  for (let y = thisYear; y >= 2020; y--) html += `<option value="${y}">${y} 年</option>`;
+  sel.innerHTML = html;
 }
 
-// 更新分页信息
-function updatePagination(pagination) {
-    currentPage = pagination.current_page;
-    totalPages = pagination.total_pages;
-    
-    document.getElementById('pageInfo').textContent = `第 ${currentPage} 页，共 ${totalPages} 页`;
-    document.getElementById('prevPageBtn').disabled = currentPage <= 1;
-    document.getElementById('nextPageBtn').disabled = currentPage >= totalPages;
+async function loadQuarterStats() {
+  const year = document.getElementById('quarterStatsYear').value;
+  const div = document.getElementById('quarterStatsContent');
+  if (!year) { div.innerHTML = '请选择年份。'; return; }
+  div.innerHTML = '加载中…';
+  const j = await fetchJson(`/RnnData/quarter_stats/${year}`);
+  if (!j.success) {
+    div.innerHTML = `<div style="color:#dc2626;">${j.message || '加载失败'}</div>`;
+    return;
+  }
+  // 服务端返回的字段格式可能不一，做防御渲染
+  const items = j.data || j.quarters || j.stats || [];
+  if (!Array.isArray(items) || items.length === 0) {
+    div.innerHTML = `<pre style="background:#f9fafb;padding:.75rem;border-radius:6px;overflow-x:auto;font-size:.78rem;">${JSON.stringify(j, null, 2)}</pre>`;
+    return;
+  }
+  div.innerHTML = items.map(it => `
+    <div style="display:inline-block;background:#f9fafb;padding:.5rem .75rem;margin:.25rem;border-radius:6px;font-size:.85rem;">
+      <strong>${it.quarter || it.name || '?'}</strong>: ${JSON.stringify(it).slice(0, 120)}
+    </div>`).join('');
 }
 
-// 初始化年份数据
-async function initYearData(year) {
-    if (isProcessing) {
-        alert('正在处理中，请稍候...');
-        return;
-    }
-    
-    if (!confirm(`确定要初始化 ${year} 年的数据吗？这将重置所有相关记录的状态。`)) {
-        return;
-    }
-    
-    try {
-        isProcessing = true;
-        showProgress('正在初始化年份数据...');
-        
-        const response = await fetch(`/RnnData/init_year/${year}`, {
-            method: 'POST'
-        });
-        
-        const data = await response.json();
-        
-        if (data.success) {
-            alert('年份数据初始化成功！');
-            loadStatistics();
-            loadRecords();
-        } else {
-            alert('初始化失败: ' + data.message);
-        }
-    } catch (error) {
-        console.error('初始化年份数据失败:', error);
-        alert('初始化失败: ' + error.message);
-    } finally {
-        isProcessing = false;
-        hideProgress();
-    }
-}
+// 事件
+document.getElementById('refreshBtn').onclick = () => { loadStatistics(); loadRecords(); };
+document.getElementById('searchInput').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { currentPage = 1; loadRecords(); }
+});
+document.getElementById('statusFilter').onchange = () => { currentPage = 1; loadRecords(); };
+document.getElementById('prevPageBtn').onclick = () => { if (currentPage > 1) { currentPage--; loadRecords(); } };
+document.getElementById('nextPageBtn').onclick = () => { if (currentPage < totalPages) { currentPage++; loadRecords(); } };
+document.getElementById('loadQuarterStatsBtn').onclick = loadQuarterStats;
 
-// 处理原始15分钟数据
-async function processOriginalData(year) {
-    if (isProcessing) {
-        alert('正在处理中，请稍候...');
-        return;
-    }
-    
-    try {
-        isProcessing = true;
-        showProgress('正在处理原始15分钟数据...');
-        
-        const response = await fetch(`/RnnData/original_15M/${year}`, {
-            method: 'POST'
-        });
-        
-        const data = await response.json();
-        
-        if (data.success) {
-            alert('原始15分钟数据处理完成！');
-            loadStatistics();
-            loadRecords();
-        } else {
-            alert('处理失败: ' + data.message);
-        }
-    } catch (error) {
-        console.error('处理原始15分钟数据失败:', error);
-        alert('处理失败: ' + error.message);
-    } finally {
-        isProcessing = false;
-        hideProgress();
-    }
-}
-
-// 处理标准化15分钟数据
-async function processStandardData(year) {
-    if (isProcessing) {
-        alert('正在处理中，请稍候...');
-        return;
-    }
-    
-    try {
-        isProcessing = true;
-        showProgress('正在处理标准化15分钟数据...');
-        
-        const response = await fetch(`/RnnData/standard_15M/${year}`, {
-            method: 'POST'
-        });
-        
-        const data = await response.json();
-        
-        if (data.success) {
-            alert('标准化15分钟数据处理完成！');
-            loadStatistics();
-            loadRecords();
-        } else {
-            alert('处理失败: ' + data.message);
-        }
-    } catch (error) {
-        console.error('处理标准化15分钟数据失败:', error);
-        alert('处理失败: ' + error.message);
-    } finally {
-        isProcessing = false;
-        hideProgress();
-    }
-}
-
-// 检查模型状态
-async function checkModelStatus() {
-    try {
-        const response = await fetch('/RnnData/check_models', {
-            method: 'POST'
-        });
-        
-        const data = await response.json();
-        
-        if (data.success) {
-            alert('模型状态检查完成！');
-            loadStatistics();
-            loadRecords();
-        } else {
-            alert('检查失败: ' + data.message);
-        }
-    } catch (error) {
-        console.error('检查模型状态失败:', error);
-        alert('检查失败: ' + error.message);
-    }
-}
-
-// 显示股票池处理模态框
-function showStockPoolProcessModal() {
-    // 创建模态框HTML
-    const modalHtml = `
-        <div class="modal fade" id="stockPoolProcessModal" tabindex="-1">
-            <div class="modal-dialog modal-lg">
-                <div class="modal-content">
-                    <div class="modal-header">
-                        <h5 class="modal-title">基于股票池处理RNN数据</h5>
-                        <button type="button" class="close" data-dismiss="modal">
-                            <span>&times;</span>
-                        </button>
-                    </div>
-                    <div class="modal-body">
-                        <div class="row">
-                            <div class="col-md-6">
-                                <div class="form-group">
-                                    <label for="stockPoolType">股票池类型</label>
-                                    <select class="form-control" id="stockPoolType">
-                                        <option value="training">训练池</option>
-                                        <option value="testing">测试池</option>
-                                        <option value="validation">验证池</option>
-                                        <option value="general">通用池</option>
-                                    </select>
-                                </div>
-                            </div>
-                            <div class="col-md-6">
-                                <div class="form-group">
-                                    <label for="stockPoolYear">年份</label>
-                                    <select class="form-control" id="stockPoolYear">
-                                        <option value="2025">2025年</option>
-                                        <option value="2024">2024年</option>
-                                        <option value="2023">2023年</option>
-                                        <option value="2022">2022年</option>
-                                        <option value="2021">2021年</option>
-                                        <option value="2020">2020年</option>
-                                    </select>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="row">
-                            <div class="col-md-6">
-                                <div class="form-group">
-                                    <label for="stockPoolQuarter">季度（可选）</label>
-                                    <select class="form-control" id="stockPoolQuarter">
-                                        <option value="">全部季度</option>
-                                        <option value="1">第一季度</option>
-                                        <option value="2">第二季度</option>
-                                        <option value="3">第三季度</option>
-                                        <option value="4">第四季度</option>
-                                    </select>
-                                </div>
-                            </div>
-                            <div class="col-md-6">
-                                <div class="form-group">
-                                    <label>股票池统计</label>
-                                    <div id="stockPoolStats" class="alert alert-info">
-                                        正在加载股票池统计信息...
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="modal-footer">
-                        <button type="button" class="btn btn-secondary" data-dismiss="modal">取消</button>
-                        <button type="button" class="btn btn-primary" onclick="processStockPoolData()">开始处理</button>
-                    </div>
-                </div>
-            </div>
-        </div>
-    `;
-    
-    // 移除已存在的模态框
-    const existingModal = document.getElementById('stockPoolProcessModal');
-    if (existingModal) {
-        existingModal.remove();
-    }
-    
-    // 添加模态框到页面
-    document.body.insertAdjacentHTML('beforeend', modalHtml);
-    
-    // 显示模态框
-    $('#stockPoolProcessModal').modal('show');
-    
-    // 加载股票池统计信息
-    loadStockPoolStats();
-}
-
-// 加载股票池统计信息
-async function loadStockPoolStats() {
-    try {
-        const response = await fetch('/RnnData/api/stock_pool_stats');
-        const data = await response.json();
-        
-        if (data.success) {
-            const stats = data.data;
-            const statsHtml = `
-                <div class="row">
-                    <div class="col-6">
-                        <small>总股票数: <strong>${stats.total_stocks}</strong></small><br>
-                        <small>激活股票: <strong>${stats.active_stocks}</strong></small>
-                    </div>
-                    <div class="col-6">
-                        <small>训练就绪: <strong>${stats.training_ready}</strong></small><br>
-                        <small>类型分布: ${JSON.stringify(stats.type_distribution)}</small>
-                    </div>
-                </div>
-            `;
-            document.getElementById('stockPoolStats').innerHTML = statsHtml;
-        } else {
-            document.getElementById('stockPoolStats').innerHTML = 
-                '<div class="alert alert-warning">加载统计信息失败: ' + data.message + '</div>';
-        }
-    } catch (error) {
-        console.error('加载股票池统计信息失败:', error);
-        document.getElementById('stockPoolStats').innerHTML = 
-            '<div class="alert alert-danger">加载统计信息失败: ' + error.message + '</div>';
-    }
-}
-
-// 处理股票池数据
-async function processStockPoolData() {
-    const poolType = document.getElementById('stockPoolType').value;
-    const year = document.getElementById('stockPoolYear').value;
-    const quarter = document.getElementById('stockPoolQuarter').value;
-    
-    if (!year) {
-        alert('请选择年份');
-        return;
-    }
-    
-    try {
-        const data = {
-            pool_type: poolType,
-            year: parseInt(year),
-            quarter: quarter ? parseInt(quarter) : null
-        };
-        
-        const response = await fetch('/RnnData/api/process_stock_pool_data', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(data)
-        });
-        
-        const result = await response.json();
-        
-        if (result.success) {
-            alert(result.message);
-            $('#stockPoolProcessModal').modal('hide');
-            // 开始轮询进度
-            startProgressPolling();
-        } else {
-            alert('处理失败: ' + result.message);
-        }
-    } catch (error) {
-        console.error('处理股票池数据失败:', error);
-        alert('处理失败: ' + error.message);
-    }
-}
-
-// 取消处理
-function cancelProcessing() {
-    if (confirm('确定要取消当前处理吗？')) {
-        isProcessing = false;
-        hideProgress();
-        alert('处理已取消');
-    }
-}
-
-// 显示进度面板
-function showProgress(message) {
-    const panel = document.getElementById('progressPanel');
-    const text = document.getElementById('progressText');
-    text.textContent = message;
-    panel.style.display = 'block';
-}
-
-// 隐藏进度面板
-function hideProgress() {
-    const panel = document.getElementById('progressPanel');
-    panel.style.display = 'none';
-}
-
-// 处理季度数据
-async function processQuarterData(year, quarter) {
-    if (isProcessing) {
-        alert('正在处理中，请稍候...');
-        return;
-    }
-    
-    try {
-        isProcessing = true;
-        showProgress(`正在处理 ${year}年Q${quarter} 季度数据...`);
-        
-        const response = await fetch(`/RnnData/process_quarter/${year}/${quarter}`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-                stock_codes: document.getElementById('stockCodeInput').value ? 
-                    document.getElementById('stockCodeInput').value.split(',').map(s => s.trim()) : null
-            })
-        });
-        
-        const data = await response.json();
-        
-        if (data.success) {
-            alert(`${year}年Q${quarter}季度数据处理完成！`);
-            loadStatistics();
-            loadRecords();
-        } else {
-            alert('处理失败: ' + data.message);
-        }
-    } catch (error) {
-        console.error('处理季度数据失败:', error);
-        alert('处理失败: ' + error.message);
-    } finally {
-        isProcessing = false;
-        hideProgress();
-    }
-}
-
-// 处理整年数据
-async function processYearData(year) {
-    if (isProcessing) {
-        alert('正在处理中，请稍候...');
-        return;
-    }
-    
-    try {
-        isProcessing = true;
-        showProgress(`正在处理 ${year} 年所有季度数据...`);
-        
-        const response = await fetch(`/RnnData/process_quarters/${year}`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-                quarters: [1, 2, 3, 4],
-                stock_codes: document.getElementById('stockCodeInput').value ? 
-                    document.getElementById('stockCodeInput').value.split(',').map(s => s.trim()) : null
-            })
-        });
-        
-        const data = await response.json();
-        
-        if (data.success) {
-            alert(`${year}年季度数据处理完成！\n${data.message}`);
-            loadStatistics();
-            loadRecords();
-        } else {
-            alert('处理失败: ' + data.message);
-        }
-    } catch (error) {
-        console.error('处理整年数据失败:', error);
-        alert('处理失败: ' + error.message);
-    } finally {
-        isProcessing = false;
-        hideProgress();
-    }
-}
-
-// 加载季度统计
-async function loadQuarterStats(year) {
-    try {
-        const response = await fetch(`/RnnData/quarter_stats/${year}`);
-        const data = await response.json();
-        
-        if (data.success) {
-            displayQuarterStats(data.quarter_stats);
-            document.getElementById('quarterStatsPanel').style.display = 'block';
-        } else {
-            alert('加载季度统计失败: ' + data.message);
-        }
-    } catch (error) {
-        console.error('加载季度统计失败:', error);
-        alert('加载季度统计失败: ' + error.message);
-    }
-}
-
-// 显示季度统计
-function displayQuarterStats(quarterStats) {
-    const content = document.getElementById('quarterStatsContent');
-    
-    let html = '<div class="quarter-stats-grid">';
-    
-    for (const [quarter, stats] of Object.entries(quarterStats)) {
-        const statusClass = stats.has_training_data ? 'success' : (stats.has_raw_data ? 'warning' : 'danger');
-        const statusText = stats.has_training_data ? '已处理' : (stats.has_raw_data ? '有原始数据' : '无数据');
-        
-        html += `
-            <div class="quarter-stat-card ${statusClass}">
-                <div class="quarter-header">
-                    <h3>${quarter}</h3>
-                    <span class="status-badge ${statusClass}">${statusText}</span>
-                </div>
-                <div class="quarter-details">
-                    <div class="detail-item">
-                        <span>原始数据文件:</span>
-                        <span>${stats.raw_data_files}</span>
-                    </div>
-                    <div class="detail-item">
-                        <span>训练数据文件:</span>
-                        <span>${stats.training_files}</span>
-                    </div>
-                </div>
-                <div class="quarter-actions">
-                    <button class="btn btn-sm btn-primary" onclick="processQuarterData(${quarter.replace('Q', '')}, ${quarter.replace(/^\d+Q/, '')})">
-                        处理此季度
-                    </button>
-                </div>
-            </div>
-        `;
-    }
-    
-    html += '</div>';
-    content.innerHTML = html;
-}
-
-// 查看记录详情
-function viewRecord(recordId) {
-    // 这里可以实现查看记录详情的功能
-    alert('查看记录详情功能待实现，记录ID: ' + recordId);
-}
+// 初始化
+(async () => {
+  await loadQuarterStatsYears();
+  loadStatistics();
+  loadRecords();
+})();
 </script>
 {% endblock %}

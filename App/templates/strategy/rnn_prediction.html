@@ -1,0 +1,317 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="rnn-container" style="padding:1.5rem;">
+
+  <div class="page-tabs" style="margin-bottom:1rem;">
+    <a class="tab-btn" href="/RnnStrategies/training">训练管理</a>
+    <a class="tab-btn active" href="/RnnStrategies/prediction">模型预测</a>
+  </div>
+
+  <!-- ========== 单只查询 ========== -->
+  <div class="card" style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:1.5rem;margin-bottom:1rem;">
+    <h2 style="margin-top:0;">单只股票预测</h2>
+    <div style="display:flex;gap:1rem;flex-wrap:wrap;align-items:end;margin-bottom:1rem;">
+      <div>
+        <label style="display:block;font-size:0.85rem;color:#6b7280;">股票代码或名称</label>
+        <input id="oneStock" class="form-input" placeholder="如 002475 或 立讯精密" style="width:200px;">
+      </div>
+      <div>
+        <label style="display:block;font-size:0.85rem;color:#6b7280;">模型月份</label>
+        <select id="oneMonth" class="form-select" style="min-width:140px;"></select>
+      </div>
+      <div>
+        <label style="display:block;font-size:0.85rem;color:#6b7280;">检查日期</label>
+        <input id="oneDate" type="date" class="form-input">
+      </div>
+      <button id="btnPredictOne" class="btn btn-primary">运行预测</button>
+      <button id="btnCheckHealth" class="btn btn-secondary">检查模型健康度</button>
+    </div>
+    <div id="healthResult" style="background:#fff7ed;border:1px solid #fdba74;border-radius:6px;padding:1rem;color:#374151;display:none;margin-bottom:0.75rem;"></div>
+    <div id="oneResult" style="background:#f9fafb;border-radius:6px;padding:1rem;color:#374151;display:none;"></div>
+  </div>
+
+  <!-- ========== 批量预测 ========== -->
+  <div class="card" style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:1.5rem;margin-bottom:1rem;">
+    <h2 style="margin-top:0;">股票池批量预测</h2>
+    <div style="display:flex;gap:1rem;flex-wrap:wrap;align-items:end;margin-bottom:1rem;">
+      <div>
+        <label style="display:block;font-size:0.85rem;color:#6b7280;">模型月份</label>
+        <select id="batchMonth" class="form-select" style="min-width:140px;"></select>
+      </div>
+      <div>
+        <label style="display:block;font-size:0.85rem;color:#6b7280;">检查日期</label>
+        <input id="batchDate" type="date" class="form-input">
+      </div>
+      <div>
+        <label style="display:block;font-size:0.85rem;color:#6b7280;">股票池类型</label>
+        <select id="batchPoolType" class="form-select">
+          <option value="watching">观察池 (watching)</option>
+          <option value="trading">交易池 (trading)</option>
+          <option value="candidate">候选池 (candidate)</option>
+          <option value="archived">归档池 (archived)</option>
+        </select>
+      </div>
+      <button id="btnBatchStart" class="btn btn-primary">开始批量预测</button>
+      <button id="btnBatchStop" class="btn btn-danger" disabled>请求停止</button>
+    </div>
+
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:1rem;margin-bottom:1rem;">
+      <div><div style="color:#6b7280;font-size:0.85rem;">状态</div><div id="bsStatus" style="font-weight:600;">未开始</div></div>
+      <div><div style="color:#6b7280;font-size:0.85rem;">进度</div><div id="bsProgress" style="font-weight:600;">0/0</div></div>
+      <div><div style="color:#6b7280;font-size:0.85rem;">月份</div><div id="bsMonth" style="font-weight:600;">-</div></div>
+      <div><div style="color:#6b7280;font-size:0.85rem;">开始时间</div><div id="bsStarted" style="font-weight:600;">-</div></div>
+      <div><div style="color:#6b7280;font-size:0.85rem;">结束时间</div><div id="bsFinished" style="font-weight:600;">-</div></div>
+    </div>
+    <div style="background:#f3f4f6;height:10px;border-radius:5px;overflow:hidden;">
+      <div id="bsBar" style="background:#16a34a;height:100%;width:0%;transition:width .3s;"></div>
+    </div>
+    <div id="bsMessage" style="color:#dc2626;font-size:0.85rem;margin-top:0.5rem;"></div>
+  </div>
+
+  <!-- ========== 预测记录 ========== -->
+  <div class="card" style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:1.5rem;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
+      <h3 style="margin:0;">预测记录</h3>
+      <div>
+        <input id="recCode" class="form-input" placeholder="股票代码" style="width:120px;margin-right:0.5rem;">
+        <select id="recMonth" class="form-select"><option value="">全部月份</option></select>
+        <button id="btnLoadRecords" class="btn btn-secondary" style="margin-left:.5rem;">查询</button>
+      </div>
+    </div>
+    <div style="overflow-x:auto;">
+      <table style="width:100%;border-collapse:collapse;font-size:0.875rem;">
+        <thead style="background:#f9fafb;">
+          <tr>
+            <th style="padding:.5rem;text-align:left;">代码</th>
+            <th style="padding:.5rem;text-align:left;">名称</th>
+            <th style="padding:.5rem;text-align:left;">月份</th>
+            <th style="padding:.5rem;text-align:left;">趋势</th>
+            <th style="padding:.5rem;text-align:right;">预测周期</th>
+            <th style="padding:.5rem;text-align:right;">实际周期</th>
+            <th style="padding:.5rem;text-align:right;">预测振幅</th>
+            <th style="padding:.5rem;text-align:right;">趋势分数</th>
+            <th style="padding:.5rem;text-align:left;">更新时间</th>
+          </tr>
+        </thead>
+        <tbody id="recBody"><tr><td colspan="9" style="text-align:center;padding:1rem;color:#9ca3af;">加载中…</td></tr></tbody>
+      </table>
+    </div>
+    <div id="recCount" style="margin-top:0.5rem;font-size:0.85rem;color:#6b7280;"></div>
+  </div>
+</div>
+
+<script>
+const API = '/RnnStrategies/api';
+let batchTimer = null;
+const today = new Date().toISOString().slice(0,10);
+document.getElementById('oneDate').value = today;
+document.getElementById('batchDate').value = today;
+
+async function fetchJson(url, opts) { return (await fetch(url, opts)).json(); }
+
+async function loadMonths() {
+  const j = await fetchJson(`${API}/available_months`);
+  if (!j.success) return;
+  const opts = j.data.map(m => `<option value="${m}">${m}</option>`).join('');
+  document.getElementById('oneMonth').innerHTML = '<option value="">— 选择 —</option>' + opts;
+  document.getElementById('batchMonth').innerHTML = '<option value="">— 选择 —</option>' + opts;
+  document.getElementById('recMonth').innerHTML = '<option value="">全部月份</option>' + opts;
+}
+
+// ---------- 单只 ----------
+async function predictOne() {
+  const stock = document.getElementById('oneStock').value.trim();
+  const month = document.getElementById('oneMonth').value;
+  const check_date = document.getElementById('oneDate').value;
+  if (!stock || !month) { alert('请填写股票和月份'); return; }
+  const btn = document.getElementById('btnPredictOne');
+  btn.disabled = true; btn.innerText = '预测中…';
+  const out = document.getElementById('oneResult');
+  out.style.display = 'block';
+  out.innerHTML = '<div style="color:#6b7280;">运行中，请稍候…</div>';
+  try {
+    const j = await fetchJson(`${API}/predict_one`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ stock, month, check_date })
+    });
+    if (!j.success) {
+      out.innerHTML = `<div style="color:#dc2626;">失败：${j.message}</div>`;
+    } else {
+      const r = j.latest_record;
+      if (!r) {
+        out.innerHTML = `<div>预测已完成，但暂未查询到 ${j.stock_name||''}(${j.stock_code}) 的最新结果。可能写入数据库失败，请查看日志。</div>`;
+      } else {
+        const acc = r.accuracy || {};
+        out.innerHTML = `
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:.75rem;">
+            <div><div style="color:#6b7280;font-size:0.85rem;">股票</div><div style="font-weight:600;">${j.stock_name} (${j.stock_code})</div></div>
+            <div><div style="color:#6b7280;font-size:0.85rem;">月份模型</div><div style="font-weight:600;">${r.parser_month}</div></div>
+            <div><div style="color:#6b7280;font-size:0.85rem;">趋势</div><div style="font-weight:600;">${r.trends}</div></div>
+            <div><div style="color:#6b7280;font-size:0.85rem;">预测周期长度</div><div style="font-weight:600;">${r.predict_cycle_length}</div></div>
+            <div><div style="color:#6b7280;font-size:0.85rem;">预测周期振幅</div><div style="font-weight:600;">${r.predict_cycle_change}</div></div>
+            <div><div style="color:#6b7280;font-size:0.85rem;">预测 Bar 振幅</div><div style="font-weight:600;">${r.predict_bar_change}</div></div>
+            <div><div style="color:#6b7280;font-size:0.85rem;">预测 Bar 量</div><div style="font-weight:600;">${r.predict_bar_volume}</div></div>
+            <div><div style="color:#6b7280;font-size:0.85rem;">趋势分数</div><div style="font-weight:600;">${r.score_trends}</div></div>
+            <div><div style="color:#6b7280;font-size:0.85rem;">综合准确率</div><div style="font-weight:600;">${(acc.overall_accuracy*100||0).toFixed(1)}%</div></div>
+            <div><div style="color:#6b7280;font-size:0.85rem;">更新时间</div><div style="font-weight:600;">${r.updated_at||''}</div></div>
+          </div>`;
+      }
+      loadRecords();
+    }
+  } catch (e) {
+    out.innerHTML = `<div style="color:#dc2626;">异常：${e.message}</div>`;
+  } finally {
+    btn.disabled = false; btn.innerText = '运行预测';
+  }
+}
+
+// ---------- 批量 ----------
+async function startBatch() {
+  const month = document.getElementById('batchMonth').value;
+  const check_date = document.getElementById('batchDate').value;
+  const pool_type = document.getElementById('batchPoolType').value;
+  if (!month) { alert('请选择月份'); return; }
+  const j = await fetchJson(`${API}/predict_batch`, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ month, check_date, pool_type })
+  });
+  if (!j.success) { alert(j.message); return; }
+  startBatchPolling();
+}
+
+async function stopBatch() {
+  const j = await fetchJson(`${API}/stop_predict`, { method:'POST' });
+  alert(j.message || '已请求停止');
+}
+
+function startBatchPolling() {
+  if (batchTimer) return;
+  batchTimer = setInterval(refreshBatch, 1500);
+  refreshBatch();
+}
+function stopBatchPolling() { if (batchTimer) { clearInterval(batchTimer); batchTimer=null; } }
+
+async function refreshBatch() {
+  const j = await fetchJson(`${API}/predict_status`);
+  if (!j.success) return;
+  const s = j.data;
+  document.getElementById('bsStatus').innerText = s.status || '-';
+  document.getElementById('bsProgress').innerText = `${s.processed||0} / ${s.total||0}`;
+  document.getElementById('bsMonth').innerText = s.month || '-';
+  document.getElementById('bsStarted').innerText = s.started_at || '-';
+  document.getElementById('bsFinished').innerText = s.finished_at || '-';
+  document.getElementById('bsBar').style.width = (s.progress||0) + '%';
+  document.getElementById('bsMessage').innerText = s.message || '';
+  const running = s.status === '进行中';
+  document.getElementById('btnBatchStart').disabled = running;
+  document.getElementById('btnBatchStop').disabled = !running;
+  if (!running && batchTimer) { stopBatchPolling(); loadRecords(); }
+}
+
+// ---------- 记录 ----------
+async function loadRecords() {
+  const code = document.getElementById('recCode').value.trim();
+  const month = document.getElementById('recMonth').value;
+  const params = new URLSearchParams();
+  if (code) params.set('code', code);
+  if (month) params.set('month', month);
+  const j = await fetchJson(`${API}/prediction_records?${params}`);
+  const tbody = document.getElementById('recBody');
+  if (!j.success) { tbody.innerHTML = `<tr><td colspan="9" style="color:#dc2626;text-align:center;padding:1rem;">${j.message||'加载失败'}</td></tr>`; return; }
+  if (!j.data || !j.data.length) {
+    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:#9ca3af;padding:1rem;">无记录</td></tr>';
+  } else {
+    tbody.innerHTML = j.data.map(r => `
+      <tr style="border-top:1px solid #e5e7eb;">
+        <td style="padding:.5rem;">${r.code||''}</td>
+        <td style="padding:.5rem;">${r.name||''}</td>
+        <td style="padding:.5rem;">${r.parser_month||''}</td>
+        <td style="padding:.5rem;">${r.trends||''}</td>
+        <td style="padding:.5rem;text-align:right;">${r.predict_cycle_length}</td>
+        <td style="padding:.5rem;text-align:right;color:#6b7280;">${r.real_cycle_length}</td>
+        <td style="padding:.5rem;text-align:right;">${r.predict_cycle_change}</td>
+        <td style="padding:.5rem;text-align:right;">${r.score_trends}</td>
+        <td style="padding:.5rem;color:#6b7280;font-size:.8rem;">${r.updated_at||''}</td>
+      </tr>`).join('');
+  }
+  document.getElementById('recCount').innerText = `共 ${j.count} 条`;
+}
+
+function healthBadge(status) {
+  const palette = {
+    HEALTHY:    {bg:'#dcfce7', fg:'#16a34a', txt:'健康'},
+    WEAK:       {bg:'#fef9c3', fg:'#ca8a04', txt:'欠拟合'},
+    DEGENERATE: {bg:'#fee2e2', fg:'#dc2626', txt:'已退化'},
+    UNTRAINED:  {bg:'#f3f4f6', fg:'#6b7280', txt:'未训练'},
+    ERROR:      {bg:'#fef2f2', fg:'#b91c1c', txt:'错误'},
+  };
+  const c = palette[status] || palette.ERROR;
+  return `<span style="background:${c.bg};color:${c.fg};padding:.15rem .5rem;border-radius:9999px;font-size:.75rem;font-weight:600;">${c.txt}</span>`;
+}
+
+async function checkHealth() {
+  const stock = document.getElementById('oneStock').value.trim();
+  const month = document.getElementById('oneMonth').value;
+  if (!stock || !month) { alert('请填写股票和月份'); return; }
+  const btn = document.getElementById('btnCheckHealth');
+  btn.disabled = true; btn.innerText = '检查中…';
+  const out = document.getElementById('healthResult');
+  out.style.display = 'block';
+  out.innerHTML = '<div style="color:#6b7280;">正在用训练样本评估模型响应…</div>';
+  try {
+    const j = await fetchJson(`${API}/model_health`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ stock, month, sample_size: 50 })
+    });
+    if (!j.success) {
+      out.innerHTML = `<div style="color:#dc2626;">失败：${j.message}</div>`;
+      return;
+    }
+    const rows = j.per_model.map(m => `
+      <tr style="border-top:1px solid #fdba74;">
+        <td style="padding:.4rem .6rem;font-weight:600;">${m.model}</td>
+        <td style="padding:.4rem .6rem;">${healthBadge(m.status)}</td>
+        <td style="padding:.4rem .6rem;font-size:.85rem;color:#6b7280;">
+          ${m.detail ? m.detail :
+            `pred_std/y_std = ${m.pred_y_std_ratio} | pred 范围 [${m.pred_min}, ${m.pred_max}] | MAE=${m.mae}`}
+        </td>
+      </tr>`).join('');
+    out.innerHTML = `
+      <div style="margin-bottom:.5rem;">
+        <strong>${j.stock_code} (${j.month})</strong> 综合健康度：${healthBadge(j.overall)}
+        <span style="color:#6b7280;font-size:.85rem;margin-left:.5rem;">综合 = 4 个模型里最差的那一个</span>
+      </div>
+      <table style="width:100%;border-collapse:collapse;font-size:.875rem;">
+        <thead><tr style="color:#92400e;text-align:left;">
+          <th style="padding:.4rem .6rem;">模型</th>
+          <th style="padding:.4rem .6rem;">状态</th>
+          <th style="padding:.4rem .6rem;">指标</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      <div style="margin-top:.5rem;font-size:.78rem;color:#92400e;">
+        判定阈值：pred_std / y_std &lt; 0.05 = 已退化（预测几乎是常数）；&lt; 0.30 = 欠拟合；≥ 0.30 = 健康。
+        如果出现"已退化"，建议重新生成训练数据并重训该模型。
+      </div>`;
+  } catch (e) {
+    out.innerHTML = `<div style="color:#dc2626;">异常：${e.message}</div>`;
+  } finally {
+    btn.disabled = false; btn.innerText = '检查模型健康度';
+  }
+}
+
+document.getElementById('btnPredictOne').onclick = predictOne;
+document.getElementById('btnCheckHealth').onclick = checkHealth;
+document.getElementById('btnBatchStart').onclick = startBatch;
+document.getElementById('btnBatchStop').onclick = stopBatch;
+document.getElementById('btnLoadRecords').onclick = loadRecords;
+
+(async () => {
+  await loadMonths();
+  await refreshBatch();
+  await loadRecords();
+  const j = await fetchJson(`${API}/predict_status`);
+  if (j.success && j.data.status === '进行中') startBatchPolling();
+})();
+</script>
+{% endblock %}
