@@ -1,0 +1,336 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container">
+    <div class="hd">
+        <div>
+            <h1>想法 / 待办清单</h1>
+            <div class="hd-sub">把"突然冒出的想法、暂时来不及做的功能、注意到的小问题"先记一行；有空再回头实现。</div>
+        </div>
+    </div>
+
+    <!-- 新建 -->
+    <div class="card add-card">
+        <div class="add-row">
+            <input id="newQuestion" type="text" placeholder="一句话标题（必填，比如：板块详情页需要 5m 切换）"
+                   maxlength="200" autocomplete="off" />
+            <select id="newStatus">
+                {% for s in statuses %}<option value="{{ s }}">{{ s }}</option>{% endfor %}
+            </select>
+            <button class="btn-primary" onclick="createIssue()">＋ 添加</button>
+        </div>
+        <textarea id="newSolution" rows="2"
+                  placeholder="详细描述 / 实现思路 / 备注（可选；多行可粘贴片段）"></textarea>
+    </div>
+
+    <!-- 工具条 -->
+    <div class="toolbar">
+        <div class="tabs" id="statusTabs">
+            <button data-status="" class="tab active">全部 <span class="cnt" id="cntAll">0</span></button>
+            {% for s in statuses %}
+            <button data-status="{{ s }}" class="tab">
+                {{ s }} <span class="cnt" id="cnt{{ loop.index }}">0</span>
+            </button>
+            {% endfor %}
+        </div>
+        <div class="search-wrap">
+            <input id="searchBox" type="text" placeholder="搜索标题或内容…" />
+        </div>
+    </div>
+
+    <!-- 列表 -->
+    <div class="list" id="issueList"><div class="empty">加载中…</div></div>
+</div>
+
+<style>
+    .container { max-width: 1100px; margin: 1rem auto; padding: 0 1rem; }
+    .hd { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:1rem; }
+    .hd h1 { font-size: 1.4rem; }
+    .hd-sub { color: var(--text-secondary); font-size: .85rem; margin-top:.25rem; }
+
+    .card { background:#fff; border-radius:.6rem; padding:1rem; box-shadow:var(--shadow-sm); margin-bottom:1rem; }
+    .add-card .add-row { display:flex; gap:.5rem; margin-bottom:.5rem; }
+    .add-card input[type=text] { flex:1; padding:.5rem .75rem; border:1px solid #d1d5db; border-radius:.35rem; font-size:.9rem; }
+    .add-card select { padding:.5rem; border:1px solid #d1d5db; border-radius:.35rem; font-size:.85rem; background:#fff; }
+    .add-card textarea { width:100%; padding:.5rem .75rem; border:1px solid #d1d5db; border-radius:.35rem; font-size:.85rem; font-family:inherit; resize:vertical; }
+    .btn-primary { padding:.45rem 1rem; background:var(--primary-color); color:#fff; border:none; border-radius:.35rem; font-size:.88rem; cursor:pointer; font-weight:500; }
+    .btn-primary:hover { background:var(--secondary-color); }
+    .btn-primary:disabled { background:#9ca3af; cursor:not-allowed; }
+
+    .toolbar { display:flex; justify-content:space-between; align-items:center; margin-bottom:.75rem; flex-wrap:wrap; gap:.5rem; }
+    .tabs { display:flex; gap:.25rem; flex-wrap:wrap; }
+    .tab { padding:.4rem .8rem; background:#fff; border:1px solid #e5e7eb; border-radius:.35rem; cursor:pointer; font-size:.85rem; color:#374151; display:inline-flex; align-items:center; gap:.4rem; }
+    .tab:hover { background:#f9fafb; }
+    .tab.active { background:var(--primary-color); color:#fff; border-color:var(--primary-color); }
+    .tab .cnt { background:rgba(0,0,0,.08); padding:.05rem .4rem; border-radius:.6rem; font-size:.72rem; min-width:1.2rem; text-align:center; }
+    .tab.active .cnt { background:rgba(255,255,255,.25); }
+    .search-wrap input { padding:.4rem .75rem; border:1px solid #d1d5db; border-radius:.35rem; font-size:.85rem; width:240px; }
+
+    .list { display:flex; flex-direction:column; gap:.5rem; }
+    .empty { text-align:center; color:#9ca3af; padding:2rem; background:#fff; border-radius:.5rem; }
+
+    .item { background:#fff; border-radius:.5rem; padding:.75rem 1rem; box-shadow:var(--shadow-sm); border-left:3px solid var(--primary-color); }
+    .item.done { border-left-color: var(--success-color); opacity:.78; }
+    .item.in_progress { border-left-color: var(--warning-color); }
+    .item.closed { border-left-color: #9ca3af; opacity:.6; }
+
+    .item-head { display:flex; justify-content:space-between; align-items:center; gap:.5rem; }
+    .item-title { font-weight:600; flex:1; min-width:0; word-break:break-word; }
+    .item.done .item-title { text-decoration:line-through; }
+    .item-meta { display:flex; align-items:center; gap:.4rem; font-size:.78rem; color:var(--text-secondary); }
+
+    .status-badge { padding:.15rem .55rem; border-radius:.6rem; font-size:.75rem; font-weight:500; cursor:pointer; }
+    .status-badge.待实现 { background:#fef3c7; color:#92400e; }
+    .status-badge.进行中 { background:#dbeafe; color:#1e40af; }
+    .status-badge.已实现 { background:#d1fae5; color:#065f46; }
+    .status-badge.已关闭 { background:#f3f4f6; color:#4b5563; }
+
+    .item-body { margin-top:.5rem; padding:.5rem .65rem; background:#f9fafb; border-radius:.35rem; font-size:.85rem; color:#374151; white-space:pre-wrap; word-break:break-word; }
+    .item-body.editing textarea { width:100%; min-height:5rem; padding:.4rem; border:1px solid #d1d5db; border-radius:.3rem; font-family:inherit; font-size:.85rem; resize:vertical; }
+    .item-actions { display:flex; gap:.25rem; }
+    .icon-btn { background:none; border:none; cursor:pointer; padding:.25rem .4rem; color:#6b7280; font-size:.8rem; border-radius:.3rem; }
+    .icon-btn:hover { background:#f3f4f6; color:#1f2937; }
+    .icon-btn.del:hover { background:#fee2e2; color:#dc2626; }
+
+    .editing-controls { margin-top:.4rem; display:flex; gap:.4rem; justify-content:flex-end; }
+    .btn-save { padding:.3rem .8rem; background:var(--success-color); color:#fff; border:none; border-radius:.3rem; cursor:pointer; font-size:.78rem; }
+    .btn-cancel { padding:.3rem .8rem; background:#e5e7eb; color:#374151; border:none; border-radius:.3rem; cursor:pointer; font-size:.78rem; }
+
+    .status-menu { position:absolute; background:#fff; border:1px solid #e5e7eb; border-radius:.35rem; box-shadow:var(--shadow-md); padding:.25rem 0; z-index:50; min-width:120px; }
+    .status-menu div { padding:.4rem .8rem; cursor:pointer; font-size:.82rem; }
+    .status-menu div:hover { background:#f3f4f6; }
+</style>
+
+<script>
+const STATUSES = {{ statuses|tojson }};
+let CURRENT_STATUS = '';
+let SEARCH_DEBOUNCE = null;
+
+function fmtTime(s) {
+    if (!s) return '';
+    return s.replace('T', ' ').slice(0, 16);
+}
+
+function statusClass(s) {
+    return ({'待实现':'pending','进行中':'in_progress','已实现':'done','已关闭':'closed'})[s] || '';
+}
+
+async function fetchJson(url, opts) {
+    opts = opts || {};
+    if (opts.body && typeof opts.body !== 'string') {
+        opts.body = JSON.stringify(opts.body);
+        opts.headers = Object.assign({'Content-Type':'application/json'}, opts.headers || {});
+    }
+    const r = await fetch(url, opts);
+    return r.json();
+}
+
+async function loadList() {
+    const q = document.getElementById('searchBox').value.trim();
+    const params = new URLSearchParams();
+    if (CURRENT_STATUS) params.set('status', CURRENT_STATUS);
+    if (q) params.set('q', q);
+
+    const r = await fetchJson(`/issues/api/list?${params}`);
+    if (!r.success) {
+        document.getElementById('issueList').innerHTML = `<div class="empty">加载失败：${r.message}</div>`;
+        return;
+    }
+    const data = r.data;
+
+    // 计数
+    document.getElementById('cntAll').textContent = data.total;
+    STATUSES.forEach((s, i) => {
+        const el = document.getElementById('cnt' + (i + 1));
+        if (el) el.textContent = data.counts[s] || 0;
+    });
+
+    // 列表
+    if (!data.items.length) {
+        document.getElementById('issueList').innerHTML =
+            '<div class="empty">' + (q || CURRENT_STATUS ? '此条件下暂无记录' : '还没有记录，上面新建一条试试 ↑') + '</div>';
+        return;
+    }
+    document.getElementById('issueList').innerHTML = data.items.map(renderItem).join('');
+}
+
+function renderItem(it) {
+    const cls = statusClass(it.status);
+    const created = fmtTime(it.created_at);
+    const resolved = it.resolved_at ? `· 完成 ${fmtTime(it.resolved_at)}` : '';
+    const safeTitle = escapeHtml(it.question);
+    const safeSolution = it.solution ? escapeHtml(it.solution) : '';
+    return `
+    <div class="item ${cls}" data-id="${it.id}">
+        <div class="item-head">
+            <div class="item-title" data-field="question" onclick="editField(this)">${safeTitle}</div>
+            <div class="item-meta">
+                <span class="status-badge ${it.status}" onclick="openStatusMenu(event, ${it.id})">${it.status}</span>
+                <span>#${it.id} · ${created} ${resolved}</span>
+                <div class="item-actions">
+                    <button class="icon-btn" onclick="editSolution(${it.id})" title="编辑详情">✎</button>
+                    <button class="icon-btn del" onclick="deleteItem(${it.id})" title="删除">✕</button>
+                </div>
+            </div>
+        </div>
+        ${safeSolution ? `<div class="item-body" data-field="solution" onclick="editField(this)">${safeSolution}</div>` : ''}
+    </div>
+    `;
+}
+
+function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c =>
+        ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
+}
+
+async function createIssue() {
+    const q = document.getElementById('newQuestion');
+    const s = document.getElementById('newSolution');
+    const st = document.getElementById('newStatus');
+    const question = q.value.trim();
+    if (!question) { q.focus(); alert('请输入标题'); return; }
+
+    const r = await fetchJson('/issues/api/create', {
+        method: 'POST',
+        body: { question, solution: s.value || null, status: st.value },
+    });
+    if (!r.success) { alert('创建失败：' + r.message); return; }
+    q.value = ''; s.value = '';
+    loadList();
+}
+
+async function deleteItem(id) {
+    if (!confirm('确定删除这条记录吗？')) return;
+    const r = await fetchJson(`/issues/api/${id}/delete`, { method: 'POST' });
+    if (!r.success) { alert('删除失败：' + r.message); return; }
+    loadList();
+}
+
+// ----- 内联编辑标题 / 详情 -----
+function editField(el) {
+    const item = el.closest('.item');
+    const id = item.dataset.id;
+    const field = el.dataset.field;
+    const old = el.textContent;
+
+    if (el.querySelector('input,textarea')) return; // 已经在编辑
+
+    if (field === 'question') {
+        el.innerHTML = `<input type="text" value="${escapeHtml(old)}" maxlength="200"
+                            style="width:100%;padding:.3rem;border:1px solid #d1d5db;border-radius:.3rem;font-size:.9rem;font-weight:600;" />`;
+        const input = el.querySelector('input');
+        input.focus(); input.select();
+        input.addEventListener('keydown', ev => {
+            if (ev.key === 'Enter') saveField(id, field, input.value, el, old);
+            else if (ev.key === 'Escape') { el.textContent = old; }
+        });
+        input.addEventListener('blur', () => saveField(id, field, input.value, el, old));
+    } else if (field === 'solution') {
+        const txt = old;
+        el.classList.add('editing');
+        el.innerHTML = `<textarea>${escapeHtml(txt)}</textarea>
+                        <div class="editing-controls">
+                            <button class="btn-cancel" onclick="cancelEdit(this, '${escapeHtml(old).replace(/'/g, '\\\'')}')">取消</button>
+                            <button class="btn-save" onclick="saveSolution(${id}, this)">保存</button>
+                        </div>`;
+        el.querySelector('textarea').focus();
+    }
+}
+
+function editSolution(id) {
+    const item = document.querySelector(`.item[data-id="${id}"]`);
+    let body = item.querySelector('.item-body');
+    if (!body) {
+        body = document.createElement('div');
+        body.className = 'item-body';
+        body.dataset.field = 'solution';
+        body.textContent = '';
+        item.appendChild(body);
+    }
+    editField(body);
+}
+
+function cancelEdit(btn, oldHtml) {
+    const body = btn.closest('.item-body');
+    body.classList.remove('editing');
+    body.innerHTML = oldHtml || '';
+    if (!body.textContent.trim()) body.remove();
+}
+
+async function saveSolution(id, btn) {
+    const body = btn.closest('.item-body');
+    const ta = body.querySelector('textarea');
+    const v = ta.value;
+    const r = await fetchJson(`/issues/api/${id}/update`, {
+        method: 'POST',
+        body: { solution: v || null },
+    });
+    if (!r.success) { alert('保存失败：' + r.message); return; }
+    loadList();
+}
+
+async function saveField(id, field, value, el, oldVal) {
+    value = (value || '').trim();
+    if (field === 'question' && !value) {
+        el.textContent = oldVal;
+        alert('标题不能为空');
+        return;
+    }
+    if (value === oldVal) { el.textContent = oldVal; return; }
+    const r = await fetchJson(`/issues/api/${id}/update`, {
+        method: 'POST',
+        body: { [field]: value },
+    });
+    if (!r.success) { alert('保存失败：' + r.message); el.textContent = oldVal; return; }
+    el.textContent = value;
+}
+
+// ----- 状态切换菜单 -----
+let openMenu = null;
+function openStatusMenu(ev, id) {
+    ev.stopPropagation();
+    if (openMenu) openMenu.remove();
+    const menu = document.createElement('div');
+    menu.className = 'status-menu';
+    menu.innerHTML = STATUSES.map(s => `<div onclick="changeStatus(${id}, '${s}')">${s}</div>`).join('');
+    document.body.appendChild(menu);
+    const rect = ev.target.getBoundingClientRect();
+    menu.style.top = (rect.bottom + window.scrollY + 4) + 'px';
+    menu.style.left = (rect.left + window.scrollX) + 'px';
+    openMenu = menu;
+}
+document.addEventListener('click', () => { if (openMenu) { openMenu.remove(); openMenu = null; } });
+
+async function changeStatus(id, newStatus) {
+    if (openMenu) { openMenu.remove(); openMenu = null; }
+    const r = await fetchJson(`/issues/api/${id}/update`, {
+        method: 'POST',
+        body: { status: newStatus },
+    });
+    if (!r.success) { alert('更新失败：' + r.message); return; }
+    loadList();
+}
+
+// ----- Tabs / 搜索 -----
+document.getElementById('statusTabs').addEventListener('click', ev => {
+    const t = ev.target.closest('.tab');
+    if (!t) return;
+    document.querySelectorAll('#statusTabs .tab').forEach(x => x.classList.remove('active'));
+    t.classList.add('active');
+    CURRENT_STATUS = t.dataset.status;
+    loadList();
+});
+
+document.getElementById('searchBox').addEventListener('input', () => {
+    clearTimeout(SEARCH_DEBOUNCE);
+    SEARCH_DEBOUNCE = setTimeout(loadList, 250);
+});
+
+// 在新建标题里按 Enter 直接提交
+document.getElementById('newQuestion').addEventListener('keydown', ev => {
+    if (ev.key === 'Enter') { ev.preventDefault(); createIssue(); }
+});
+
+loadList();
+</script>
+{% endblock %}

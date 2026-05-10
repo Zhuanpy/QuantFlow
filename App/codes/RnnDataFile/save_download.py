@@ -266,8 +266,19 @@ def complete_download_process(stock_code: str, days: int = 1, update_record: boo
         except Exception as e:
             logger.warning(f"保存15分钟数据失败: {stock_code}, 错误: {e}")
 
-        # 转换为日线数据
+        # 转换为日线数据并保存为 CSV
         save_1m_to_daily(data_1m, stock_code)
+
+        # 同步把日线数据写入 MySQL（data_stock_daily），图表/打分都从这张表读
+        if not is_board:
+            try:
+                from App.models.data.StockDaily import save_daily_stock_data_to_sql
+                daily_df = ResampleData.resample_1m_data(data_1m, freq='daily')
+                if daily_df is not None and not daily_df.empty:
+                    save_daily_stock_data_to_sql(stock_code, daily_df)
+                    logger.info(f"成功保存日线数据到 MySQL: {stock_code}, {len(daily_df)} 行")
+            except Exception as e:
+                logger.warning(f"保存日线到 data_stock_daily 失败: {stock_code}, 错误: {e}")
 
         # 保存到数据库
         try:

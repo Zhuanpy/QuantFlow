@@ -36,11 +36,14 @@ def create_app(config_name='default'):
 def register_blueprints(app):
     """注册所有蓝图"""
     # 主页面路由
-    from App.routes.views import main_bp, dl_bp, rnn_bp, issue_bp
+    from App.routes.views import main_bp, dl_bp, rnn_bp
     app.register_blueprint(main_bp)
     app.register_blueprint(dl_bp)
     app.register_blueprint(rnn_bp)
-    app.register_blueprint(issue_bp)  # views.py 中的 issue_bp 保持原名称
+
+    # 问题/想法清单（合并自原 views.py + others/issues.py + others/route_stock_issue.py）
+    from App.routes.issues_route import issue_bp
+    app.register_blueprint(issue_bp)
     
     # 认证路由
     from App.routes.auth_routes import auth_bp
@@ -156,6 +159,12 @@ def register_blueprints(app):
         app.register_blueprint(board_trend_bp)
     except ImportError as e:
         print(f"警告: 无法导入 BoardTrendScoring 蓝图: {e}")
+
+    try:
+        from App.routes.strategy.StockTrendScoring import stock_trend_bp
+        app.register_blueprint(stock_trend_bp)
+    except ImportError as e:
+        print(f"警告: 无法导入 StockTrendScoring 蓝图: {e}")
     
     try:
         from App.routes.strategy.RnnData import RnnData
@@ -188,16 +197,6 @@ def register_blueprints(app):
     except ImportError:
         pass
     
-    # 其他路由
-    try:
-        from App.routes.others.issues import issue_bp as others_issue_bp
-        app.register_blueprint(others_issue_bp)  # 蓝图名称已改为 others_issue_bp
-    except ImportError:
-        pass
-    
-    try:
-        from App.routes.others.route_stock_issue import issue_bp as stock_issue_bp
-        app.register_blueprint(stock_issue_bp)  # 蓝图名称已改为 stock_issue_bp
-    except ImportError:
-        pass
+    # 注：原 others/issues.py 和 others/route_stock_issue.py 已并入
+    # App.routes.issues_route，不再单独注册（避免 /issues 路由冲突）
 

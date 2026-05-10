@@ -249,16 +249,17 @@ class PathManager:
     # ==================== 目录结构管理 ====================
 
     def ensure_data_directories(self) -> None:
-        """确保所有必要的数据目录都存在"""
+        """确保启动期"必有"的几个数据目录存在。
+
+        这里只列每天写入流水线一定会用到的根目录；像 15m_standardized /
+        models / temp / processed 这种"按需才写"的目录不在这里预创建——
+        对应的 get_*_path() 在第一次写入时会自己 mkdir，避免常年空挂着。
+        """
         directories = [
             self._data_base,
             self._data_base / 'quarters',
             self._data_base / '15m',
-            self._data_base / '15m_standardized',
             self._data_base / 'daily',
-            self._models_base,
-            self._temp_base,
-            self._processed_base,
             self._project_root / 'App' / 'codes' / 'code_data',
         ]
 

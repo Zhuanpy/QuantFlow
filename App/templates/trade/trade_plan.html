@@ -62,6 +62,7 @@
         </div>
         <div class="action-buttons">
             <button class="btn btn-primary" onclick="showCreateModal()">+ 新建计划</button>
+            <a class="btn btn-secondary" href="{{ url_for('stock_pool.stock_pool_page') }}" target="_blank">📋 股票池</a>
             <button class="btn btn-secondary" onclick="loadPlans()">刷新</button>
         </div>
     </div>
@@ -294,6 +295,42 @@
     gap: 1.5rem;
     margin-bottom: 2rem;
 }
+/* 单卡模式：压成一条横向状态条 */
+.stats-grid.single {
+    grid-template-columns: 1fr;
+    margin-bottom: 1rem;
+}
+.stats-grid.single .stat-card {
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+    padding: 0.6rem 1.25rem;
+}
+.stats-grid.single .stat-card h3 {
+    margin: 0;
+    font-size: 0.95rem;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+.stats-grid.single .stat-content {
+    display: flex;
+    flex: 1;
+    gap: 2rem;
+    justify-content: flex-start;
+}
+.stats-grid.single .stat-item {
+    display: flex;
+    align-items: baseline;
+    gap: 0.4rem;
+    text-align: left;
+}
+.stats-grid.single .stat-item .label {
+    margin: 0;
+    font-size: 0.78rem;
+}
+.stats-grid.single .stat-item .value {
+    font-size: 1.05rem;
+}
 
 .stat-card {
     background: var(--card-background);
@@ -384,7 +421,11 @@
     cursor: pointer;
     font-weight: 500;
     transition: all 0.3s;
+    display: inline-block;
+    text-decoration: none;
+    line-height: 1.2;
 }
+a.btn { color: inherit; }
 
 .btn-primary {
     background: var(--primary-color);
@@ -512,7 +553,17 @@
 .action-cell {
     display: flex;
     gap: 0.25rem;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
+    white-space: nowrap;
+}
+.action-cell .btn { flex: 0 0 auto; }
+
+.stock-cell { white-space: nowrap; }
+.stock-cell strong { font-weight: 600; }
+.stock-cell .stock-name {
+    margin-left: 0.4rem;
+    color: var(--text-secondary);
+    font-size: 0.82rem;
 }
 
 /* 模态框 */
@@ -748,19 +799,53 @@ let editingPlanId = null;
 
 // 页面加载
 document.addEventListener('DOMContentLoaded', function() {
+    // 优先读 URL ?mode= 参数；其次取路由传入的 trade_mode；都没有则为"全部"
+    const qsMode = new URLSearchParams(location.search).get('mode') || '';
+    const routeMode = '{{ trade_mode|default("") }}';
+    currentMode = qsMode || routeMode;
+    if (currentMode) {
+        document.querySelectorAll('.mode-tab').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.mode === currentMode);
+        });
+    }
+    syncStatsCards(currentMode);
+
     loadStatistics();
     loadPlans();
     setupEventListeners();
 
-    // 设置默认模式
-    const urlMode = '{{ trade_mode|default("") }}';
-    if (urlMode) {
-        currentMode = urlMode;
+    // 浏览器前进/后退时，根据 URL 重新同步 tab + 列表
+    window.addEventListener('popstate', () => {
+        const m = new URLSearchParams(location.search).get('mode') || '';
+        currentMode = m;
         document.querySelectorAll('.mode-tab').forEach(btn => {
-            btn.classList.toggle('active', btn.dataset.mode === urlMode);
+            btn.classList.toggle('active', btn.dataset.mode === m);
         });
-    }
+        syncStatsCards(m);
+        loadPlans();
+    });
 });
+
+// 把当前 mode 同步到 URL 查询参数，避免刷新/分享后丢失状态
+function syncModeToUrl(mode) {
+    const url = new URL(location.href);
+    if (mode) url.searchParams.set('mode', mode);
+    else url.searchParams.delete('mode');
+    history.pushState({ mode }, '', url);
+}
+
+// 根据当前 mode 切换统计卡片可见性 + 网格列数：
+//   ''        → 两张都显示，2 列
+//   simulate  → 只显示模拟卡，撑满 1 列
+//   real      → 只显示实盘卡，撑满 1 列
+function syncStatsCards(mode) {
+    const grid = document.getElementById('statsGrid');
+    const sim = document.querySelector('.stat-card.simulate');
+    const real = document.querySelector('.stat-card.real');
+    if (sim) sim.style.display = (!mode || mode === 'simulate') ? '' : 'none';
+    if (real) real.style.display = (!mode || mode === 'real') ? '' : 'none';
+    if (grid) grid.classList.toggle('single', !!mode);
+}
 
 function setupEventListeners() {
     // 模式切换
@@ -769,6 +854,8 @@ function setupEventListeners() {
             document.querySelectorAll('.mode-tab').forEach(b => b.classList.remove('active'));
             this.classList.add('active');
             currentMode = this.dataset.mode;
+            syncModeToUrl(currentMode);
+            syncStatsCards(currentMode);
             loadPlans();
         });
     });
@@ -1006,7 +1093,7 @@ function renderPlanRow(plan) {
 
     return `
         <tr>
-            <td><strong>${plan.stock_code}</strong><br><small>${plan.stock_name}</small></td>
+            <td class="stock-cell"><strong>${plan.stock_code}</strong><span class="stock-name">${plan.stock_name || ''}</span></td>
             <td><span class="badge badge-${plan.trade_mode}">${plan.trade_mode === 'simulate' ? '模拟' : '实盘'}</span></td>
             <td><span class="badge badge-${plan.direction}">${plan.direction === 'long' ? '做多' : '做空'}</span></td>
             <td>${timeDisplay}</td>

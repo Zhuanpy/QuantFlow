@@ -23,9 +23,4 @@ rnn_bp = Blueprint('rnn_bp', __name__)
 def rnn():
     return render_template('rnn.html')
 
-# 问题蓝图
-issue_bp = Blueprint('issue_bp', __name__)
-
-@issue_bp.route('/issues')
-def issues():
-    return render_template('issues.html')
+# 注：原 issue_bp 已迁移到 App.routes.issues_route（合并三处重复路由）

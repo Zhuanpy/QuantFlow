@@ -155,6 +155,16 @@ class Config:
             'Host': 'push2his.eastmoney.com',
             'Cookie': Secrets.get_eastmoney_cookie()
         },
+        'board_daily_kline': {
+            **_EASTMONEY_BASE_HEADERS_TEMPLATE,
+            'Host': 'push2his.eastmoney.com',
+            'Cookie': Secrets.get_eastmoney_cookie()
+        },
+        'stock_quote': {
+            **_EASTMONEY_BASE_HEADERS_TEMPLATE,
+            'Host': 'push2.eastmoney.com',
+            'Cookie': Secrets.get_eastmoney_cookie()
+        },
         'funds_awkward': {
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9',
             'Accept-Encoding': 'gzip, deflate',
@@ -174,7 +184,18 @@ class Config:
         'board_1m_data': 'http://push2.eastmoney.com/api/qt/stock/trends2/get?secid=90.{}&fields1=f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13&fields2=f51,f52,f53,f54,f55,f56,f57,f58',
         # 多天K线数据（kline API）- klt=1表示1分钟K线
         'stock_1m_multiple_days': 'http://push2his.eastmoney.com/api/qt/stock/kline/get?secid={}&klt=1&fqt=1&lmt={}&end=20500101&fields1=f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61',
-        'board_1m_multiple_days': 'http://push2his.eastmoney.com/api/qt/stock/kline/get?secid=90.{}&klt=1&fqt=1&lmt={}&end=20500101&fields1=f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61',
+        # 注意：板块指数没有"复权"概念，必须使用 fqt=0（不复权）。
+        # East Money 后端对板块加 fqt=1 会按"成份股复权后加权"返回另一套数值，
+        # 与官网展示及实际指数点位不一致（约真实值的 56%）。
+        'board_1m_multiple_days': 'http://push2his.eastmoney.com/api/qt/stock/kline/get?secid=90.{}&klt=1&fqt=0&lmt={}&end=20500101&fields1=f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61',
+        # 板块日 K（klt=101 日，fqt=0 不复权）。pytdx 的 get_index_bars 也会返回
+        # 复权后的"翻倍"指数，所以板块日 K 必须走这条 East Money 接口。
+        'board_daily_kline': 'http://push2his.eastmoney.com/api/qt/stock/kline/get?secid=90.{}&klt=101&fqt=0&lmt={}&end=20500101&fields1=f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61',
+        # 个股实时行情 + 基本面（最新价/涨跌/总市值/流通市值/总股本/流通股本/PE/PB/换手率等）
+        # 注意：必须用 HTTPS。HTTP 会被 East Money 30x 重定向到 HTTPS，
+        # 项目 HTTP 客户端跟进重定向时会进死循环。
+        # 实际调用见 App/services/stock_quote_service.py（用裸 requests）
+        'stock_quote': 'https://push2.eastmoney.com/api/qt/stock/get?secid={}&ut=fa5fd1943c7b386f172d6893dbfba10b&fields={}',
         'funds_awkward': 'http://fundf10.eastmoney.com/FundArchivesDatas.aspx?type=jjcc&code={}&topline=10&year=&month=&rt=0.7468124095836639'
     }
 
@@ -230,9 +251,12 @@ class Config:
         return Config.DB_PASSWORD
 
     # 下载配置
+    # use_selenium_fallback=False：HTTP 失败就直接报失败，不启动 Chrome 兜底。
+    # 之前一旦被东财限流，每个失败都开一个新 Chrome（headless），27+ 进程能把 Flask 卡死。
+    # 板块 / 股票的 1m kline API 走 selenium 解出来也是同一个 JSON，没必要付出 Chrome 的代价。
     DOWNLOAD_CONFIG = {
         'selenium_headless': True,
-        'use_selenium_fallback': True,
+        'use_selenium_fallback': False,
         'max_retries': 3,
         'retry_delay': 5,
         'request_timeout': 30,

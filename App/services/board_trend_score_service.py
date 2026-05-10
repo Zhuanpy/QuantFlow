@@ -136,6 +136,14 @@ def _load_board_daily(board_code: str, end_date: date,
     df = df.sort_values('date').reset_index(drop=True)
     for c in ('open', 'close', 'high', 'low', 'volume', 'money'):
         df[c] = pd.to_numeric(df[c], errors='coerce')
+
+    # 数据脏行清洗：OHLC 任一为 0/NaN 视为无效（旧 datadaily.* 表常见 open=0 等下载缺陷）
+    ohlc = ['open', 'high', 'low', 'close']
+    bad_mask = df[ohlc].isna().any(axis=1) | (df[ohlc] <= 0).any(axis=1)
+    if bad_mask.any():
+        dropped = int(bad_mask.sum())
+        df = df.loc[~bad_mask].reset_index(drop=True)
+        logger.info(f"{board_code}: 清理 {dropped} 行无效 OHLC（0 或 NaN）")
     return df
 
 

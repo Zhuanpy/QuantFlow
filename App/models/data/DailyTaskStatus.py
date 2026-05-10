@@ -81,6 +81,12 @@ class DailyTaskStatus(db.Model):
     notes = db.Column(db.Text, nullable=True, comment='备注/错误信息')
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, comment='最后更新时间')
 
+    # ==================== 失败追踪（用于补漏调度）====================
+    last_attempt_at  = db.Column(db.DateTime, nullable=True, comment='上次下载/处理尝试时间')
+    attempt_count    = db.Column(db.Integer, default=0, nullable=False, comment='累计尝试次数')
+    last_error_msg   = db.Column(db.Text, nullable=True, comment='最近一次失败原因（success 时不清，留作排查）')
+    last_error_at    = db.Column(db.DateTime, nullable=True, comment='最近一次失败时间')
+
     def __repr__(self):
         return f'<DailyTaskStatus {self.stock_code} {self.date}>'
 
@@ -134,7 +140,37 @@ class DailyTaskStatus(db.Model):
             record = cls(stock_code=stock_code, date=date)
             db.session.add(record)
         setattr(record, task_name, value)
+        record.last_attempt_at = datetime.utcnow()
+        if value is True:
+            # 成功：清错误信息但保留 last_error_msg 以便事后查
+            pass
         record.updated_at = datetime.utcnow()
+        db.session.commit()
+
+    @classmethod
+    def mark_attempt_failed(cls, stock_code, date, error_msg: str = None):
+        """记录一次下载/处理尝试失败。
+
+        - 不清空也不翻转任何 is_* 标志（保持 False，等下次成功才翻转）
+        - 累计 attempt_count、写 last_error_msg / last_error_at
+        - 调用方应该在 STEP1/STEP2/STEP3 等失败的 except 分支里调
+
+        Args:
+            stock_code: 股票代码（如 '000001' 或 'BK1016'）
+            date: 交易日期（datetime.date 对象）
+            error_msg: 失败原因，会被截断到 1000 字以避免 DB 字段过长
+        """
+        record = cls.query.filter_by(stock_code=stock_code, date=date).first()
+        if not record:
+            record = cls(stock_code=stock_code, date=date)
+            db.session.add(record)
+        now = datetime.utcnow()
+        record.attempt_count = (record.attempt_count or 0) + 1
+        record.last_attempt_at = now
+        record.last_error_at = now
+        if error_msg:
+            record.last_error_msg = str(error_msg)[:1000]
+        record.updated_at = now
         db.session.commit()
 
     @classmethod

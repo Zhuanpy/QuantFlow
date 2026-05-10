@@ -4,24 +4,23 @@
 <div class="container">
     <div class="page-header">
         <div>
-            <h1>板块趋势打分</h1>
-            <p>将板块周期划分为 上涨前期 / 上涨后期 / 下跌前期 / 下跌后期，多维度评估趋势区间。打分公式后续接入。</p>
+            <h1>个股打分历史</h1>
+            <p>沿用板块趋势打分公式（v1）应用到<b>股票池</b>中的个股；最新评分会自动同步回股票池的「评分」列。</p>
         </div>
         <div class="header-actions">
             <button class="btn btn-outline" onclick="toggleHelp()">ⓘ 字段说明 / 公式</button>
             <button class="btn btn-primary" onclick="openEditModal()">+ 新增/录入</button>
-            <button class="btn btn-outline" onclick="syncBoards()">⤓ 同步板块清单</button>
-            <button class="btn btn-outline" onclick="refreshAllMembers()" title="从东方财富刷新所有行业板块成分股名单（约 86 个板块，2-3 分钟）">↻ 更新所有成分股</button>
-            <button class="btn btn-outline" onclick="cleanupEmpty()">🧹 清理无数据板块</button>
+            <button class="btn btn-outline" onclick="syncStocks()" title="从股票池拉取清单">⤓ 从股票池同步</button>
+            <button class="btn btn-outline" onclick="cleanupEmpty()">🧹 清理无数据个股</button>
             <button class="btn btn-outline" onclick="triggerCompute()">⚙ 自动计算</button>
         </div>
     </div>
 
-    <!-- 字段 / 公式说明（可折叠） -->
+    <!-- 字段 / 公式说明（可折叠，与板块打分共用） -->
     <div id="helpPanel" class="help-panel" style="display:none;">
         <div class="help-head">
             <h2>字段说明 & 计算公式（v1）</h2>
-            <span class="help-meta">数据源：<code>data_stock_daily</code>（首选）/ <code>datadaily.{board_code}</code>（回退） · 计算窗口：最近 250 个交易日</span>
+            <span class="help-meta">数据源：<code>data_stock_daily</code> · 计算窗口：最近 250 个交易日</span>
         </div>
 
         <div class="help-grid">
@@ -43,12 +42,10 @@
                 <pre>对 5 个核心子分（均线/MACD/量能/动量/价格结构）逐一打分：
   ≥50 记 +1，否则 -1
 confidence = |Σ signs| / 5 × 100</pre>
-                <p>全部 5 项一致看多或一致看空 → 100；3 多 2 空 → 20；五五开 → 0。</p>
             </section>
 
             <section class="help-card">
                 <h3>强度 trend_strength</h3>
-                <p>仅由综合分映射：</p>
                 <pre>total ≥ 75 → strong（强）
 total ≥ 60 → medium（中）
 total ≥ 40 → weak（弱）
@@ -61,7 +58,6 @@ total &lt; 40 → none（无趋势）</pre>
 up_late    → hold（RSI&lt;75）/ sell（RSI≥75）
 down_early → sell
 down_late  → wait</pre>
-                <p class="dim">注意：信号仅供参考，结合实际仓位与风险敞口决策。</p>
             </section>
 
             <section class="help-card">
@@ -69,7 +65,6 @@ down_late  → wait</pre>
                 <pre>pos = (close - low60) / (high60 - low60) × 100
 +5 若创 20 日新高，-5 若创 20 日新低
 score = clip(pos, 0, 100)</pre>
-                <p class="dim">含义：当前价在近 60 日区间中所处的位置。</p>
             </section>
 
             <section class="help-card">
@@ -79,7 +74,6 @@ MA20 &gt; MA60          → 65
 cur &gt; MA20 但 MA20&lt;MA60 → 55
 cur &lt; MA20 &lt; MA60     → 20（MA20 斜率向下 → 5）
 其他                  → 35</pre>
-                <p class="dim">slope20 = (MA20[今] - MA20[前 5 日]) / |MA20[前 5 日]| × 100。</p>
             </section>
 
             <section class="help-card">
@@ -98,7 +92,6 @@ score = 0.55 × dif_score + 0.45 × bar_score</pre>
 v60 = mean(volume, 最近 60 日)
 ratio = v5 / v60
 score = linmap(ratio, 0.5 → 0, 2.0 → 100)</pre>
-                <p class="dim">含义：放量/缩量。比值 1.5 ≈ 90 分；1.0 ≈ 60 分；0.5 ≈ 30 分。</p>
             </section>
 
             <section class="help-card">
@@ -123,7 +116,6 @@ atr_pct = ATR / close × 100
             <section class="help-card help-card-wide">
                 <h3>综合分 total_score</h3>
                 <pre>total = (15·价格结构 + 20·均线 + 25·MACD + 15·量能 + 15·动量 + 10·波动率) / 100</pre>
-                <p class="dim">权重总和 100，全部子分 0–100 同向（高 = 看多有利），因此 total 也保持 0–100，60 以上为偏多区。</p>
             </section>
         </div>
         <div style="text-align:right; margin-top:.5rem;">
@@ -154,24 +146,16 @@ atr_pct = ATR / close × 100
                 {% endfor %}
             </select>
         </label>
-        <label>信号
-            <select id="filterSignal" onchange="loadList()">
-                <option value="">全部</option>
-                {% for s in signals %}
-                <option value="{{ s }}">{{ s }}</option>
-                {% endfor %}
-            </select>
-        </label>
         <label>排序
             <select id="filterSort" onchange="loadList()">
                 <option value="total_score_desc">综合分高→低</option>
                 <option value="total_score_asc">综合分低→高</option>
                 <option value="updated">最近更新</option>
-                <option value="board_code">板块代码</option>
+                <option value="stock_code">股票代码</option>
             </select>
         </label>
-        <input type="text" id="filterCode" placeholder="板块代码" onkeydown="if(event.key==='Enter')loadList()">
-        <input type="text" id="filterName" placeholder="板块名称" onkeydown="if(event.key==='Enter')loadList()">
+        <input type="text" id="filterCode" placeholder="股票代码" onkeydown="if(event.key==='Enter')loadList()">
+        <input type="text" id="filterName" placeholder="股票名称" onkeydown="if(event.key==='Enter')loadList()">
         <button class="btn btn-sm" onclick="loadList()">查询</button>
     </div>
 
@@ -180,26 +164,24 @@ atr_pct = ATR / close × 100
         <table class="board-table">
             <thead>
                 <tr>
-                    <th>板块</th>
-                    <th title="数据状态：日K/1m/15m 三种数据是否覆盖到最近交易日。鼠标悬停看详细日期与滞后天数">数据</th>
-                    <th title="该条评分对应的交易日">打分日期</th>
-                    <th title="趋势阶段：up_early/up_late/down_early/down_late/unknown。基于 DIF 零轴位置 + close 与 MA20 + MA20 斜率综合判定。点击右上角『字段说明』查看详情">阶段</th>
-                    <th title="置信度 0-100：5 个核心子分相对 50 的方向一致性。一致 → 高置信；五五开 → 0。公式：|Σ符号|/N × 100">置信</th>
-                    <th title="强度：由综合分映射。≥75 strong / ≥60 medium / ≥40 weak / 其余 none">强度</th>
-                    <th title="交易信号：up_early=buy, up_late=hold(RSI<75)/sell(RSI≥75), down_early=sell, down_late=wait">信号</th>
-                    <th title="价格结构 0-100（权重 15%）：close 在近 60 日 high-low 区间的位置，破/创 20 日新高低再 ±5">价格结构</th>
-                    <th title="均线 0-100（权重 20%）：close、MA20、MA60 三者排列 + MA20 5 日斜率">均线</th>
-                    <th title="MACD 0-100（权重 25%）：DIF 相对位置 0.55 + 柱体方向/双零轴 0.45">MACD</th>
-                    <th title="量能 0-100（权重 15%）：v5/v60 比值映射，0.5→0、1.0→40、1.5→73、2.0→100">量能</th>
-                    <th title="动量 0-100（权重 15%）：RSI(14)；50-65 最高分（80-95），超买/超卖衰减">动量</th>
-                    <th title="波动率 0-100（权重 10%）：ATR(14)/close ×100，1-3% 最佳，过低/过高减分">波动率</th>
-                    <th class="hl" title="综合分：六个子分加权平均（权重 15/20/25/15/15/10）">综合分</th>
+                    <th>个股</th>
+                    <th>阶段</th>
+                    <th>置信</th>
+                    <th>强度</th>
+                    <th>信号</th>
+                    <th>价格结构</th>
+                    <th>均线</th>
+                    <th>MACD</th>
+                    <th>量能</th>
+                    <th>动量</th>
+                    <th>波动率</th>
+                    <th class="hl">综合分</th>
                     <th>备注</th>
                     <th>操作</th>
                 </tr>
             </thead>
             <tbody id="tbody">
-                <tr><td colspan="16" class="empty">加载中...</td></tr>
+                <tr><td colspan="14" class="empty">加载中...</td></tr>
             </tbody>
         </table>
     </div>
@@ -214,7 +196,7 @@ atr_pct = ATR / close × 100
 <div class="modal" id="editModal" style="display:none;">
     <div class="modal-content">
         <div class="modal-header">
-            <h3 id="editTitle">新增板块趋势打分</h3>
+            <h3 id="editTitle">新增个股趋势打分</h3>
             <button class="close-btn" onclick="closeEdit()">&times;</button>
         </div>
         <form onsubmit="submitEdit(event)">
@@ -223,8 +205,8 @@ atr_pct = ATR / close × 100
                 <fieldset>
                     <legend>基础信息</legend>
                     <div class="row">
-                        <label>板块代码 *<input type="text" id="f_board_code" required placeholder="如 BK0437"></label>
-                        <label>板块名称 *<input type="text" id="f_board_name" required></label>
+                        <label>股票代码 *<input type="text" id="f_stock_code" required placeholder="如 000001"></label>
+                        <label>股票名称 *<input type="text" id="f_stock_name" required></label>
                         <label>记录日期 *<input type="date" id="f_record_date" required></label>
                     </div>
                 </fieldset>
@@ -344,18 +326,6 @@ atr_pct = ATR / close × 100
     .stage-tag.down_early { background:#ffedd5; color:#9a3412; }
     .stage-tag.down_late { background:#fee2e2; color:#991b1b; }
     .stage-tag.unknown { background:#f3f4f6; color:#4b5563; }
-
-    /* 数据状态徽章：3 个小圆点 = 日K/1m/15m */
-    .ds-cell { display:inline-flex; gap:3px; align-items:center; padding:.1rem .3rem; border-radius:.3rem; cursor:help; }
-    .ds-cell.ok    { background:#d1fae5; }
-    .ds-cell.lag   { background:#fef3c7; }
-    .ds-cell.stale { background:#fee2e2; }
-    .ds-cell.missing { background:#fecaca; }
-    .ds-dot { width:8px; height:8px; border-radius:50%; }
-    .ds-dot.ok      { background:#10b981; }
-    .ds-dot.lag     { background:#f59e0b; }
-    .ds-dot.missing { background:#ef4444; }
-    .ds-cell .ds-lag-num { font-size:.7rem; color:#6b7280; margin-left:2px; }
     .board-link { color:inherit; text-decoration:none; display:block; }
     .board-link:hover strong { color:#2563eb; text-decoration:underline; }
 
@@ -377,7 +347,6 @@ atr_pct = ATR / close × 100
     .row label.full { grid-column:1 / -1; }
     .row input, .row select, .row textarea { padding:.35rem .5rem; border:1px solid #d1d5db; border-radius:.3rem; font-size:.85rem; }
 
-    /* 字段说明面板 */
     .help-panel { background:#fff; border-radius:.6rem; padding:1rem 1.25rem; box-shadow:var(--shadow-sm); margin-bottom:1rem; border:1px solid #e0e7ff; }
     .help-head { display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:.5rem; margin-bottom:.75rem; padding-bottom:.5rem; border-bottom:1px solid #f1f5f9; }
     .help-head h2 { margin:0; font-size:1.05rem; color:#1f2937; }
@@ -388,7 +357,6 @@ atr_pct = ATR / close × 100
     .help-card-wide { grid-column: 1 / -1; background:#eff6ff; border-color:#dbeafe; }
     .help-card h3 { margin:0 0 .4rem; font-size:.92rem; color:#1f2937; }
     .help-card p { margin:.25rem 0; font-size:.82rem; color:#4b5563; line-height:1.5; }
-    .help-card p.dim { color:#6b7280; font-size:.78rem; }
     .help-card ul { margin:.3rem 0 .3rem 1.1rem; padding:0; font-size:.82rem; color:#374151; line-height:1.7; }
     .help-card pre { background:#0f172a; color:#e2e8f0; font-size:.78rem; line-height:1.55;
                      padding:.5rem .65rem; border-radius:.35rem; overflow-x:auto; margin:.35rem 0;
@@ -407,7 +375,7 @@ let currentPage = 1;
 const pageSize = 30;
 
 async function loadDates() {
-    const r = await fetch('/board_trend/api/dates').then(r => r.json());
+    const r = await fetch('/stock_trend/api/dates').then(r => r.json());
     const sel = document.getElementById('filterDate');
     sel.innerHTML = '<option value="">最新</option>' +
         (r.data || []).map(d => `<option value="${d}">${d}</option>`).join('');
@@ -415,7 +383,7 @@ async function loadDates() {
 
 async function loadStats() {
     const date = document.getElementById('filterDate').value;
-    const url = '/board_trend/api/stats' + (date ? `?record_date=${date}` : '');
+    const url = '/stock_trend/api/stats' + (date ? `?record_date=${date}` : '');
     const r = await fetch(url).then(r => r.json());
     if (!r.success) return;
     STAGES.forEach(s => {
@@ -431,53 +399,29 @@ function fmtNum(v, digits = 1) {
     return isNaN(n) ? '-' : n.toFixed(digits);
 }
 
-function renderDataStatus(ds) {
-    if (!ds) return '<span style="color:#9ca3af;">-</span>';
-    // overall: ok / lag / stale / missing
-    // 3 个圆点分别表示 daily / 1m / 15m，颜色对齐其单项状态
-    const dotColor = (s) => (s === 'ok') ? 'ok' : (s === 'lag') ? 'lag' : 'missing';
-    const lagSuffix = (ds.lag_days != null && ds.lag_days > 0) ? `<span class="ds-lag-num">${ds.lag_days}d</span>` : '';
-    const tip = [
-        `状态：${({ok:'正常',lag:'轻度滞后',stale:'严重滞后',missing:'无数据'})[ds.overall] || ds.overall}`,
-        `滞后天数：${ds.lag_days == null ? '∞ (有数据缺失)' : ds.lag_days}`,
-        `日K  最新：${ds.latest_daily || '无'} (${ds.daily})`,
-        `1m   最新：${ds.latest_1m    || '无'} (${ds.min1})`,
-        `15m  最新：${ds.latest_15m   || '无'} (${ds.min15})`,
-    ].join('\n');
-    return `<span class="ds-cell ${ds.overall}" title="${tip}">`
-         + `<span class="ds-dot ${dotColor(ds.daily)}"></span>`
-         + `<span class="ds-dot ${dotColor(ds.min1)}"></span>`
-         + `<span class="ds-dot ${dotColor(ds.min15)}"></span>`
-         + lagSuffix
-         + `</span>`;
-}
-
 async function loadList() {
     const params = new URLSearchParams({
         page: currentPage,
         page_size: pageSize,
         record_date: document.getElementById('filterDate').value,
         trend_stage: document.getElementById('filterStage').value,
-        signal: document.getElementById('filterSignal').value,
         sort_by: document.getElementById('filterSort').value,
-        board_code: document.getElementById('filterCode').value,
-        board_name: document.getElementById('filterName').value,
+        stock_code: document.getElementById('filterCode').value,
+        stock_name: document.getElementById('filterName').value,
     });
-    const r = await fetch('/board_trend/api/list?' + params).then(r => r.json());
+    const r = await fetch('/stock_trend/api/list?' + params).then(r => r.json());
     const tbody = document.getElementById('tbody');
     if (!r.success) {
-        tbody.innerHTML = `<tr><td colspan="16" class="empty">加载失败：${r.message || ''}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="14" class="empty">加载失败：${r.message || ''}</td></tr>`;
         return;
     }
     const items = r.data.items || [];
     if (items.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="16" class="empty">暂无数据。点击右上角"新增/录入"添加第一条。</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="14" class="empty">暂无数据。点击右上角"新增/录入"添加第一条。</td></tr>`;
     } else {
         tbody.innerHTML = items.map(it => `
             <tr>
-                <td><a href="/board_trend/board/${it.board_code}" class="board-link" title="查看 ${it.board_code} 日 K 与历史评分"><strong>${it.board_code}</strong><br><span style="color:#6b7280;font-size:.78rem;">${it.board_name || ''}</span></a></td>
-                <td style="text-align:center;">${renderDataStatus(it.data_status)}</td>
-                <td style="text-align:center;color:#374151;">${it.record_date || '-'}</td>
+                <td><a href="/stock_trend/stock/${it.stock_code}" class="board-link" title="查看 ${it.stock_code} 日 K 与历史评分"><strong>${it.stock_code}</strong><br><span style="color:#6b7280;font-size:.78rem;">${it.stock_name || ''}</span></a></td>
                 <td><span class="stage-tag ${it.trend_stage || 'unknown'}">${it.trend_stage || 'unknown'}</span></td>
                 <td>${fmtNum(it.trend_stage_confidence, 0)}</td>
                 <td>${it.trend_strength || '-'}</td>
@@ -514,9 +458,8 @@ function renderPagination(p) {
 }
 function goPage(p) { currentPage = p; loadList(); }
 
-// ---------------- 编辑模态框 ----------------
 const FIELDS = [
-    'board_code','board_name','record_date',
+    'stock_code','stock_name','record_date',
     'trend_stage','trend_stage_confidence','trend_strength','signal',
     'price_structure_score','ma_score','macd_score','volume_score','momentum_score','volatility_score','total_score',
     'close','change_pct','ma20','ma60','macd_dif','macd_dea','macd_bar','atr',
@@ -524,7 +467,7 @@ const FIELDS = [
 ];
 
 function openEditModal(row) {
-    document.getElementById('editTitle').textContent = row && row.id ? '编辑板块趋势打分' : '新增板块趋势打分';
+    document.getElementById('editTitle').textContent = row && row.id ? '编辑个股趋势打分' : '新增个股趋势打分';
     document.getElementById('f_id').value = row && row.id ? row.id : '';
     FIELDS.forEach(k => {
         const el = document.getElementById('f_' + k);
@@ -552,7 +495,7 @@ async function submitEdit(ev) {
     });
     payload.is_manual = true;
 
-    const url = id ? `/board_trend/api/update/${id}` : '/board_trend/api/upsert';
+    const url = id ? `/stock_trend/api/update/${id}` : '/stock_trend/api/upsert';
     const method = id ? 'PUT' : 'POST';
     const r = await fetch(url, {
         method,
@@ -567,24 +510,22 @@ async function submitEdit(ev) {
 
 async function delRow(id) {
     if (!confirm('确定删除该条记录？')) return;
-    const r = await fetch(`/board_trend/api/delete/${id}`, { method: 'DELETE' }).then(r => r.json());
+    const r = await fetch(`/stock_trend/api/delete/${id}`, { method: 'DELETE' }).then(r => r.json());
     if (!r.success) { alert('删除失败：' + (r.message || '')); return; }
     loadList();
 }
 
-async function syncBoards() {
+async function syncStocks() {
     const date = document.getElementById('filterDate').value || new Date().toISOString().slice(0, 10);
-    const source = prompt('选择数据源：industry（行业板块）/ concept（概念板块）/ all（全部）\n\n说明：默认仅导入有日 K 数据的板块；没数据的会被自动跳过。', 'all');
-    if (!source) return;
-    if (!confirm(`将把【${source}】板块清单同步到 ${date}（仅含有日 K 数据的板块）。继续？`)) return;
-    const r = await fetch('/board_trend/api/sync_boards', {
+    if (!confirm(`将从股票池拉取活跃个股清单，同步到 ${date} 的打分表（占位 unknown，需再点"自动计算"才会打分）。继续？`)) return;
+    const r = await fetch('/stock_trend/api/sync_stocks', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ record_date: date, source }),
+        body: JSON.stringify({ record_date: date }),
     }).then(r => r.json()).catch(() => ({ success: false, message: '请求失败' }));
     if (!r.success) { alert('同步失败：' + (r.message || '')); return; }
     const d = r.data;
-    alert(`同步完成\n源中板块：${d.total_in_source} 个\n过滤无数据：${d.filtered_out_no_data} 个\n实际导入：${d.total_boards} 个（新建 ${d.created} / 跳过 ${d.skipped}）`);
+    alert(`同步完成\n股票池中活跃个股：${d.total_in_source} 只\n过滤无日 K 数据：${d.filtered_out_no_data} 只\n实际导入：${d.total_stocks} 只（新建 ${d.created} / 跳过 ${d.skipped}）`);
     await loadDates();
     document.getElementById('filterDate').value = d.record_date;
     loadList();
@@ -594,7 +535,7 @@ async function cleanupEmpty() {
     const date = document.getElementById('filterDate').value;
     const scopeText = (
         '清理范围:\n' +
-        '  no_data  - 在日 K 数据库里查不到的板块（确实没数据）\n' +
+        '  no_data  - 在日 K 数据库里查不到的个股（确实没数据）\n' +
         '  unscored - total_score 为空的占位记录\n' +
         '  both     - 两者并集（默认）\n\n' +
         '注意：is_manual=True 的手工记录会被保留。'
@@ -603,7 +544,7 @@ async function cleanupEmpty() {
     if (!scope) return;
     const dateLabel = date || '全部日期';
     if (!confirm(`将清理 ${dateLabel} 范围内 [${scope}] 的自动记录。此操作不可撤销，继续？`)) return;
-    const r = await fetch('/board_trend/api/cleanup_empty', {
+    const r = await fetch('/stock_trend/api/cleanup_empty', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ record_date: date || null, scope, keep_manual: true }),
@@ -611,56 +552,34 @@ async function cleanupEmpty() {
     if (!r.success) { alert('清理失败：' + (r.message || '')); return; }
     let msg = `清理完成：共删除 ${r.data.deleted} 条`;
     if (r.data.sample && r.data.sample.length) {
-        msg += '\n样例：\n' + r.data.sample.slice(0, 8).map(x => `  ${x.board_code} ${x.board_name || ''}`).join('\n');
+        msg += '\n样例：\n' + r.data.sample.slice(0, 8).map(x => `  ${x.stock_code} ${x.stock_name || ''}`).join('\n');
     }
     alert(msg);
     await loadDates();
     loadList();
 }
 
-async function refreshAllMembers() {
-    if (!confirm('将从东方财富刷新所有行业板块的成分股名单（约 86 个板块），整个过程可能需要 2-5 分钟。期间不要关闭页面。继续？')) return;
-    const btn = event && event.target;
-    if (btn) { btn.disabled = true; btn.textContent = '更新中...'; }
-    try {
-        const r = await fetch('/board_trend/api/refresh_members', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({}),
-        }).then(r => r.json()).catch(() => ({success: false, message: '请求失败'}));
-        if (!r.success) { alert('更新失败：' + (r.message || '')); return; }
-        const d = r.data || {};
-        let msg = `成分股名单更新完成（快照 ${d.snapshot_date}）\n请求 ${d.requested} 个 / 成功 ${d.updated} / 空 ${d.empty} / 失败 ${d.failed_count}\n累计写入成分股 ${d.total_members_written} 行`;
-        if (d.failed_count > 0 && d.failed_sample && d.failed_sample.length) {
-            msg += '\n失败示例:\n' + d.failed_sample.slice(0, 5).map(e => `  ${e.board_code}: ${e.error}`).join('\n');
-        }
-        alert(msg);
-    } finally {
-        if (btn) { btn.disabled = false; btn.textContent = '↻ 更新所有成分股'; }
-    }
-}
-
 async function triggerCompute() {
     const date = document.getElementById('filterDate').value || new Date().toISOString().slice(0, 10);
     const scope = prompt(
-        '选择计算范围：\n  unknown - 仅未识别/未评分的板块（默认）\n  manual_skip - 全部，但跳过手工记录\n  all - 全量重算（覆盖现有数据）',
+        '选择计算范围：\n  unknown - 仅未识别/未评分的（默认）\n  manual_skip - 全部，但跳过手工记录\n  all - 全量重算（覆盖现有数据）',
         'unknown'
     );
     if (!scope) return;
-    if (!confirm(`将对 ${date} 的板块按 [${scope}] 范围执行 v1 公式计算。继续？`)) return;
+    if (!confirm(`将对 ${date} 的个股按 [${scope}] 范围执行 v1 公式计算。继续？`)) return;
     const btn = event && event.target;
     if (btn) { btn.disabled = true; btn.textContent = '计算中...'; }
     try {
-        const r = await fetch('/board_trend/api/compute', {
+        const r = await fetch('/stock_trend/api/compute', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ record_date: date, scope }),
         }).then(r => r.json()).catch(() => ({ success: false, message: '请求失败' }));
         if (!r.success) { alert('计算失败：' + (r.message || '')); return; }
         const d = r.data;
-        let msg = `计算完成\n请求板块 ${d.requested} 个 / 成功 ${d.ok} / 失败 ${d.fail}`;
+        let msg = `计算完成\n请求个股 ${d.requested} 个 / 成功 ${d.ok} / 失败 ${d.fail}`;
         if (d.errors && d.errors.length) {
-            msg += `\n失败示例:\n` + d.errors.slice(0, 5).map(e => `  ${e.board_code}: ${e.error}`).join('\n');
+            msg += `\n失败示例:\n` + d.errors.slice(0, 5).map(e => `  ${e.stock_code}: ${e.error}`).join('\n');
         }
         alert(msg);
         loadList();
@@ -673,11 +592,10 @@ function toggleHelp() {
     const p = document.getElementById('helpPanel');
     const visible = p.style.display !== 'none';
     p.style.display = visible ? 'none' : 'block';
-    try { localStorage.setItem('boardTrendHelpOpen', visible ? '0' : '1'); } catch (e) {}
+    try { localStorage.setItem('stockTrendHelpOpen', visible ? '0' : '1'); } catch (e) {}
 }
 
-// 初始化
-if (localStorage.getItem('boardTrendHelpOpen') === '1') {
+if (localStorage.getItem('stockTrendHelpOpen') === '1') {
     document.getElementById('helpPanel').style.display = 'block';
 }
 loadDates().then(loadList);

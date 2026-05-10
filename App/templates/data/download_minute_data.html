@@ -26,9 +26,14 @@
             <button id="setDateBtn" class="btn btn-warning">设置下载日期</button>
             <button id="resampleBtn" class="btn btn-success">重新采样</button>
             <button id="openFolderBtn" class="btn btn-info">打开文件夹</button>
+            <button id="refreshBasicsBtn" class="btn btn-success" onclick="refreshBasics()"
+                    title="批量刷新所有 A 股的最新价/PE/PB/总市值/流通市值（盘后跑一次即可，下载完成时也会自动跑）">
+                刷新基本面
+            </button>
             <a href="{{ url_for('download_data_bp.download_records_editor') }}" class="btn btn-edit">编辑记录</a>
             <a href="/data_analysis" class="btn btn-analysis">数据分析</a>
         </div>
+        <span id="basicsStatus" style="margin-left:1rem;font-size:.82rem;color:#374151;"></span>
     </div>
 
     <!-- 主要内容区域：双栏布局 -->
@@ -988,6 +993,48 @@
 .trading-day-badge.loading { background: #f3f4f6; color: #6b7280; }
 </style>
 <script>
+// 手动批量刷新基本面（最新价/PE/PB/总市值等）
+async function refreshBasics() {
+    const btn = document.getElementById('refreshBasicsBtn');
+    const status = document.getElementById('basicsStatus');
+    if (btn.disabled) return;
+    btn.disabled = true;
+    const orig = btn.textContent;
+    btn.textContent = '⏳ 刷新中…';
+    status.textContent = '正在拉取全 A 股基本面，约 30~60 秒…';
+    status.style.color = '#374151';
+    try {
+        const r = await fetch('/stock_trend/api/refresh_basics', { method: 'POST' })
+            .then(x => x.json());
+        const d = r.data || {};
+        if (r.success) {
+            let msg = `✓ 完成：${d.pages} 页 / ${d.fetched} 行 / 入库 ${d.upserted}`
+                    + (d.total ? ` / 应有 ${d.total}` : '');
+            if (d.name_changes > 0) {
+                msg += ` / 🔄 检测到 ${d.name_changes} 处改名`;
+                if (d.name_changes_sample && d.name_changes_sample.length) {
+                    const sample = d.name_changes_sample.slice(0, 3)
+                        .map(x => `${x.stock_code}:${x.old_name}→${x.new_name}`).join('，');
+                    msg += `（${sample}${d.name_changes > 3 ? '…' : ''}）`;
+                }
+            }
+            if (d.info_created > 0) msg += ` / 新建 ${d.info_created} 条 StockInfo`;
+            if (d.errors && d.errors.length) msg += ` / 出错 ${d.errors.length}`;
+            status.textContent = msg;
+            status.style.color = '#16a34a';
+        } else {
+            status.textContent = `✗ 失败：${r.message || ''}`;
+            status.style.color = '#dc2626';
+        }
+    } catch (e) {
+        status.textContent = `✗ 请求失败：${e}`;
+        status.style.color = '#dc2626';
+    } finally {
+        btn.disabled = false;
+        btn.textContent = orig;
+    }
+}
+
 // 交易日检查
 function checkTradingDay() {
     const badge = document.getElementById('tradingDayBadge');
@@ -1032,6 +1079,8 @@ let downloadLogs = [];
 let lastDownloadStatus = {status: '未开始', progress: 0};
 let previewPolling = null;
 let lastPreviewStock = '';  // 用于检测是否有新股票完成
+let boardTrendAutoTriggered = false;  // 本轮下载是否已自动触发过板块趋势打分
+let boardTrendInFlight = false;       // 防止重入
 
 // 分页状态
 let currentPendingPage = 1, totalPendingPages = 1, totalPendingCount = 0;
@@ -1480,11 +1529,106 @@ function updateStatus() {
                 loadSuccessStocks(1);
                 loadPendingStocks(1);
                 startBasicPolling();
+
+                // 仅在真正完成或数据已是最新时自动跑板块趋势打分；
+                // 「已停止 / 无数据下载 / 没有需要下载」不自动触发
+                const shouldAutoScore = (
+                    data.status === '已完成' ||
+                    (typeof data.status === 'string' && data.status.includes('数据已是最新'))
+                );
+                if (shouldAutoScore && !boardTrendAutoTriggered && !boardTrendInFlight) {
+                    boardTrendAutoTriggered = true;
+                    autoTriggerBoardTrend();
+                }
             }
         })
         .catch(error => {
             console.error('获取状态失败:', error);
         });
+}
+
+// 下载完成后：同步板块清单 -> 板块趋势打分（v1）
+async function autoTriggerBoardTrend() {
+    if (boardTrendInFlight) return;
+    boardTrendInFlight = true;
+    const today = new Date().toISOString().slice(0, 10);
+    const statusEl = document.getElementById('downloadStatusText');
+    const setStatus = (text, color) => {
+        if (statusEl) {
+            statusEl.textContent = text;
+            statusEl.style.color = color || '#3b82f6';
+        }
+    };
+    try {
+        addLog(`板块趋势打分：开始同步板块清单（${today}）...`, 'info');
+        setStatus('板块趋势：同步板块清单中...', '#3b82f6');
+        const syncRes = await fetch('/board_trend/api/sync_boards', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({record_date: today, source: 'all'}),
+        }).then(r => r.json()).catch(() => ({success: false, message: '请求失败'}));
+        if (!syncRes.success) {
+            addLog('板块清单同步失败：' + (syncRes.message || ''), 'error');
+            setStatus('板块趋势：同步失败', '#ef4444');
+            return;
+        }
+        const sd = syncRes.data || {};
+        addLog(`板块清单同步完成：源 ${sd.total_in_source} / 实际 ${sd.total_boards}（新建 ${sd.created} / 跳过 ${sd.skipped}）`, 'success');
+
+        addLog('板块趋势打分：开始 v1 公式计算（scope=manual_skip）...', 'info');
+        setStatus('板块趋势：计算打分中...', '#3b82f6');
+        const compRes = await fetch('/board_trend/api/compute', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({record_date: today, scope: 'manual_skip'}),
+        }).then(r => r.json()).catch(() => ({success: false, message: '请求失败'}));
+        if (!compRes.success) {
+            addLog('板块趋势计算失败：' + (compRes.message || ''), 'error');
+            setStatus('板块趋势：计算失败', '#ef4444');
+            return;
+        }
+        const cd = compRes.data || {};
+        addLog(`板块趋势打分完成：请求 ${cd.requested} / 成功 ${cd.ok} / 失败 ${cd.fail}（日期 ${cd.record_date}）`, 'success');
+        setStatus(`板块趋势已更新到 ${cd.record_date}`, '#10b981');
+
+        // 接着跑个股趋势打分（与板块同 record_date）
+        addLog(`个股趋势打分：开始同步股票池（${today}）...`, 'info');
+        setStatus('个股趋势：同步股票池中...', '#3b82f6');
+        const sSyncRes = await fetch('/stock_trend/api/sync_stocks', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({record_date: today}),
+        }).then(r => r.json()).catch(() => ({success: false, message: '请求失败'}));
+        if (!sSyncRes.success) {
+            addLog('个股池同步失败：' + (sSyncRes.message || ''), 'error');
+            setStatus('个股趋势：同步失败', '#ef4444');
+            return;
+        }
+        const ssd = sSyncRes.data || {};
+        addLog(`个股池同步完成：源 ${ssd.total_in_source ?? '-'} / 实际 ${ssd.total_stocks ?? ssd.total_boards ?? '-'}（新建 ${ssd.created ?? 0} / 跳过 ${ssd.skipped ?? 0}）`, 'success');
+
+        addLog('个股趋势打分：开始 v1 公式计算（scope=manual_skip）...', 'info');
+        setStatus('个股趋势：计算打分中...', '#3b82f6');
+        const sCompRes = await fetch('/stock_trend/api/compute', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({record_date: today, scope: 'manual_skip'}),
+        }).then(r => r.json()).catch(() => ({success: false, message: '请求失败'}));
+        if (!sCompRes.success) {
+            addLog('个股趋势计算失败：' + (sCompRes.message || ''), 'error');
+            setStatus('个股趋势：计算失败', '#ef4444');
+            return;
+        }
+        const scd = sCompRes.data || {};
+        addLog(`个股趋势打分完成：请求 ${scd.requested} / 成功 ${scd.ok} / 失败 ${scd.fail}（日期 ${scd.record_date}）`, 'success');
+        setStatus(`板块+个股趋势已更新到 ${scd.record_date}`, '#10b981');
+    } catch (e) {
+        console.error('autoTriggerBoardTrend 异常:', e);
+        addLog('趋势自动打分异常：' + (e && e.message || e), 'error');
+        setStatus('趋势打分：异常', '#ef4444');
+    } finally {
+        boardTrendInFlight = false;
+    }
 }
 
 // 加载今日数据状态
@@ -1744,6 +1888,8 @@ document.getElementById('startBtn').onclick = function() {
     successStocks = [];
     failedStocks = [];
     downloadLogs = [];
+    // 新一轮下载，允许再次自动触发板块趋势打分
+    boardTrendAutoTriggered = false;
     updateSuccessList();
     updateFailedList();
     updateLogs();

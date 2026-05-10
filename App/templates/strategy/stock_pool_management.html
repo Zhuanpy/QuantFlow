@@ -471,6 +471,8 @@
 .score-trend { font-size: 0.7rem; }
 .score-trend.up { color: #10b981; }
 .score-trend.down { color: #ef4444; }
+.score-link { text-decoration: none; font-size: 0.85rem; opacity: 0.6; transition: opacity .15s; }
+.score-link:hover { opacity: 1; }
 
 /* 优先级星星 */
 .priority-stars { color: #f59e0b; font-size: 0.7rem; letter-spacing: 1px; }
@@ -727,6 +729,7 @@ function renderTable(stocks) {
                 <span class="score-val" style="color:${scoreColor}">${s.score.toFixed(1)}</span>
                 <div class="score-bar"><div class="score-fill" style="width:${s.score}%;background:${scoreColor}"></div></div>
                 ${trendIcon}
+                <a href="/stock_trend/stock/${s.stock_code}" target="_blank" title="查看趋势打分历史与日 K" class="score-link">📊</a>
             </div></td>
             ${healthCell}
             <td><span class="priority-stars">${stars}</span></td>

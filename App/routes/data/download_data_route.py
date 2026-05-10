@@ -122,6 +122,25 @@ def get_latest_trading_date(ref_date=None):
         return d, is_today_trading
 
 
+def _mark_recent_attempts_failed(stock_code: str, n_days: int, error_msg: str):
+    """把当前 stock_code 最近 n 个交易日打上"尝试失败"印记。
+
+    意图：每次 STEP1/2/3 失败时调用，DailyTaskStatus 表记录该股票哪些交易日的下载失败过、
+    失败次数、最近失败原因。is_*_downloaded 等成功标志保持 False，等下次成功才翻 True。
+
+    n_days 通常等于 download_max_days（默认 5）——下载流水线意图覆盖的最近 n 个交易日。
+    """
+    try:
+        from App.models.data.DailyTaskStatus import DailyTaskStatus
+        all_dates = get_trading_dates() or []
+        today = date.today()
+        recent = sorted([d for d in all_dates if d <= today])[-n_days:]
+        for d in recent:
+            DailyTaskStatus.mark_attempt_failed(stock_code, d, error_msg)
+    except Exception as e:
+        logging.warning(f"_mark_recent_attempts_failed({stock_code}) 自身异常: {e}")
+
+
 def get_stock_code_by_id(stock_code_id):
     """
     根据股票代码ID获取股票代码
@@ -347,16 +366,27 @@ def download_file():
 
                     daily_df = pd.DataFrame()
 
-                    # 第一优先：pytdx（快速、稳定、支持板块、凌晨可用）
-                    try:
-                        from App.codes.downloads.DlPytdx import download_daily_pytdx
-                        daily_df, daily_end = download_daily_pytdx(stock_code, days=daily_days)
-                        if not daily_df.empty:
-                            logging.info(f"[STEP1] {stock_code} pytdx日K成功，{len(daily_df)} 条")
-                    except ImportError:
-                        logging.debug("[STEP1] pytdx未安装")
-                    except Exception as e:
-                        logging.warning(f"[STEP1] {stock_code} pytdx日K失败: {e}")
+                    # 板块必须走 East Money（fqt=0），不能用 pytdx：pytdx 的 get_index_bars
+                    # 返回"复权后"指数（约真实值的 56%），与东财官网不一致。
+                    if is_board:
+                        try:
+                            from App.codes.downloads.eastmoney.board_downloader import BoardDownloader
+                            daily_df = BoardDownloader.board_daily(stock_code, days=daily_days)
+                            if not daily_df.empty:
+                                logging.info(f"[STEP1] {stock_code} East Money 板块日K成功，{len(daily_df)} 条")
+                        except Exception as e:
+                            logging.warning(f"[STEP1] {stock_code} East Money 板块日K失败: {e}")
+                    else:
+                        # 个股：第一优先 pytdx（快速、稳定、凌晨可用）
+                        try:
+                            from App.codes.downloads.DlPytdx import download_daily_pytdx
+                            daily_df, daily_end = download_daily_pytdx(stock_code, days=daily_days)
+                            if not daily_df.empty:
+                                logging.info(f"[STEP1] {stock_code} pytdx日K成功，{len(daily_df)} 条")
+                        except ImportError:
+                            logging.debug("[STEP1] pytdx未安装")
+                        except Exception as e:
+                            logging.warning(f"[STEP1] {stock_code} pytdx日K失败: {e}")
 
                     # 第二优先：AKShare（仅股票，数据更全）
                     if daily_df.empty and not is_board:
@@ -381,9 +411,13 @@ def download_file():
                         logging.info(f"[STEP1] {stock_code} 日K数据保存成功，{len(daily_df)} 条")
                     else:
                         logging.warning(f"[STEP1] {stock_code} 日K数据为空（所有数据源均失败）")
+                        _mark_recent_attempts_failed(stock_code, download_max_days,
+                                                     '[STEP1] 日K 所有数据源均失败')
 
                 except Exception as e:
                     logging.error(f"[STEP1] {stock_code} 日K数据下载失败: {e}")
+                    _mark_recent_attempts_failed(stock_code, download_max_days,
+                                                 f'[STEP1] 异常: {e}')
 
                 # ===== STEP 2/3: 下载1分钟数据 =====
                 with download_lock:
@@ -441,6 +475,8 @@ def download_file():
                                     error_msg=f'板块数据不可用（API返回rc=100，可能是非交易时间或板块代码无效）\nURL: {debug_url}'
                                 )
                                 db.session.commit()
+                                _mark_recent_attempts_failed(stock_code, days,
+                                                             '[STEP2] 板块数据不可用（rc=100）')
                                 break
 
                             retry_count += 1
@@ -456,6 +492,8 @@ def download_file():
                                     error_msg=f'下载失败，已重试{max_retries}次（网络连接问题或数据源限制）\nURL: {debug_url}'
                                 )
                                 db.session.commit()
+                                _mark_recent_attempts_failed(stock_code, days,
+                                                             f'[STEP2] 下载空数据已重试 {max_retries} 次')
                                 break
                         else:
                             download_success = True
@@ -475,6 +513,8 @@ def download_file():
                                 error_msg=f'下载异常，已重试{max_retries}次: {str(e)}\nURL: {debug_url}'
                             )
                             db.session.commit()
+                            _mark_recent_attempts_failed(stock_code, days,
+                                                         f'[STEP2] 异常已重试 {max_retries} 次: {e}')
                             break
 
                 # 如果下载失败，更新进度后返回
@@ -495,6 +535,8 @@ def download_file():
                         error_msg=f'保存至CSV失败: {str(e)}'
                     )
                     db.session.commit()
+                    _mark_recent_attempts_failed(stock_code, days,
+                                                 f'[STEP2] 保存 CSV 失败: {e}')
                     with download_lock:
                         pipeline_completed_count += 1
                         download_progress = round(pipeline_completed_count * 100 / total, 1)
@@ -671,9 +713,13 @@ def download_file():
 
                     else:
                         logging.warning(f"[STEP3] {stock_code} 15分钟重采样结果为空")
+                        _mark_recent_attempts_failed(stock_code, download_max_days,
+                                                     '[STEP3] 15m 重采样结果为空')
 
                 except Exception as e:
                     logging.error(f"[STEP3] {stock_code} 处理异常: {e}")
+                    _mark_recent_attempts_failed(stock_code, download_max_days,
+                                                 f'[STEP3] 异常: {e}')
 
                 # 更新完成计数和进度
                 with download_lock:
@@ -710,6 +756,17 @@ def download_file():
                 except Exception as e:
                     record = futures[future]
                     logging.error(f"下载线程异常: {record.stock_code_id}, {e}")
+
+        # 顺手刷一次全市场基本面（PE/PB/总市值/流通股本等），盘后跑一次即可
+        with download_lock:
+            download_status = "刷新基本面..."
+        try:
+            from App.services.stock_quote_service import refresh_basic_quotes_bulk
+            br = refresh_basic_quotes_bulk()
+            logging.info(f"[basics] 刷新完成：{br['pages']} 页 / {br['fetched']} 行 / "
+                         f"upsert {br['upserted']} / errors {len(br['errors'])}")
+        except Exception as e:
+            logging.warning(f"[basics] 批量刷新基本面失败（不影响主下载）: {e}")
 
         # 下载任务完成，更新下载状态和进度
         with download_lock:
@@ -768,6 +825,160 @@ def _get_trading_day_message(is_today_trading, market_closed, data_up_to_date, l
     if is_today_trading and not market_closed:
         return f"今天是交易日，盘中尚未收盘（15:00后可下载完整数据）"
     return f"今天是交易日，已收盘，可以下载最新数据"
+
+
+def find_stocks_needing_backfill(look_back_days: int = 30, prefix: str = None) -> list:
+    """扫 DailyTaskStatus，找出最近 look_back_days 个交易日内有缺口的 stock_code。
+
+    缺口定义：is_1m_downloaded / is_15m_generated / is_daily_processed 任一为 False
+    （MACD 因为依赖 15m，间接覆盖；不单独判定）。
+
+    Args:
+        look_back_days: 回看的交易日数，默认 30
+        prefix: 可选，例如 'BK' 只查板块、'00' 只查深市
+
+    Returns:
+        list[str]: 需要补漏的 stock_code 列表（按代码字典序）
+    """
+    from App.models.data.DailyTaskStatus import DailyTaskStatus
+    from App.exts import db
+    from sqlalchemy import text
+
+    all_dates = get_trading_dates() or []
+    today = date.today()
+    target_dates = sorted([d for d in all_dates if d <= today])[-look_back_days:]
+    if not target_dates:
+        return []
+
+    eng = db.engines['quanttradingsystem']
+    sql = '''
+        SELECT DISTINCT stock_code
+        FROM data_daily_task_status
+        WHERE date >= :start_d AND date <= :end_d
+          AND (is_1m_downloaded = 0
+               OR is_15m_generated = 0
+               OR is_daily_processed = 0)
+    '''
+    params = {'start_d': target_dates[0], 'end_d': target_dates[-1]}
+    if prefix:
+        sql += ' AND stock_code LIKE :p'
+        params['p'] = f'{prefix}%'
+    sql += ' ORDER BY stock_code'
+
+    with eng.connect() as conn:
+        rows = conn.execute(text(sql), params).fetchall()
+    return [r[0] for r in rows]
+
+
+@download_data_bp.route('/start_backfill_download', methods=['POST'])
+def start_backfill_download():
+    """启动"按缺口驱动"的补漏下载。
+
+    与 /start_download 的区别：
+      - /start_download：基于 data_download_records.download_status 全量驱动
+      - /start_backfill_download：基于 DailyTaskStatus 找出哪些股票"最近 N 个交易日有缺口"，
+        把这些股票的 data_download_records 重置为 pending，再触发常规下载流水线
+
+    Body (JSON, 都可选):
+        days: 下载窗口天数，默认 5（与 /start_download 一致）
+        look_back_days: 缺口回溯窗口（交易日数），默认 30
+        prefix: stock_code 前缀过滤，例如 'BK' 只补板块
+    """
+    global download_thread, download_status, download_progress, download_max_days
+
+    try:
+        if download_thread is not None and download_thread.is_alive():
+            return jsonify({
+                "success": False,
+                "message": "下载正在进行中",
+                "status": download_status,
+                "progress": download_progress,
+            }), 400
+
+        body = request.get_json(silent=True) or {}
+        days = max(1, min(5, int(body.get('days', 5))))
+        look_back = max(5, min(120, int(body.get('look_back_days', 30))))
+        prefix = body.get('prefix') or None
+
+        with current_app.app_context():
+            stocks = find_stocks_needing_backfill(look_back, prefix)
+            if not stocks:
+                return jsonify({
+                    "success": True,
+                    "message": f"近 {look_back} 个交易日内无缺口（prefix={prefix or '*'}）",
+                    "stock_count": 0,
+                })
+
+            # 把这些股票的 download_records 重置为 pending
+            from sqlalchemy import text
+            eng = db.engines['quanttradingsystem']
+            with eng.begin() as conn:
+                result = conn.execute(text('''
+                    UPDATE data_download_records r
+                    JOIN data_stock_info i ON r.stock_code_id = i.id
+                    SET r.download_status = 'pending',
+                        r.download_progress = 0.0,
+                        r.error_message = NULL,
+                        r.updated_at = NOW()
+                    WHERE i.code IN :codes
+                      AND r.end_date != '2050-01-01'
+                      AND r.record_date != '2050-01-01'
+                '''), {'codes': tuple(stocks)})
+                reset_n = result.rowcount
+
+        download_max_days = days
+        with download_lock:
+            download_status = "初始化中（补漏模式）"
+            download_progress = 0
+
+        @copy_current_request_context
+        def run_download():
+            try:
+                download_file()
+            except Exception as e:
+                logging.error(f"补漏下载执行失败: {e}", exc_info=True)
+                with download_lock:
+                    globals()['download_status'] = f"错误: {e}"
+
+        download_thread = threading.Thread(target=run_download, daemon=True)
+        download_thread.start()
+
+        return jsonify({
+            "success": True,
+            "message": f"补漏下载已启动（{reset_n} 只股票/板块入队，回溯 {look_back} 个交易日）",
+            "stock_count": len(stocks),
+            "stocks_preview": stocks[:20],
+        })
+    except Exception as e:
+        logging.exception("start_backfill_download 失败")
+        return jsonify({"success": False, "message": str(e)}), 500
+
+
+@download_data_bp.route('/get_backfill_overview', methods=['GET'])
+def get_backfill_overview():
+    """查看"按缺口驱动"的当前需补漏列表（不真启动下载，只看）。
+
+    Query:
+        look_back_days: int, default 30
+        prefix: optional, e.g. 'BK'
+    """
+    try:
+        look_back = max(5, min(120, int(request.args.get('look_back_days', 30))))
+        prefix = (request.args.get('prefix') or '').strip() or None
+
+        with current_app.app_context():
+            stocks = find_stocks_needing_backfill(look_back, prefix)
+
+        return jsonify({
+            "success": True,
+            "look_back_days": look_back,
+            "prefix": prefix,
+            "stock_count": len(stocks),
+            "stocks": stocks,
+        })
+    except Exception as e:
+        logging.exception("get_backfill_overview 失败")
+        return jsonify({"success": False, "message": str(e)}), 500
 
 
 @download_data_bp.route('/start_download', methods=['GET', 'POST'])

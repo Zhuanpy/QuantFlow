@@ -48,10 +48,10 @@
     </div>
 
     <!-- 图表 -->
-    <div class="chart-title">日 K 线</div>
+    <div class="chart-title">日 K 线 <span class="chart-status" id="kChartStatus"></span></div>
     <div id="kChart" class="chart-box"></div>
 
-    <div class="chart-title">15 分钟 K 线（交易主周期）</div>
+    <div class="chart-title">15 分钟 K 线（交易主周期）<span class="chart-status" id="kChart15mStatus"></span></div>
     <div id="kChart15m" class="chart-box"></div>
 
     <!-- 历史评分时间线 -->
@@ -63,6 +63,24 @@
                     <th>价格</th><th>均线</th><th>MACD</th><th>量能</th><th>动量</th><th>波动率</th><th class="hl">综合分</th></tr>
             </thead>
             <tbody id="histBody"><tr><td colspan="12" class="empty">加载中...</td></tr></tbody>
+        </table>
+    </div>
+
+    <!-- 成分股 -->
+    <div class="history-wrap" style="margin-top:.75rem;">
+        <h3>成分股
+            <span id="stocksMeta" style="font-weight:400;font-size:.8rem;color:#6b7280;margin-left:.5rem;"></span>
+            <button id="btnRefreshMembers" class="btn-apply" style="float:right;font-size:.78rem;padding:.25rem .65rem;" onclick="refreshMembers()" title="从东方财富重新拉取本板块的成分股名单 + 市值">↻ 更新成分股</button>
+            <button id="btnRefreshCaps" class="btn-clear" style="float:right;font-size:.78rem;padding:.25rem .65rem;margin-right:.4rem;" onclick="refreshCaps()" title="只刷新市值（用现有名单逐只查 emweb 个股信息接口）">↻ 仅刷市值</button>
+        </h3>
+        <table class="hist-table">
+            <thead>
+                <tr><th>代码</th><th>名称</th>
+                    <th title="总市值（亿元），优先取实时值，失败时回退到快照">总市值</th>
+                    <th title="流通市值（亿元）">流通市值</th>
+                    <th>阶段</th><th>强度</th><th>信号</th><th class="hl">综合分</th><th>评分日期</th></tr>
+            </thead>
+            <tbody id="stocksBody"><tr><td colspan="9" class="empty">加载中...</td></tr></tbody>
         </table>
     </div>
 </div>
@@ -92,6 +110,8 @@
     .sc-breakdown span b { color:#1f2937; }
 
     .chart-title { font-size:.95rem; font-weight:600; color:#1f2937; margin:.25rem 0 .4rem; padding-left:.25rem; }
+    .chart-status { font-weight:400; font-size:.78rem; color:#6b7280; margin-left:.6rem; }
+    .chart-status.stale { color:#dc2626; font-weight:500; }
     .chart-box { background:#fff; border-radius:.5rem; box-shadow:var(--shadow-sm);
                  padding:.5rem; height:560px; margin-bottom:1rem; }
     .bd-actions { display:flex; gap:.75rem; flex-wrap:wrap; align-items:center; }
@@ -160,6 +180,26 @@ function clearDateRange() {
     loadChart15m();
 }
 
+function setChartStatus(elId, rows, label) {
+    const el = document.getElementById(elId);
+    if (!el || !rows || rows.length === 0) {
+        if (el) el.textContent = '';
+        return;
+    }
+    const first = rows[0].date;
+    const last  = rows[rows.length - 1].date;
+    // 数据陈旧检查（仅日 K，按"距今 > 30 天"）
+    let stale = false;
+    if (label === '日') {
+        const lastTs = new Date(last).getTime();
+        const ageDays = (Date.now() - lastTs) / 86400000;
+        stale = ageDays > 30;
+    }
+    el.textContent = `数据：${first} ~ ${last}（${rows.length} 根${label === '日' ? '日 K' : '根'}）`
+                   + (stale ? `· 数据已过期 (${Math.floor((Date.now() - new Date(last).getTime()) / 86400000)} 天前)` : '');
+    el.className = 'chart-status' + (stale ? ' stale' : '');
+}
+
 async function loadHistory() {
     const r = await fetch(`/board_trend/api/board/${BOARD_CODE}/history`).then(r=>r.json());
     if (!r.success) return;
@@ -223,6 +263,7 @@ async function loadChart() {
         return;
     }
     const rows = r.data.rows;
+    setChartStatus('kChartStatus', rows, '日');
     const dates = rows.map(x => x.date);
     const kdata = rows.map(x => [x.open, x.close, x.low, x.high]);   // ECharts 蜡烛图格式
     const ma20  = rows.map(x => x.ma20);
@@ -284,6 +325,7 @@ async function loadChart15m() {
         return;
     }
     const rows = r.data.rows;
+    setChartStatus('kChart15mStatus', rows, '15m');
     const dates = rows.map(x => x.date);
     const kdata = rows.map(x => [x.open, x.close, x.low, x.high]);
     const ma20  = rows.map(x => x.ma20);
@@ -341,8 +383,101 @@ window.addEventListener('resize', () => {
     if (chart15m) chart15m.resize();
 });
 
+async function refreshCaps() {
+    const btn = document.getElementById('btnRefreshCaps');
+    if (!confirm(`将逐只查询板块 ${BOARD_CODE} 当前名单内每只股票的市值（来源 emweb 个股信息接口），并写入 industry_eastmoney 快照。继续？`)) return;
+    btn.disabled = true;
+    const oldText = btn.textContent;
+    btn.textContent = '刷新中...';
+    document.getElementById('stocksMeta').textContent = '正在逐只拉取最新市值，请耐心等待（每只约 1 秒）...';
+    try {
+        const r = await fetch('/board_trend/api/refresh_caps', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({board_code: BOARD_CODE}),
+        }).then(r => r.json()).catch(() => ({success: false, message: '请求失败'}));
+        if (!r.success) {
+            alert('刷新市值失败：' + (r.message || ''));
+            return;
+        }
+        const d = r.data || {};
+        await loadStocks();
+        alert(`市值刷新完成：请求 ${d.requested} 只 / 更新 ${d.updated} 只 / 失败 ${d.failed} 只`);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = oldText;
+    }
+}
+
+async function refreshMembers() {
+    const btn = document.getElementById('btnRefreshMembers');
+    if (!confirm(`将从东方财富拉取板块 ${BOARD_CODE} 的最新成分股名单，覆盖 industry_eastmoney 中本板块的旧数据。继续？`)) return;
+    btn.disabled = true;
+    const oldText = btn.textContent;
+    btn.textContent = '更新中...';
+    document.getElementById('stocksMeta').textContent = '正在从东方财富拉取最新名单...';
+    try {
+        const r = await fetch('/board_trend/api/refresh_members', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({board_code: BOARD_CODE}),
+        }).then(r => r.json()).catch(() => ({success: false, message: '请求失败'}));
+        if (!r.success) {
+            alert('更新失败：' + (r.message || ''));
+            return;
+        }
+        const d = r.data || {};
+        if (d.failed_count > 0) {
+            const f = (d.failed_sample || [])[0];
+            alert(`更新失败：${f ? f.error : '未知原因'}`);
+            return;
+        }
+        await loadStocks();
+        alert(`更新完成：写入 ${d.total_members_written} 只成分股，快照 ${d.snapshot_date}`);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = oldText;
+    }
+}
+
+async function loadStocks() {
+    const r = await fetch(`/board_trend/api/board/${BOARD_CODE}/stocks`).then(r => r.json())
+        .catch(() => ({ success: false, message: '请求失败' }));
+    const tb = document.getElementById('stocksBody');
+    const meta = document.getElementById('stocksMeta');
+    if (!r.success) {
+        tb.innerHTML = `<tr><td colspan="7" class="empty">加载失败：${r.message || ''}</td></tr>`;
+        return;
+    }
+    const d = r.data || {};
+    const rows = d.rows || [];
+    const capSrc = d.cap_source === 'live' ? '实时' : (d.cap_source === 'snapshot' ? '快照' : '');
+    meta.textContent = rows.length
+        ? `共 ${d.count} 只 · 名单快照 ${d.member_date || '-'} · 市值${capSrc}（来源 industry_eastmoney）`
+        : '暂无成分股记录（industry_eastmoney 中未收录该板块）';
+    if (rows.length === 0) {
+        tb.innerHTML = `<tr><td colspan="9" class="empty">暂无</td></tr>`;
+        return;
+    }
+    const fmtCap = v => (v === null || v === undefined) ? '-' : (Number(v) / 1e8).toFixed(2);
+    tb.innerHTML = rows.map(it => `
+        <tr>
+            <td><a href="/stock_trend/stock/${it.stock_code}" style="color:#2563eb;text-decoration:none;">${it.stock_code}</a></td>
+            <td>${it.stock_name || '-'}</td>
+            <td>${fmtCap(it.total_cap)}</td>
+            <td>${fmtCap(it.circ_cap)}</td>
+            <td>${it.trend_stage ? `<span class="stage-tag ${it.trend_stage}">${it.trend_stage}</span>` : '-'}</td>
+            <td>${it.trend_strength || '-'}</td>
+            <td>${it.signal || '-'}</td>
+            <td class="hl">${fmtNum(it.total_score, 1)}</td>
+            <td>${it.score_date || '-'}</td>
+        </tr>
+    `).join('');
+}
+
 loadHistory();
 loadChart();
 loadChart15m();
+loadStocks();
 </script>
 {% endblock %}
