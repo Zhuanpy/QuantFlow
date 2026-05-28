@@ -1,27 +1,111 @@
 {% extends "base.html" %}
 {% block content %}
+{% set view_mode = view_mode | default('after_close') %}
 <div class="stock-detail" style="padding:1.25rem;max-width:1400px;margin:0 auto;">
+
+  <!-- ========== 视角导航 tabs（3 个独立页面）+ period 切换器 ========== -->
+  <div style="display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:.5rem;">
+    <div style="flex:1 1 auto;min-width:0;">
+      {% include 'data/_stock_view_tabs.html' %}
+    </div>
+    <div style="margin-bottom:.6rem;display:flex;align-items:center;gap:.4rem;">
+      <span style="color:#6b7280;font-size:.82rem;">周期</span>
+      <select id="periodSelect" style="padding:.3rem .55rem;border:1px solid #d1d5db;border-radius:6px;font-size:.85rem;background:#fff;cursor:pointer;">
+        <option value="15m">15 分钟</option>
+        <option value="30m">30 分钟</option>
+        <option value="60m">60 分钟</option>
+        <option value="daily">日线</option>
+      </select>
+    </div>
+  </div>
+
+  <!-- ========== 搜索 + (历史回放专属) 时光机日期 ========== -->
+  <div style="display:flex;gap:.75rem;align-items:stretch;flex-wrap:wrap;margin-bottom:1rem;">
+    <!-- 搜索框 -->
+    <div style="position:relative;flex:0 0 320px;min-width:240px;">
+      <input id="stockSearch" type="text" autocomplete="off"
+             placeholder="切换股票：代码或名称"
+             style="width:100%;height:100%;padding:.5rem .75rem;border:1px solid #d1d5db;border-radius:8px;font-size:.9rem;outline:none;box-sizing:border-box;"
+             onfocus="this.style.borderColor='#2563eb'" onblur="this.style.borderColor='#d1d5db'">
+      <div id="searchResults"
+           style="display:none;position:absolute;top:calc(100% + 4px);left:0;right:0;background:#fff;border:1px solid #e5e7eb;border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,.12);max-height:320px;overflow-y:auto;z-index:50;"></div>
+    </div>
+    {% if view_mode == 'replay' %}
+    <div id="asOfBar" style="flex:1 1 auto;min-width:340px;display:flex;align-items:center;gap:.55rem;flex-wrap:wrap;padding:.4rem .75rem;border:1px solid #c7d2fe;border-radius:8px;background:#eef2ff;">
+      <span style="font-size:1.05rem;">⏱</span>
+      <span style="font-weight:600;color:#3730a3;font-size:.9rem;">时光机日期</span>
+      <input id="asOfDate" type="date"
+             style="padding:.3rem .5rem;border:1px solid #c7d2fe;border-radius:6px;font-size:.88rem;outline:none;font-family:monospace;">
+      <button id="asOfApply" type="button"
+              style="padding:.3rem .75rem;border:1px solid #4f46e5;background:#4f46e5;color:#fff;border-radius:6px;font-size:.83rem;cursor:pointer;">应用</button>
+      <span id="asOfHint" style="color:#6366f1;font-size:.78rem;margin-left:auto;">选一个交易日，所有图表/统计按那天的视角重算</span>
+    </div>
+    {% endif %}
+  </div>
+  {% if view_mode == 'replay' %}
+  <div id="asOfBanner" style="display:none;margin-bottom:1rem;padding:.55rem .9rem;border:1px solid #c7d2fe;background:#eef2ff;border-radius:8px;color:#3730a3;font-size:.9rem;">
+    🕰 <b id="asOfBannerDate"></b> 视角 — 当前显示该日及之前的数据，所有趋势/波段/振幅按那天的视角重算
+  </div>
+  {% endif %}
+
+  {% if not stock_code %}
+  <!-- ===== 无 code 引导：/stock/ 不带参数时显示，让用户从顶部搜索框输入 ===== -->
+  <div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:3rem 1.5rem;text-align:center;color:#6b7280;">
+    <div style="font-size:2.5rem;margin-bottom:.5rem;">🔍</div>
+    <div style="font-size:1.05rem;color:#374151;margin-bottom:.4rem;">请在上方搜索框输入股票代码或名称</div>
+    <div style="font-size:.85rem;">示例：<code style="background:#f3f4f6;padding:.1rem .4rem;border-radius:4px;">002812</code>
+       或 <code style="background:#f3f4f6;padding:.1rem .4rem;border-radius:4px;">恩捷股份</code>
+       &nbsp;|&nbsp;
+       URL 形式 <code style="background:#f3f4f6;padding:.1rem .4rem;border-radius:4px;">/stock/?code=002812</code></div>
+  </div>
+  <script>
+    // 引导页：自动 focus 搜索框
+    document.getElementById('stockSearch').focus();
+    // replay 模式才有 asOfBar，after_close 没有
+    const _asOfBar = document.getElementById('asOfBar');
+    if (_asOfBar) _asOfBar.style.display = 'none';
+  </script>
+  {% else %}
+
+  <!-- ========== 股票池快捷操作（与"股票池"语义关联，单独一行右对齐） ========== -->
+  <div id="poolActions" style="display:flex;justify-content:flex-end;align-items:center;gap:.4rem;flex-wrap:wrap;margin-bottom:.6rem;">
+    <span style="color:#6b7280;font-size:.78rem;margin-right:.1rem;">股票池:</span>
+    <button class="btn btn-sm" id="btnAddCandidate" onclick="quickAddPool('candidate')"
+            style="padding:.25rem .65rem;background:#fef3c7;color:#92400e;border:1px solid #fcd34d;border-radius:6px;font-size:.8rem;cursor:pointer;">+ 候选池</button>
+    <button class="btn btn-sm" id="btnAddWatching" onclick="quickAddPool('watching')"
+            style="padding:.25rem .65rem;background:#dbeafe;color:#1d4ed8;border:1px solid #93c5fd;border-radius:6px;font-size:.8rem;cursor:pointer;">+ 观察池</button>
+    <a href="/stock_pool/" target="_blank"
+       style="padding:.25rem .65rem;background:#f3f4f6;color:#4b5563;border:1px solid #d1d5db;border-radius:6px;font-size:.8rem;text-decoration:none;">→ 池管理</a>
+  </div>
 
   <!-- ========== 顶部基本信息 ========== -->
   <div class="card" style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:1.25rem;margin-bottom:1rem;">
-    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem;">
-      <div>
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:.75rem;">
+      <div style="flex:1 1 auto;min-width:260px;">
         <h1 style="margin:0;font-size:1.5rem;">
           <span id="stockName">—</span>
           <span style="color:#6b7280;font-weight:400;">({{ stock_code }})</span>
           <span id="poolBadge" style="display:none;margin-left:.5rem;font-size:.78rem;font-weight:600;padding:.15rem .5rem;border-radius:9999px;"></span>
         </h1>
         <div id="overviewMeta" style="color:#6b7280;font-size:.875rem;margin-top:.25rem;">加载中…</div>
+        <div id="overviewBoards" style="display:flex;align-items:center;flex-wrap:wrap;gap:.35rem;margin-top:.4rem;">
+          <span style="color:#6b7280;font-size:.78rem;">所属板块:</span>
+          <span style="color:#9ca3af;font-size:.82rem;">—</span>
+        </div>
+        <!-- 交易详情行（未持仓时不显示）-->
+        <div id="overviewTradeDetail" style="display:none;align-items:center;flex-wrap:wrap;gap:.5rem;margin-top:.4rem;font-size:.85rem;color:#374151;"></div>
       </div>
-      <div style="display:flex;gap:1.5rem;align-items:flex-start;">
+      <div style="display:flex;gap:1.25rem;align-items:flex-start;flex-wrap:wrap;">
         <div><div style="color:#6b7280;font-size:.75rem;">最新收盘</div><div id="overviewPrice" style="font-size:1.5rem;font-weight:600;color:#2563eb;">—</div></div>
+        <div><div style="color:#6b7280;font-size:.75rem;">总市值</div><div id="overviewTotalCap" style="font-size:1.5rem;font-weight:600;color:#7c3aed;">—</div></div>
+        <div><div style="color:#6b7280;font-size:.75rem;">流通市值</div><div id="overviewCircCap" style="font-size:1.5rem;font-weight:600;color:#0891b2;">—</div></div>
         <div><div style="color:#6b7280;font-size:.75rem;">基金持仓数</div><div id="overviewFunds" style="font-size:1.5rem;font-weight:600;color:#16a34a;">—</div></div>
+        <!-- 交易状态 cell -->
+        <div>
+          <div style="color:#6b7280;font-size:.75rem;">交易状态</div>
+          <div id="overviewTradeBadge" style="font-size:1.05rem;font-weight:600;line-height:1.7;">—</div>
+        </div>
       </div>
-    </div>
-    <div id="poolActions" style="margin-top:.75rem;display:flex;gap:.4rem;flex-wrap:wrap;">
-      <button class="btn btn-sm" id="btnAddCandidate" onclick="quickAddPool('candidate')" style="background:#fef3c7;color:#92400e;">+ 加入候选池</button>
-      <button class="btn btn-sm" id="btnAddWatching" onclick="quickAddPool('watching')" style="background:#dbeafe;color:#1d4ed8;">+ 加入观察池</button>
-      <a href="/stock_pool/" target="_blank" class="btn btn-sm" style="background:#f3f4f6;color:#4b5563;text-decoration:none;">→ 股票池管理</a>
     </div>
   </div>
 
@@ -36,8 +120,119 @@
         <option value="5000">最近 5000 根</option>
       </select>
     </div>
-    <div id="kChart15m" style="width:100%;height:520px;">加载中…</div>
+    <div id="currentTrend" style="display:none;margin-bottom:.6rem;padding:.6rem .9rem;border-radius:8px;border:1px solid;display:flex;align-items:center;gap:.75rem;flex-wrap:wrap;"></div>
+    <div id="kChart15m" style="width:100%;height:880px;">加载中…</div>
     <div id="kSummary15m" style="font-size:.85rem;color:#6b7280;margin-top:.25rem;"></div>
+  </div>
+
+  <!-- ========== ①‴ 周期振幅正态分布（最重要，放第一位） ========== -->
+  <div class="card" style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:1.25rem;margin-bottom:1rem;">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem;margin-bottom:.75rem;">
+      <h2 style="margin:0;font-size:1.125rem;">①‴ 周期振幅分布（上涨 / 下跌 分开正态拟合 + 当前位置）</h2>
+      <div style="display:flex;align-items:center;gap:.75rem;flex-wrap:wrap;">
+        <span style="color:#6b7280;font-size:.78rem;">口径：(本周期末根 close − 上一反向周期极值) / 上一反向周期极值</span>
+        <a id="ampScreenerLink" href="/screener/" target="_blank"
+           title="跳到全市场正态统计表，按周期振幅筛选其它股票" style="font-size:.82rem;color:#2563eb;text-decoration:none;">
+          → 全市场对比（按振幅筛选）
+        </a>
+      </div>
+    </div>
+    <div style="display:flex;gap:1rem;flex-wrap:wrap;">
+      <div style="flex:1;min-width:320px;">
+        <div style="display:flex;flex-direction:column;align-items:stretch;gap:.2rem;margin-bottom:.4rem;">
+          <h3 style="margin:0;font-size:.95rem;color:#b91c1c;">↑ 上涨周期</h3>
+          <span id="ampDistInfoUp" style="color:#6b7280;font-size:.8rem;"></span>
+        </div>
+        <div id="ampDistChartUp" style="width:100%;height:320px;">加载中…</div>
+      </div>
+      <div style="flex:1;min-width:320px;">
+        <div style="display:flex;flex-direction:column;align-items:stretch;gap:.2rem;margin-bottom:.4rem;">
+          <h3 style="margin:0;font-size:.95rem;color:#15803d;">↓ 下跌周期</h3>
+          <span id="ampDistInfoDn" style="color:#6b7280;font-size:.8rem;"></span>
+        </div>
+        <div id="ampDistChartDn" style="width:100%;height:320px;">加载中…</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========== ①⁗ 周期长度正态分布 ========== -->
+  <div class="card" style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:1.25rem;margin-bottom:1rem;">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem;margin-bottom:.75rem;">
+      <h2 style="margin:0;font-size:1.125rem;">①⁗ 周期长度分布（上涨 / 下跌 分开正态拟合 + 当前位置）</h2>
+      <a id="lenScreenerLink" href="/screener/" target="_blank"
+         title="跳到全市场正态统计表，按周期长度筛选其它股票" style="font-size:.82rem;color:#2563eb;text-decoration:none;">
+        → 全市场对比（按长度筛选）
+      </a>
+    </div>
+    <div style="display:flex;gap:1rem;flex-wrap:wrap;">
+      <div style="flex:1;min-width:320px;">
+        <div style="display:flex;flex-direction:column;align-items:stretch;gap:.2rem;margin-bottom:.4rem;">
+          <h3 style="margin:0;font-size:.95rem;color:#b91c1c;">↑ 上涨周期</h3>
+          <span id="cycleDistInfoUp" style="color:#6b7280;font-size:.8rem;"></span>
+        </div>
+        <div id="cycleDistChartUp" style="width:100%;height:320px;">加载中…</div>
+      </div>
+      <div style="flex:1;min-width:320px;">
+        <div style="display:flex;flex-direction:column;align-items:stretch;gap:.2rem;margin-bottom:.4rem;">
+          <h3 style="margin:0;font-size:.95rem;color:#15803d;">↓ 下跌周期</h3>
+          <span id="cycleDistInfoDn" style="color:#6b7280;font-size:.8rem;"></span>
+        </div>
+        <div id="cycleDistChartDn" style="width:100%;height:320px;">加载中…</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========== ①⁙ Cycle1mVolMax5 正态分布 ========== -->
+  <div class="card" style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:1.25rem;margin-bottom:1rem;">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem;margin-bottom:.75rem;">
+      <h2 style="margin:0;font-size:1.125rem;">①⁙ Cycle1mVolMax5 分布（上涨 / 下跌 分开正态拟合 + 当前位置）</h2>
+      <a id="v5ScreenerLink" href="/screener/" target="_blank"
+         title="跳到全市场正态统计表，按 1m 量能峰值筛选其它股票" style="font-size:.82rem;color:#2563eb;text-decoration:none;">
+        → 全市场对比（按量能筛选）
+      </a>
+    </div>
+    <div style="display:flex;gap:1rem;flex-wrap:wrap;">
+      <div style="flex:1;min-width:320px;">
+        <div style="display:flex;flex-direction:column;align-items:stretch;gap:.2rem;margin-bottom:.4rem;">
+          <h3 style="margin:0;font-size:.95rem;color:#b91c1c;">↑ 上涨周期</h3>
+          <span id="v5DistInfoUp" style="color:#6b7280;font-size:.8rem;"></span>
+        </div>
+        <div id="v5DistChartUp" style="width:100%;height:320px;">加载中…</div>
+      </div>
+      <div style="flex:1;min-width:320px;">
+        <div style="display:flex;flex-direction:column;align-items:stretch;gap:.2rem;margin-bottom:.4rem;">
+          <h3 style="margin:0;font-size:.95rem;color:#15803d;">↓ 下跌周期</h3>
+          <span id="v5DistInfoDn" style="color:#6b7280;font-size:.8rem;"></span>
+        </div>
+        <div id="v5DistChartDn" style="width:100%;height:320px;">加载中…</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========== ①″ 周期(Cycle)长度量化（移到分布图之后） ========== -->
+  <div class="card" style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:1.25rem;margin-bottom:1rem;">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem;margin-bottom:.75rem;">
+      <h2 style="margin:0;font-size:1.125rem;">①″ 每个周期的 CycleLengthMax（信号周期K线根数）</h2>
+      <span id="cycleStats" style="color:#6b7280;font-size:.85rem;"></span>
+    </div>
+    <div style="max-height:360px;overflow-y:auto;border:1px solid #f3f4f6;border-radius:6px;margin-top:.75rem;">
+      <table style="width:100%;border-collapse:collapse;font-size:.85rem;">
+        <thead style="background:#f9fafb;position:sticky;top:0;">
+          <tr>
+            <th style="padding:.5rem;text-align:left;">#</th>
+            <th style="padding:.5rem;text-align:left;">趋势名</th>
+            <th style="padding:.5rem;text-align:center;">方向</th>
+            <th style="padding:.5rem;text-align:left;">周期起点(信号)</th>
+            <th style="padding:.5rem;text-align:left;">末根</th>
+            <th style="padding:.5rem;text-align:right;">CycleLengthMax</th>
+            <th style="padding:.5rem;text-align:right;">实际根数</th>
+            <th style="padding:.5rem;text-align:right;">周期振幅</th>
+            <th style="padding:.5rem;text-align:center;">状态</th>
+          </tr>
+        </thead>
+        <tbody id="cycleBody"><tr><td colspan="9" style="text-align:center;color:#9ca3af;padding:1rem;">…</td></tr></tbody>
+      </table>
+    </div>
   </div>
 
   <!-- ========== ② 1m 数据 ========== -->
@@ -119,16 +314,169 @@
     </div>
     <div id="fundChart" style="width:100%;height:380px;">加载中…</div>
   </div>
+
+  <!-- ========== ①· 15m 数据字段一览（页面底部） ========== -->
+  <div class="card" style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:1.25rem;margin-bottom:1rem;">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem;margin-bottom:.75rem;">
+      <h2 style="margin:0;font-size:1.125rem;">①· 15m 数据字段一览</h2>
+      <span id="schemaMeta" style="color:#6b7280;font-size:.85rem;"></span>
+    </div>
+    <div style="max-height:360px;overflow-y:auto;border:1px solid #f3f4f6;border-radius:6px;">
+      <table style="width:100%;border-collapse:collapse;font-size:.85rem;">
+        <thead style="background:#f9fafb;position:sticky;top:0;">
+          <tr>
+            <th style="padding:.5rem;text-align:left;">#</th>
+            <th style="padding:.5rem;text-align:left;">字段名</th>
+            <th style="padding:.5rem;text-align:left;">类型</th>
+            <th style="padding:.5rem;text-align:right;">非空</th>
+            <th style="padding:.5rem;text-align:right;">空值</th>
+            <th style="padding:.5rem;text-align:left;">最新值示例</th>
+          </tr>
+        </thead>
+        <tbody id="schemaBody"><tr><td colspan="6" style="text-align:center;color:#9ca3af;padding:1rem;">…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ========== ①’ 15m 数据完整性列表（页面最后） ========== -->
+  <div class="card" style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:1.25rem;margin-bottom:1rem;">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem;margin-bottom:.75rem;">
+      <h2 style="margin:0;font-size:1.125rem;">①’ 15m 数据完整性（每个交易日应有 16 根）</h2>
+      <label style="font-size:.85rem;color:#374151;display:flex;align-items:center;gap:.35rem;cursor:pointer;">
+        <input type="checkbox" id="dsOnlyIssues"> 只看缺失/不完整
+      </label>
+    </div>
+    <div id="dsSummary" style="display:flex;gap:.6rem;flex-wrap:wrap;margin-bottom:.6rem;font-size:.85rem;">加载中…</div>
+    <div style="max-height:420px;overflow-y:auto;border:1px solid #f3f4f6;border-radius:6px;">
+      <table style="width:100%;border-collapse:collapse;font-size:.85rem;">
+        <thead style="background:#f9fafb;position:sticky;top:0;">
+          <tr>
+            <th style="padding:.5rem;text-align:left;">交易日</th>
+            <th style="padding:.5rem;text-align:right;">条数</th>
+            <th style="padding:.5rem;text-align:center;">状态</th>
+            <th style="padding:.5rem;text-align:center;">首根</th>
+            <th style="padding:.5rem;text-align:center;">末根</th>
+            <th style="padding:.5rem;text-align:left;">缺失时间点</th>
+          </tr>
+        </thead>
+        <tbody id="dsBody"><tr><td colspan="6" style="text-align:center;color:#9ca3af;padding:1rem;">…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
 </div>
 
-<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<script src="{{ url_for('static', filename='js/plotly.min.js') }}"></script>
 <script>
 const CODE = '{{ stock_code }}';
 const API = `/stock/api/${CODE}`;
+// 链接生成器：跳到另一只股票详情 —— 用新参数式 URL
+function stockUrl(code) { return '/stock/?code=' + encodeURIComponent(code); }
+
+// 视角由服务端 view_mode 决定（'after_close' / 'replay'），盘中走单独的 stock_live.html
+const VIEW_MODE = '{{ view_mode | default("after_close") }}';
+let ASOF = null;
+let PERIOD = '{{ period | default("15m") }}';   // 15m / 30m / 60m / daily
+
+if (VIEW_MODE === 'replay') {
+  const u = new URLSearchParams(window.location.search);
+  ASOF = u.get('as_of') || sessionStorage.getItem('stockReplayAsOf') || null;
+}
+
+// 把当前视角参数拼到 API URL 上
+function withAsOf(url) {
+  if (VIEW_MODE === 'replay' && ASOF) {
+    url += (url.includes('?') ? '&' : '?') + 'as_of=' + encodeURIComponent(ASOF);
+  }
+  if (PERIOD && PERIOD !== '15m') {
+    url += (url.includes('?') ? '&' : '?') + 'period=' + encodeURIComponent(PERIOD);
+  }
+  return url;
+}
 
 async function fetchJson(url) {
   try { const r = await fetch(url); return await r.json(); }
   catch (e) { return { success: false, message: e.message }; }
+}
+
+// ---------- 股票搜索 / 切换 ----------
+(function initStockSearch() {
+  const input = document.getElementById('stockSearch');
+  const box = document.getElementById('searchResults');
+  let timer = null, items = [], active = -1;
+
+  function hide() { box.style.display = 'none'; active = -1; }
+
+  function go(code) { if (code) window.location.href = stockUrl(code); }
+
+  // 用户没在下拉里明确选择就回车时：纯数字当代码直接跳；
+  // 否则当成名称/关键字，调搜索接口解析成代码再跳（解决"输名称跳不过去"）。
+  async function goByQuery(q) {
+    if (!q) return;
+    if (/^\d{4,6}$/.test(q)) { go(q); return; }
+    if (items.length) { go(items[0].code); return; }
+    const j = await fetchJson(`/stock_trend/api/search?q=${encodeURIComponent(q)}&limit=1`);
+    const list = (j && j.success) ? (j.data || []) : [];
+    if (list.length) { go(list[0].code); }
+    else { items = []; render(); }   // 显示"无匹配股票"
+  }
+
+  function render() {
+    if (!items.length) {
+      box.innerHTML = '<div style="padding:.6rem .85rem;color:#9ca3af;font-size:.875rem;">无匹配股票</div>';
+      box.style.display = 'block';
+      return;
+    }
+    box.innerHTML = items.map((s, i) => `
+      <div data-code="${s.code}" data-i="${i}"
+           style="padding:.55rem .85rem;cursor:pointer;font-size:.9rem;display:flex;justify-content:space-between;gap:1rem;${i === active ? 'background:#eff6ff;' : ''}border-bottom:1px solid #f3f4f6;">
+        <span style="font-weight:600;color:#111827;">${s.name || '—'}</span>
+        <span style="color:#6b7280;font-family:monospace;">${s.code}</span>
+      </div>`).join('');
+    box.style.display = 'block';
+    box.querySelectorAll('[data-code]').forEach(el => {
+      el.onmousedown = (e) => { e.preventDefault(); go(el.dataset.code); };
+      el.onmouseover = () => { active = +el.dataset.i; render(); };
+    });
+  }
+
+  async function search(q) {
+    const j = await fetchJson(`/stock_trend/api/search?q=${encodeURIComponent(q)}&limit=15`);
+    items = (j && j.success) ? (j.data || []) : [];
+    active = -1;
+    render();
+  }
+
+  input.addEventListener('input', () => {
+    const q = input.value.trim();
+    clearTimeout(timer);
+    if (!q) { hide(); return; }
+    timer = setTimeout(() => search(q), 250);
+  });
+
+  input.addEventListener('keydown', (e) => {
+    if (box.style.display === 'none' || !items.length) {
+      if (e.key === 'Enter' && input.value.trim()) { e.preventDefault(); goByQuery(input.value.trim()); }
+      return;
+    }
+    if (e.key === 'ArrowDown') { e.preventDefault(); active = Math.min(active + 1, items.length - 1); render(); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); active = Math.max(active - 1, 0); render(); }
+    else if (e.key === 'Enter') { e.preventDefault(); active >= 0 ? go(items[active].code) : goByQuery(input.value.trim()); }
+    else if (e.key === 'Escape') { hide(); }
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('#stockSearch') && !e.target.closest('#searchResults')) hide();
+  });
+})();
+
+// 大数字按亿/万格式化（A 股市值一般在亿级）
+function fmtCap(v) {
+  if (v == null) return '—';
+  const abs = Math.abs(v);
+  if (abs >= 1e8) return (v / 1e8).toFixed(2) + ' 亿';
+  if (abs >= 1e4) return (v / 1e4).toFixed(2) + ' 万';
+  return v.toFixed(0);
 }
 
 // ---------- 顶部 ----------
@@ -143,7 +491,148 @@ async function loadOverview() {
     最新数据日期: ${d.latest_date || '—'}`;
   if (d.latest_close != null) document.getElementById('overviewPrice').innerText = d.latest_close.toFixed(2);
   if (d.fund_holdings_count != null) document.getElementById('overviewFunds').innerText = d.fund_holdings_count;
+
+  // ---- 所属板块 chips（点击跳板块趋势页）----
+  const boardsEl = document.getElementById('overviewBoards');
+  const boards = d.boards || [];
+  if (boards.length) {
+    boardsEl.innerHTML = '<span style="color:#6b7280;font-size:.78rem;">所属板块:</span>' +
+      boards.map(b => {
+        const t = b.as_of ? `归属日期 ${b.as_of} · 点击查看板块趋势` : '点击查看板块趋势';
+        return `<a href="/board_trend/board/${b.board_code}" target="_blank"
+                  title="${t}"
+                  style="background:#eef2ff;color:#3730a3;padding:.18rem .55rem;border-radius:9999px;
+                         font-size:.8rem;text-decoration:none;border:1px solid #c7d2fe;
+                         transition:background .15s;"
+                  onmouseover="this.style.background='#c7d2fe'"
+                  onmouseout="this.style.background='#eef2ff'">
+                  ${b.board_name}
+                  <span style="color:#6366f1;font-family:monospace;font-size:.72rem;">${b.board_code}</span>
+                </a>`;
+      }).join('');
+  } else {
+    boardsEl.innerHTML = '<span style="color:#6b7280;font-size:.78rem;">所属板块:</span>' +
+      '<span style="color:#9ca3af;font-size:.82rem;">暂无板块归属数据</span>';
+  }
+
+  // ---- 总市值 / 流通市值 ----
+  const totalEl = document.getElementById('overviewTotalCap');
+  const circEl = document.getElementById('overviewCircCap');
+  totalEl.innerText = fmtCap(d.total_cap);
+  circEl.innerText = fmtCap(d.circ_cap);
+  // 市值数据陈旧 → 标题加 tooltip 提示来源日期
+  if (d.cap_source && d.cap_source.date) {
+    const tip = `数据日期 ${d.cap_source.date}（来源板块 ${d.cap_source.board_name || '—'}）`;
+    totalEl.title = tip; circEl.title = tip;
+  } else if (d.total_cap == null) {
+    totalEl.title = '该股票尚未在 industry_eastmoney 表里同步过市值';
+    circEl.title = totalEl.title;
+  }
+
+  // ---- 交易状态 badge + 持仓详情行 ----
+  renderTradeInfo(d.trade_info);
+  if (typeof window.__updateLiveBannerHold === 'function') {
+    window.__updateLiveBannerHold(d.trade_info);
+  }
+
   await refreshPoolStatus();
+}
+
+// 把 trade_info 渲染成右上"交易状态"格 + 标题下方一行持仓详情
+function renderTradeInfo(t) {
+  const badge = document.getElementById('overviewTradeBadge');
+  const detail = document.getElementById('overviewTradeDetail');
+  if (!t) {
+    badge.innerHTML = '<span style="color:#9ca3af;">—</span>';
+    detail.style.display = 'none';
+    return;
+  }
+
+  // 状态颜色调色板
+  const palette = {
+    green:  { bg:'#dcfce7', fg:'#15803d', bd:'#bbf7d0' },
+    blue:   { bg:'#dbeafe', fg:'#1d4ed8', bd:'#bfdbfe' },
+    orange: { bg:'#fed7aa', fg:'#9a3412', bd:'#fdba74' },
+    dim:    { bg:'#f3f4f6', fg:'#6b7280', bd:'#e5e7eb' },
+  };
+  const c = palette[t.status_color] || palette.dim;
+
+  // 模式 chip（模拟/实盘）
+  let modeChip = '';
+  if (t.trade_mode === 'real') {
+    modeChip = '<span style="background:#fef2f2;color:#b91c1c;border:1px solid #fecaca;padding:.05rem .4rem;border-radius:9999px;font-size:.72rem;font-weight:600;margin-left:.35rem;">实盘</span>';
+  } else if (t.trade_mode === 'simulate') {
+    modeChip = '<span style="background:#eef2ff;color:#4338ca;border:1px solid #c7d2fe;padding:.05rem .4rem;border-radius:9999px;font-size:.72rem;font-weight:600;margin-left:.35rem;">模拟</span>';
+  }
+
+  badge.innerHTML = `
+    <span style="background:${c.bg};color:${c.fg};border:1px solid ${c.bd};
+                 padding:.15rem .55rem;border-radius:6px;font-size:.9rem;">
+      ${t.status_label || '—'}
+    </span>${modeChip}`;
+
+  // 标题下方的"[实盘/模拟] 持仓 N 股 @ 均价 X，浮盈 +Y%" 详情行
+  if (t.holding && t.quantity > 0) {
+    const pnlRate = t.unrealized_return_rate;
+    let pnlSpan = '';
+    if (pnlRate != null) {
+      const pct = (pnlRate * 100).toFixed(2);
+      const isUp = pnlRate >= 0;
+      const col = isUp ? '#b91c1c' : '#15803d';   // A 股：红涨绿跌
+      const sign = isUp ? '+' : '';
+      pnlSpan = `<span style="color:${col};font-weight:600;font-family:monospace;">${sign}${pct}%</span>`
+              + (t.unrealized_pnl != null
+                  ? `<span style="color:#6b7280;font-size:.8rem;">（${sign}${t.unrealized_pnl.toFixed(2)} 元）</span>`
+                  : '');
+    }
+    // active_plan 显示逻辑（按 plan.status 区分表述，避免冗余/误导）：
+    //  - active（已在仓）：entry 与 avg_cost 相同就不展示（重复信息）；
+    //                      不同才显示"计划价 X（实际 Y）"，提示成交与预期的偏差
+    //  - planning / pending（还没进场）：用"计划入场 X"
+    //  - 止损/止盈不为空时始终展示
+    //  - 整段都没东西可说就直接不渲染（不要堆"计划：" 占位）
+    let plan = '';
+    if (t.active_plan) {
+      const ap = t.active_plan;
+      const isActive = ap.status === 'active';
+      const parts = [];
+      if (ap.entry_price != null) {
+        if (!isActive) {
+          parts.push(`计划入场 <b>${ap.entry_price}</b>`);
+        } else if (t.avg_cost == null) {
+          parts.push(`入场 <b>${ap.entry_price}</b>`);
+        } else if (Math.abs(ap.entry_price - t.avg_cost) > 0.01) {
+          parts.push(`计划价 <b>${ap.entry_price}</b>（实际 ${t.avg_cost.toFixed(2)}）`);
+        }
+        // active 且 entry ≈ avg_cost：跳过（与"均价"重复）
+      }
+      if (ap.stop_loss_price != null) parts.push(`止损 <span style="color:#16a34a;">${ap.stop_loss_price}</span>`);
+      if (ap.take_profit_price != null) parts.push(`止盈 <span style="color:#dc2626;">${ap.take_profit_price}</span>`);
+      if (parts.length) {
+        const label = isActive ? '止盈止损' : '计划';
+        plan = `<span style="color:#9ca3af;">|</span> <span style="color:#374151;">${label}：${parts.join(' / ')}</span>`;
+      }
+    }
+    // 模式 chip（持仓 mode 来自最新未平仓批次 —— 真实交易模式）
+    let modeChipInline = '';
+    if (t.trade_mode === 'real') {
+      modeChipInline = '<span style="background:#fef2f2;color:#b91c1c;border:1px solid #fecaca;padding:.1rem .5rem;border-radius:9999px;font-size:.75rem;font-weight:700;">● 实盘</span>';
+    } else if (t.trade_mode === 'simulate') {
+      modeChipInline = '<span style="background:#eef2ff;color:#4338ca;border:1px solid #c7d2fe;padding:.1rem .5rem;border-radius:9999px;font-size:.75rem;font-weight:700;">● 模拟</span>';
+    }
+    detail.style.display = 'flex';
+    detail.innerHTML = `
+      ${modeChipInline}
+      <span style="color:#6b7280;font-size:.78rem;">持仓:</span>
+      <span><b style="font-family:monospace;">${t.quantity}</b> 股</span>
+      <span style="color:#9ca3af;">|</span>
+      <span title="按 FIFO 从未平仓买入批次算的真实成本">均价 <b style="font-family:monospace;">${t.avg_cost != null ? t.avg_cost.toFixed(2) : '—'}</b></span>
+      ${pnlSpan ? '<span style="color:#9ca3af;">|</span>' : ''}
+      ${pnlSpan}
+      ${plan}`;
+  } else {
+    detail.style.display = 'none';
+  }
 }
 
 // ---------- 股票池状态 ----------
@@ -198,28 +687,572 @@ async function quickAddPool(poolType) {
 // ---------- ① 15m ----------
 async function load15m() {
   const limit = document.getElementById('kRange').value;
-  const j = await fetchJson(`${API}/15m?limit=${limit}`);
+  const j = await fetchJson(withAsOf(`${API}/15m?limit=${limit}`));
   if (!j.success) { document.getElementById('kChart15m').innerText = j.message || '加载失败'; return; }
+  if (typeof Plotly === 'undefined') {
+    document.getElementById('kChart15m').innerText = 'Plotly 未加载（检查 /static/js/plotly.min.js）';
+    return;
+  }
   const data = j.data;
-  document.getElementById('kSummary15m').innerText = `共 ${j.count} 根，${j.first_date} → ${j.last_date}`;
+  const segs = j.segments || [];
+  const up = segs.filter(s => s.direction > 0).length;
+  const dn = segs.filter(s => s.direction < 0).length;
+  document.getElementById('kSummary15m').innerHTML =
+    `共 ${j.count} 根，${j.first_date} → ${j.last_date}` +
+    (segs.length
+      ? `&nbsp;|&nbsp;波段 <span style="color:#dc2626;font-weight:600;">■ 上涨 ${up}</span> / <span style="color:#16a34a;font-weight:600;">■ 下跌 ${dn}</span>（底色标注）`
+      : '&nbsp;|&nbsp;<span style="color:#9ca3af;">无波段信号数据</span>');
+
+  // ---- 当前趋势横幅（交易用：名字变 = 趋势变 = 该止盈/止损）----
+  const ct = j.current_trend;
+  const ctEl = document.getElementById('currentTrend');
+
+  // 3 个分布卡的"进入正态统计表"链接：把当前方向拼到 URL，便于在 screener 直接同向对比
+  // 已知方向时跳 /screener/?direction=up|down；未知就跳 /screener/ 全部
+  const dirParam = ct ? (ct.direction > 0 ? 'up' : ct.direction < 0 ? 'down' : '') : '';
+  const screenerBase = '/screener/' + (dirParam ? '?direction=' + dirParam : '');
+  ['lenScreenerLink', 'ampScreenerLink', 'v5ScreenerLink'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.href = screenerBase;
+  });
+
+  if (ct) {
+    const up_ = ct.direction > 0;
+    const c = up_ ? {bg:'#fef2f2', bd:'#fecaca', fg:'#b91c1c', word:'上涨趋势'}
+                  : {bg:'#f0fdf4', bd:'#bbf7d0', fg:'#15803d', word:'下跌趋势'};
+    ctEl.style.display = 'flex';
+    ctEl.style.background = c.bg;
+    ctEl.style.borderColor = c.bd;
+    ctEl.innerHTML = `
+      <span style="font-size:.78rem;color:#6b7280;">当前趋势</span>
+      <span style="font-size:1.1rem;font-weight:700;color:${c.fg};font-family:monospace;">${ct.signal_name}</span>
+      <span style="font-weight:600;color:${c.fg};">${c.word}</span>
+      <span style="color:#6b7280;font-size:.85rem;">已持续 <b>${ct.bars_in_trend}</b> 根，自 ${ct.started_at}</span>
+      ${ct.change_pct != null ? (() => {
+        const p = ct.change_pct;
+        const w = p < 0 ? '跌幅' : p > 0 ? '涨幅' : '持平';
+        const col = p < 0 ? '#15803d' : p > 0 ? '#b91c1c' : '#6b7280';
+        const sign = p > 0 ? '+' : '';
+        return `<span style="font-size:.85rem;color:#6b7280;">${w} <b style="color:${col};font-family:monospace;">${sign}${p}%</b>（${ct.start_price} → ${ct.last_price}）</span>`;
+      })() : ''}
+      ${ct.amplitude_pct != null
+        ? `<span style="font-size:.85rem;color:#6b7280;">振幅 <b style="color:#374151;font-family:monospace;">${ct.amplitude_pct}%</b>（${ct.low_price} ~ ${ct.high_price}）</span>`
+        : ''}
+      ${ct.is_active
+        ? '<span style="margin-left:auto;background:#fff;border:1px solid '+c.bd+';color:'+c.fg+';padding:.15rem .55rem;border-radius:9999px;font-size:.78rem;font-weight:600;">● 进行中</span>'
+        : '<span style="margin-left:auto;color:#9ca3af;font-size:.78rem;">已结束</span>'}`;
+  } else {
+    ctEl.style.display = 'none';
+  }
+
   const x = data.map(r => r.date);
+  const sname = data.map(r => r.signal_name || '—');
+
+  // 用 SignalStartIndex 区段在价格区(yaxis 域 0.48~1.0)铺涨跌底色
+  const shapes = segs.map(s => ({
+    type: 'rect', xref: 'x', yref: 'paper',
+    x0: s.start_idx - 0.5, x1: s.end_idx + 0.5,
+    y0: 0.48, y1: 1.0,
+    fillcolor: s.direction > 0 ? 'rgba(220,38,38,0.10)' : 'rgba(22,163,74,0.10)',
+    line: { width: 0 }, layer: 'below',
+  }));
+
+  // 价格轴按有效价区间自适应（剔除 0/空的缺失根，否则会把下限拉到 0 压扁蜡线）
+  const lows = data.map(r => r.low).filter(v => v > 0);
+  const highs = data.map(r => r.high).filter(v => v > 0);
+  let yRange;
+  if (lows.length && highs.length) {
+    const lo = Math.min(...lows), hi = Math.max(...highs);
+    const pad = (hi - lo) * 0.05 || hi * 0.01;
+    yRange = [lo - pad, hi + pad];
+  }
+
+  // ---- 历史买卖标注：吸附到对应 15m K 线，画在蜡线外侧 + 竖虚线，颜色不与红涨绿跌冲突 ----
+  const tradeTraces = [];
+  const tradeShapes = [];
+  const BUY_C = '#2563eb';   // 蓝 = 买入（避开红涨/绿跌）
+  const SELL_C = '#ea580c';  // 橙 = 卖出
+  try {
+    const tj = await fetchJson(`${API}/trades`);
+    if (tj && tj.success && tj.data && tj.data.length && data.length) {
+      const barTs = data.map(r => new Date(r.date.replace(' ', 'T')).getTime());
+      const firstT = barTs[0], lastT = barTs[barTs.length - 1];
+      const span = (yRange ? yRange[1] - yRange[0] : 1);
+      const off = span * 0.045;                 // 标记离开蜡线的偏移
+      let yLoMark = Infinity, yHiMark = -Infinity;
+      const mk = () => ({ x: [], y: [], txt: [] });
+      const buy = mk(), sell = mk();
+      tj.data.forEach(t => {
+        if (t.price == null) return;
+        const tt = new Date(t.time.replace(' ', 'T')).getTime();
+        if (isNaN(tt) || tt < firstT - 9e5 || tt > lastT) return; // 不在当前窗口
+        let bi = barTs.findIndex(b => b >= tt);
+        if (bi < 0) bi = barTs.length - 1;
+        const bar = data[bi];
+        const isBuy = t.side === 'buy';
+        // 买在该 K 线最低价下方，卖在最高价上方，彻底离开蜡体
+        const my = isBuy ? (bar.low > 0 ? bar.low : t.price) - off
+                         : (bar.high > 0 ? bar.high : t.price) + off;
+        yLoMark = Math.min(yLoMark, my); yHiMark = Math.max(yHiMark, my);
+        const g = isBuy ? buy : sell;
+        g.x.push(x[bi]);
+        g.y.push(my);
+        g.txt.push(`${isBuy ? '买入' : '卖出'} @ ${t.price}<br>${t.quantity ?? '—'} 股<br>${t.time}`);
+        tradeShapes.push({
+          type: 'line', xref: 'x', yref: 'paper', x0: bi, x1: bi,
+          y0: 0.48, y1: 1.0,
+          line: { color: isBuy ? BUY_C : SELL_C, width: 1, dash: 'dot' },
+          opacity: 0.5, layer: 'below',
+        });
+      });
+      const mkTrace = (g, name, color, sym) => ({
+        type: 'scatter', mode: 'markers', x: g.x, y: g.y, name,
+        xaxis: 'x', yaxis: 'y', text: g.txt, hoverinfo: 'text',
+        marker: { color, size: 16, symbol: sym, line: { color: '#fff', width: 2 } },
+      });
+      if (buy.x.length) tradeTraces.push(mkTrace(buy, '● 买入', BUY_C, 'triangle-up'));
+      if (sell.x.length) tradeTraces.push(mkTrace(sell, '● 卖出', SELL_C, 'triangle-down'));
+      // 撑开价格轴，保证外侧标记不被裁掉
+      if (yRange && isFinite(yLoMark)) {
+        yRange = [Math.min(yRange[0], yLoMark - off), Math.max(yRange[1], yHiMark + off)];
+      }
+    }
+  } catch (e) { /* 无交易记录或表不存在时静默跳过 */ }
+
+  // ---- MACD 子图数据 ----
+  const dif = data.map(r => r.dif);
+  const dea = data.map(r => r.dea);
+  const macd = data.map(r => r.macd);
+  // MACD 柱：正红负绿（与 K 线一致），空值灰
+  const macdColors = macd.map(v => v == null ? '#cbd5e1' : (v >= 0 ? '#dc2626' : '#16a34a'));
+  const hasMacd = macd.some(v => v != null);
+
+  // ---- 三均线（与 MACD 同源：12/20/30 期，叠在价格区）----
+  const emaShort = data.map(r => r.ema_short);
+  const emaMid = data.map(r => r.ema_mid);
+  const emaLong = data.map(r => r.ema_long);
+  const hasEma = [emaShort, emaMid, emaLong].some(arr => arr.some(v => v != null));
+
   Plotly.newPlot('kChart15m', [
     {type:'candlestick', x, open:data.map(r=>r.open), close:data.map(r=>r.close),
      high:data.map(r=>r.high), low:data.map(r=>r.low), name:'K线', xaxis:'x', yaxis:'y',
+     text:sname, hovertext:sname, showlegend:false,
      increasing:{line:{color:'#dc2626'}}, decreasing:{line:{color:'#16a34a'}}},
-    {type:'bar', x, y:data.map(r=>r.volume), name:'量', xaxis:'x', yaxis:'y2', marker:{color:'#94a3b8'}}
+    // 均线：MA12 / MA20 / MA30，叠在 K 线之上
+    {type:'scatter', mode:'lines', x, y:emaShort, name:'MA12', xaxis:'x', yaxis:'y',
+     line:{color:'#9333ea', width:1.1}, connectgaps:false,
+     hovertemplate:'MA12 %{y:.2f}<extra></extra>'},
+    {type:'scatter', mode:'lines', x, y:emaMid, name:'MA20', xaxis:'x', yaxis:'y',
+     line:{color:'#0891b2', width:1.1}, connectgaps:false,
+     hovertemplate:'MA20 %{y:.2f}<extra></extra>'},
+    {type:'scatter', mode:'lines', x, y:emaLong, name:'MA30', xaxis:'x', yaxis:'y',
+     line:{color:'#475569', width:1.1}, connectgaps:false,
+     hovertemplate:'MA30 %{y:.2f}<extra></extra>'},
+    {type:'bar', x, y:data.map(r=>r.volume), name:'量', xaxis:'x', yaxis:'y2', marker:{color:'#94a3b8'}, showlegend:false},
+    // MACD 子图：柱(MACD) + 线(DIF/DEA)
+    {type:'bar', x, y:macd, name:'MACD', xaxis:'x', yaxis:'y3',
+     marker:{color:macdColors}, showlegend:false,
+     hovertemplate:'MACD %{y:.3f}<extra></extra>'},
+    {type:'scatter', mode:'lines', x, y:dif, name:'DIF', xaxis:'x', yaxis:'y3',
+     line:{color:'#2563eb', width:1.2}, connectgaps:false,
+     hovertemplate:'DIF %{y:.3f}<extra></extra>'},
+    {type:'scatter', mode:'lines', x, y:dea, name:'DEA', xaxis:'x', yaxis:'y3',
+     line:{color:'#f59e0b', width:1.2}, connectgaps:false,
+     hovertemplate:'DEA %{y:.3f}<extra></extra>'},
+    ...tradeTraces
   ], {
-    margin:{t:10,r:30,l:60,b:30},
-    xaxis:{rangeslider:{visible:false}, type:'category', tickangle:-45, nticks:12},
-    yaxis:{domain:[0.3,1.0], title:'价格'},
-    yaxis2:{domain:[0,0.25], title:'量'},
-    showlegend:false,
+    margin:{t:10,r:30,l:60,b:40},
+    xaxis:{
+      rangeslider:{visible:true, thickness:0.04, bgcolor:'#f9fafb', bordercolor:'#e5e7eb', borderwidth:1},
+      type:'category', tickangle:-45, nticks:12,
+    },
+    yaxis:{domain:[0.48,1.0], title:'价格', rangemode:'normal',
+           ...(yRange ? {range: yRange, autorange: false} : {autorange: true})},
+    yaxis2:{domain:[0.30,0.46], title:'量'},
+    yaxis3:{domain:[0.0,0.28], title:'MACD', zeroline:true, zerolinecolor:'#9ca3af', zerolinewidth:1},
+    showlegend: true,
+    legend: { orientation: 'h', y: 1.02, x: 0 },
+    shapes: shapes.concat(tradeShapes),
   }, {responsive:true});
+
+  if (!hasMacd) {
+    document.getElementById('kSummary15m').innerHTML +=
+      '&nbsp;|&nbsp;<span style="color:#9ca3af;">MACD 字段为空，请先跑 15m 信号处理</span>';
+  }
+  if (!hasEma) {
+    document.getElementById('kSummary15m').innerHTML +=
+      '&nbsp;|&nbsp;<span style="color:#9ca3af;">均线字段为空</span>';
+  }
+}
+
+// ---------- ①· 15m 字段一览 ----------
+async function loadSchema() {
+  const body = document.getElementById('schemaBody');
+  const j = await fetchJson(`${API}/15m/schema`);
+  if (!j.success) {
+    document.getElementById('schemaMeta').innerText = '';
+    body.innerHTML = `<tr><td colspan="6" style="text-align:center;color:#dc2626;padding:1rem;">${j.message || '加载失败'}</td></tr>`;
+    return;
+  }
+  document.getElementById('schemaMeta').innerText = `共 ${j.column_count} 个字段，${j.total_rows} 行`;
+  body.innerHTML = j.columns.map((c, i) => {
+    const hasNull = c.null > 0;
+    let sample = c.sample;
+    if (sample === null || sample === undefined) sample = '<span style="color:#9ca3af;">null</span>';
+    else if (typeof sample === 'number') sample = `<span style="font-family:monospace;">${sample}</span>`;
+    else sample = `<span style="font-family:monospace;">${String(sample)}</span>`;
+    return `<tr style="border-top:1px solid #f3f4f6;">
+      <td style="padding:.4rem .5rem;color:#9ca3af;">${i + 1}</td>
+      <td style="padding:.4rem .5rem;font-weight:600;font-family:monospace;">${c.name}</td>
+      <td style="padding:.4rem .5rem;color:#2563eb;font-family:monospace;">${c.dtype}</td>
+      <td style="padding:.4rem .5rem;text-align:right;font-family:monospace;">${c.non_null}</td>
+      <td style="padding:.4rem .5rem;text-align:right;font-family:monospace;color:${hasNull ? '#b91c1c' : '#9ca3af'};">${c.null}</td>
+      <td style="padding:.4rem .5rem;">${sample}</td>
+    </tr>`;
+  }).join('');
+}
+
+// ---------- ①' 15m 数据完整性 ----------
+async function loadDailySummary() {
+  const onlyIssues = document.getElementById('dsOnlyIssues').checked ? 1 : 0;
+  const body = document.getElementById('dsBody');
+  const sumBox = document.getElementById('dsSummary');
+  body.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#9ca3af;padding:1rem;">加载中…</td></tr>';
+  const j = await fetchJson(`${API}/15m/daily_summary?only_issues=${onlyIssues}&limit=500`);
+  if (!j.success) {
+    sumBox.innerHTML = `<span style="color:#dc2626;">${j.message || '加载失败'}</span>`;
+    body.innerHTML = `<tr><td colspan="6" style="text-align:center;color:#dc2626;padding:1rem;">${j.message || '加载失败'}</td></tr>`;
+    return;
+  }
+  const s = j.summary;
+  const chip = (label, val, color) =>
+    `<span style="background:${color}1a;color:${color};padding:.25rem .6rem;border-radius:9999px;font-weight:600;">${label} ${val}</span>`;
+  sumBox.innerHTML =
+    chip('交易日', s.trading_days, '#374151') +
+    chip('完整', s.complete, '#16a34a') +
+    chip('不完整', s.incomplete, '#d97706') +
+    chip('整日缺失', s.missing, '#dc2626') +
+    `<span style="color:#9ca3af;align-self:center;">区间 ${j.range.first} → ${j.range.last}｜日历源: ${j.calendar_source === 'akshare' ? '交易日历' : '工作日估算'}</span>`;
+  if (!j.data.length) {
+    body.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#16a34a;padding:1rem;">✓ 所选范围内无缺失</td></tr>';
+    return;
+  }
+  const meta = {
+    complete:   {txt:'完整',     bg:'#dcfce7', fg:'#15803d'},
+    incomplete: {txt:'不完整',   bg:'#fef3c7', fg:'#92400e'},
+    missing:    {txt:'整日缺失', bg:'#fee2e2', fg:'#b91c1c'},
+  };
+  body.innerHTML = j.data.map(r => {
+    const m = meta[r.status] || meta.complete;
+    const miss = r.missing_times && r.missing_times.length
+      ? `<span style="color:#b91c1c;font-family:monospace;">${r.missing_times.join(' ')}</span>`
+      : '<span style="color:#9ca3af;">—</span>';
+    const clickable = r.status !== 'missing';
+    return `<tr class="ds-row" data-date="${r.date}" data-clickable="${clickable}"
+      style="border-top:1px solid #f3f4f6;${r.status==='missing'?'background:#fef2f2;':'cursor:pointer;'}">
+      <td style="padding:.4rem .5rem;font-weight:600;">
+        ${clickable ? '<span class="ds-caret" style="color:#9ca3af;display:inline-block;width:1em;">▸</span>' : '<span style="display:inline-block;width:1em;"></span>'}${r.date}
+      </td>
+      <td style="padding:.4rem .5rem;text-align:right;font-family:monospace;">${r.count}/${r.expected}</td>
+      <td style="padding:.4rem .5rem;text-align:center;">
+        <span style="background:${m.bg};color:${m.fg};padding:.1rem .5rem;border-radius:9999px;font-size:.78rem;font-weight:600;">${m.txt}</span>
+      </td>
+      <td style="padding:.4rem .5rem;text-align:center;font-family:monospace;color:#6b7280;">${r.first || '—'}</td>
+      <td style="padding:.4rem .5rem;text-align:center;font-family:monospace;color:#6b7280;">${r.last || '—'}</td>
+      <td style="padding:.4rem .5rem;">${miss}</td>
+    </tr>`;
+  }).join('');
+}
+
+async function toggleDayDetail(tr) {
+  const date = tr.dataset.date;
+  const caret = tr.querySelector('.ds-caret');
+  const next = tr.nextElementSibling;
+  if (next && next.classList.contains('ds-detail')) {   // 已展开 -> 收起
+    next.remove();
+    if (caret) caret.textContent = '▸';
+    return;
+  }
+  if (caret) caret.textContent = '▾';
+  const detailTr = document.createElement('tr');
+  detailTr.className = 'ds-detail';
+  detailTr.innerHTML = `<td colspan="6" style="padding:.5rem 1rem;background:#fafafa;">
+    <div style="color:#9ca3af;font-size:.82rem;">加载 ${date} 明细…</div></td>`;
+  tr.after(detailTr);
+
+  const j = await fetchJson(`${API}/15m/day?date=${date}`);
+  const cell = detailTr.firstElementChild;
+  if (!j.success) {
+    cell.innerHTML = `<div style="color:#dc2626;font-size:.82rem;">${j.message || '加载失败'}</div>`;
+    return;
+  }
+  if (!j.count) {
+    cell.innerHTML = `<div style="color:#9ca3af;font-size:.82rem;">${date} 当日无数据</div>`;
+    return;
+  }
+  const cols = j.columns;
+  const fmt = (v) => {
+    if (v === null || v === undefined) return '<span style="color:#cbd5e1;">null</span>';
+    if (typeof v === 'number') return Number.isInteger(v) ? v : v.toFixed(4).replace(/\.?0+$/, '');
+    return String(v);
+  };
+  cell.innerHTML = `
+    <div style="font-size:.82rem;color:#6b7280;margin-bottom:.35rem;">${date} 明细 · 共 ${j.count} 根</div>
+    <div style="overflow-x:auto;border:1px solid #e5e7eb;border-radius:6px;background:#fff;">
+      <table style="width:100%;border-collapse:collapse;font-size:.8rem;white-space:nowrap;">
+        <thead style="background:#f3f4f6;">
+          <tr>${cols.map(c => `<th style="padding:.35rem .55rem;text-align:left;font-family:monospace;">${c}</th>`).join('')}</tr>
+        </thead>
+        <tbody>
+          ${j.data.map(row => `<tr style="border-top:1px solid #f3f4f6;">
+            ${cols.map(c => `<td style="padding:.3rem .55rem;font-family:monospace;">${fmt(row[c])}</td>`).join('')}
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>`;
+}
+
+document.getElementById('dsBody').addEventListener('click', (e) => {
+  const tr = e.target.closest('tr.ds-row');
+  if (tr && tr.dataset.clickable === 'true') toggleDayDetail(tr);
+});
+
+// ---------- ①″ 周期长度量化 ----------
+async function loadCycles() {
+  try { return await _loadCyclesImpl(); }
+  catch (e) {
+    console.error('[loadCycles]', e);
+    ['cycleDistChartUp','cycleDistChartDn','ampDistChartUp','ampDistChartDn','v5DistChartUp','v5DistChartDn']
+      .forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.innerHTML = `<div style="color:#dc2626;padding:2rem;text-align:center;">渲染失败：${(e && e.message) || e}</div>`;
+      });
+    const body = document.getElementById('cycleBody');
+    if (body) body.innerHTML = `<tr><td colspan="9" style="text-align:center;color:#dc2626;padding:1rem;">渲染失败：${(e && e.message) || e}</td></tr>`;
+  }
+}
+async function _loadCyclesImpl() {
+  const j = await fetchJson(withAsOf(`${API}/cycles`));
+  const body = document.getElementById('cycleBody');
+  const statsEl = document.getElementById('cycleStats');
+  const distUpEl = document.getElementById('cycleDistChartUp');
+  const distDnEl = document.getElementById('cycleDistChartDn');
+  const distUpInfo = document.getElementById('cycleDistInfoUp');
+  const distDnInfo = document.getElementById('cycleDistInfoDn');
+  const ampUpEl = document.getElementById('ampDistChartUp');
+  const ampDnEl = document.getElementById('ampDistChartDn');
+  const ampUpInfo = document.getElementById('ampDistInfoUp');
+  const ampDnInfo = document.getElementById('ampDistInfoDn');
+  const v5UpEl = document.getElementById('v5DistChartUp');
+  const v5DnEl = document.getElementById('v5DistChartDn');
+  const v5UpInfo = document.getElementById('v5DistInfoUp');
+  const v5DnInfo = document.getElementById('v5DistInfoDn');
+  const distMsg = (txt, color) => {
+    [[distUpEl, distUpInfo], [distDnEl, distDnInfo],
+     [ampUpEl, ampUpInfo], [ampDnEl, ampDnInfo],
+     [v5UpEl, v5UpInfo], [v5DnEl, v5DnInfo]].forEach(([c, inf]) => {
+      if (c) c.innerHTML = `<div style="color:${color};padding:2rem;text-align:center;">${txt}</div>`;
+      if (inf) inf.innerText = '';
+    });
+  };
+  if (!j.success) {
+    statsEl.innerText = '';
+    body.innerHTML = `<tr><td colspan="9" style="text-align:center;color:#dc2626;padding:1rem;">${j.message || '加载失败'}</td></tr>`;
+    distMsg(j.message || '加载失败', '#dc2626');
+    return;
+  }
+  if (typeof Plotly === 'undefined') {
+    statsEl.innerText = '';
+    body.innerHTML = '<tr><td colspan="9" style="text-align:center;color:#dc2626;padding:1rem;">Plotly 未加载（强制刷新页面 Ctrl+F5）</td></tr>';
+    distMsg('Plotly 未加载（强制刷新 Ctrl+F5）', '#dc2626');
+    return;
+  }
+  if (!j.count) {
+    body.innerHTML = '<tr><td colspan="9" style="text-align:center;color:#9ca3af;padding:1rem;">无周期数据</td></tr>';
+    distMsg('无周期数据', '#9ca3af');
+    return;
+  }
+  const s = j.stats || {};
+  statsEl.innerText = `共 ${j.count} 个周期｜长度 min ${s.min} / 中位 ${s.median} / 均值 ${s.mean} / max ${s.max}`;
+
+  const d = j.data;
+
+  const dirBadge = (dir) => {
+    if (dir > 0) return '<span style="color:#dc2626;font-weight:600;">↑ 上涨</span>';
+    if (dir < 0) return '<span style="color:#16a34a;font-weight:600;">↓ 下跌</span>';
+    return '<span style="color:#9ca3af;">—</span>';
+  };
+  // 表格按时间倒序展示：最新周期排最前；编号仍保留原始时间序的 #1 = 最早
+  // （这样最新那个的编号 = d.length，方便看"一共多少周期"）
+  body.innerHTML = d.map((c, i) => ({ c, n: i + 1 }))
+    .slice().reverse()
+    .map(({ c, n }) => `
+    <tr style="border-top:1px solid #f3f4f6;${c.completed === false ? 'background:#fffbeb;' : ''}">
+      <td style="padding:.4rem .5rem;color:#9ca3af;">${n}</td>
+      <td style="padding:.4rem .5rem;font-family:monospace;font-weight:600;color:${c.direction > 0 ? '#b91c1c' : c.direction < 0 ? '#15803d' : '#6b7280'};">${c.signal_name || '—'}</td>
+      <td style="padding:.4rem .5rem;text-align:center;">${dirBadge(c.direction)}</td>
+      <td style="padding:.4rem .5rem;font-family:monospace;">${c.signal_start}</td>
+      <td style="padding:.4rem .5rem;font-family:monospace;color:#6b7280;">${c.last_bar}</td>
+      <td style="padding:.4rem .5rem;text-align:right;font-family:monospace;font-weight:600;">${c.cycle_length_max ?? '—'}</td>
+      <td style="padding:.4rem .5rem;text-align:right;font-family:monospace;color:#6b7280;">${c.bar_count}</td>
+      <td style="padding:.4rem .5rem;text-align:right;font-family:monospace;">${c.amplitude_max != null ? c.amplitude_max.toFixed(2) : '—'}</td>
+      <td style="padding:.4rem .5rem;text-align:center;">${c.completed === false
+        ? '<span style="background:#fef3c7;color:#92400e;padding:.1rem .5rem;border-radius:9999px;font-size:.78rem;">进行中</span>'
+        : c.completed === true ? '<span style="background:#dcfce7;color:#15803d;padding:.1rem .5rem;border-radius:9999px;font-size:.78rem;">已完成</span>'
+        : '—'}</td>
+    </tr>`).join('');
+
+  const all = d.filter(c => c.cycle_length_max != null);
+  // 当前周期 = 最新那个（通常"进行中"），只标在与其方向一致的图上
+  const current = all.length ? all[all.length - 1] : null;
+
+  // 周期长度分布（上涨/下跌）
+  const lenOpt = { value: c => c.cycle_length_max, xtitle: 'CycleLengthMax (根)',
+                   numfmt: '.0f', fmt: v => `${Math.round(v)} 根` };
+  renderDist(all.filter(c => c.direction > 0), distUpEl, distUpInfo,
+             current && current.direction > 0 ? current : null, '#dc2626', lenOpt);
+  renderDist(all.filter(c => c.direction < 0), distDnEl, distDnInfo,
+             current && current.direction < 0 ? current : null, '#16a34a', lenOpt);
+
+  // 周期振幅分布（上涨/下跌）—— amplitude_max 是小数，按 % 显示
+  const ampAll = d.filter(c => c.amplitude_max != null);
+  const ampCur = ampAll.length ? ampAll[ampAll.length - 1] : null;
+  const ampOpt = { value: c => c.amplitude_max != null ? c.amplitude_max * 100 : null,
+                   xtitle: '周期振幅 (%)', numfmt: '.2f', fmt: v => `${v.toFixed(2)}%` };
+  renderDist(ampAll.filter(c => c.direction > 0), ampUpEl, ampUpInfo,
+             ampCur && ampCur.direction > 0 ? ampCur : null, '#dc2626', ampOpt);
+  renderDist(ampAll.filter(c => c.direction < 0), ampDnEl, ampDnInfo,
+             ampCur && ampCur.direction < 0 ? ampCur : null, '#16a34a', ampOpt);
+
+  // Cycle1mVolMax5 分布（上涨/下跌）—— 数值大，按"万"显示
+  const v5All = d.filter(c => c.cycle_1m_vol_max5 != null);
+  const v5Cur = v5All.length ? v5All[v5All.length - 1] : null;
+  const v5Opt = { value: c => c.cycle_1m_vol_max5 != null ? c.cycle_1m_vol_max5 / 1e4 : null,
+                  xtitle: 'Cycle1mVolMax5（万）', numfmt: '.1f', fmt: v => `${v.toFixed(1)}万` };
+  renderDist(v5All.filter(c => c.direction > 0), v5UpEl, v5UpInfo,
+             v5Cur && v5Cur.direction > 0 ? v5Cur : null, '#dc2626', v5Opt);
+  renderDist(v5All.filter(c => c.direction < 0), v5DnEl, v5DnInfo,
+             v5Cur && v5Cur.direction < 0 ? v5Cur : null, '#16a34a', v5Opt);
+}
+
+// 单方向某指标的正态分布：对 subset 拟合正态曲线 + 直方图，并标注当前周期
+// opts: { value:c=>number|null, xtitle, numfmt(hover/d3), fmt(v)=>展示字符串 }
+function renderDist(subset, el, infoEl, current, curColor, opts) {
+  if (!el) return;
+  const valOf = opts.value, fmt = opts.fmt, nf = opts.numfmt;
+  const MAX_HIST = 60;   // 只取最近 60 个已完成周期（贴近当前行情）
+  const MIN_FIT = 8;     // < 8 不拟合
+  const LOW_N = 20;      // < 20 标注"样本偏少"，结论以经验分位为准
+
+  // 历史样本：仅"已完成"周期（值已实现、可比），按时间取最近 MAX_HIST 个
+  const completed = subset.filter(c => c.completed === true);
+  const totalCompleted = completed.length;
+  const recent = completed.slice(-MAX_HIST);
+  const hist = recent.map(valOf).filter(v => v != null);
+  const n = hist.length;
+  const capped = totalCompleted > MAX_HIST;
+
+  if (n < MIN_FIT) {
+    el.innerHTML = `<div style="color:#9ca3af;padding:2rem;text-align:center;">`
+      + `已完成周期样本不足（n=${n} &lt; ${MIN_FIT}），暂不拟合分布`
+      + `<br><span style="font-size:.8rem;">随历史数据积累，样本足够后自动显示</span></div>`;
+    if (infoEl) infoEl.innerText = `已完成样本 ${n} 个（需 ≥ ${MIN_FIT}）`;
+    return;
+  }
+
+  // 按方向各自的样本算均值/标准差
+  const mean = hist.reduce((a, b) => a + b, 0) / n;
+  const std = Math.sqrt(hist.reduce((a, b) => a + (b - mean) ** 2, 0) / n);
+  const minV = Math.min(...hist), maxV = Math.max(...hist);
+  const cur = current ? valOf(current) : null;
+
+  // 正态 PDF 曲线
+  const lo = Math.max(0, Math.min(minV, cur ?? minV) - 2 * (std || 1));
+  const hi = Math.max(maxV, cur ?? maxV) + 2 * (std || 1);
+  const N = 120, xs = [], ys = [];
+  const sig = std > 0 ? std : 1;  // std=0 时给个细峰，避免除零
+  for (let i = 0; i <= N; i++) {
+    const xv = lo + (hi - lo) * i / N;
+    xs.push(xv);
+    ys.push(Math.exp(-((xv - mean) ** 2) / (2 * sig * sig)) / (sig * Math.sqrt(2 * Math.PI)));
+  }
+
+  // 实际样本直方图（密度归一），叠在曲线下作参考
+  const bins = Math.min(12, Math.max(5, Math.round(Math.sqrt(n))));
+  const bw = (maxV - minV) / bins || 1;
+  const counts = new Array(bins).fill(0);
+  hist.forEach(v => {
+    let k = Math.floor((v - minV) / bw);
+    if (k < 0) k = 0; if (k >= bins) k = bins - 1;
+    counts[k]++;
+  });
+  const histX = counts.map((_, k) => minV + bw * (k + 0.5));
+  const histY = counts.map(c => c / (n * bw));  // 频数 → 密度
+
+  // 当前值的 z 分数与经验分位（历史中 ≤ 当前 的占比）
+  let zTxt = '—', pctTxt = '—';
+  if (cur != null) {
+    if (std > 0) zTxt = ((cur - mean) / std).toFixed(2);
+    const le = hist.filter(v => v <= cur).length;
+    pctTxt = (le / n * 100).toFixed(0) + '%';
+  }
+
+  const vline = (xv, color, dash) => ({
+    type: 'line', xref: 'x', yref: 'paper',
+    x0: xv, x1: xv, y0: 0, y1: 1,
+    line: { color, width: 2, dash: dash || 'solid' },
+  });
+  const shapes = [
+    vline(minV, '#9ca3af', 'dot'),
+    vline(mean, '#2563eb', 'dash'),
+    vline(maxV, '#9ca3af', 'dot'),
+  ];
+  const annos = [
+    { x: minV, yref: 'paper', y: 1.06, text: `min ${fmt(minV)}`, showarrow: false, font: { size: 11, color: '#6b7280' } },
+    { x: mean, yref: 'paper', y: 1.06, text: `均值 ${fmt(mean)}`, showarrow: false, font: { size: 11, color: '#2563eb' } },
+    { x: maxV, yref: 'paper', y: 1.06, text: `max ${fmt(maxV)}`, showarrow: false, font: { size: 11, color: '#6b7280' } },
+  ];
+  const traces = [
+    { type: 'bar', x: histX, y: histY, name: '历史样本', marker: { color: 'rgba(148,163,184,0.35)' },
+      width: bw * 0.95, hovertemplate: `%{x:${nf}}<br>密度 %{y:.4f}<extra></extra>` },
+    { type: 'scatter', mode: 'lines', x: xs, y: ys, name: '正态拟合',
+      line: { color: '#6366f1', width: 2 },
+      hovertemplate: `%{x:${nf}}<br>密度 %{y:.4f}<extra></extra>` },
+  ];
+  if (cur != null) {
+    const cy = Math.exp(-((cur - mean) ** 2) / (2 * sig * sig)) / (sig * Math.sqrt(2 * Math.PI));
+    shapes.push(vline(cur, curColor, 'solid'));
+    annos.push({ x: cur, y: cy, yref: 'y', text: `当前 ${fmt(cur)}`, showarrow: true, arrowhead: 3,
+                 ax: 0, ay: -28, font: { size: 12, color: curColor, weight: 700 }, arrowcolor: curColor });
+    traces.push({ type: 'scatter', mode: 'markers', x: [cur], y: [cy], name: '当前周期',
+                  marker: { color: curColor, size: 11, symbol: 'diamond' },
+                  hovertemplate: `当前 %{x:${nf}}<extra></extra>` });
+  }
+
+  Plotly.newPlot(el, traces, {
+    margin: { t: 30, r: 20, l: 55, b: 90 },
+    xaxis: { title: { text: opts.xtitle, standoff: 12 } },
+    yaxis: { title: '概率密度', rangemode: 'tozero' },
+    bargap: 0.02, showlegend: true,
+    legend: { orientation: 'h', y: -0.38, yanchor: 'top', x: 0.5, xanchor: 'center' },
+    shapes, annotations: annos,
+  }, { responsive: true });
+
+  if (infoEl) {
+    const sampTxt = `样本 ${n} 个`
+      + (capped ? `（取最近 ${MAX_HIST}，共 ${totalCompleted} 已完成）` : '')
+      + (n < LOW_N ? ' <b style="color:#b45309;">⚠ 样本偏少，结论以经验分位为准</b>' : '');
+    infoEl.innerHTML = cur != null
+      ? `${sampTxt}｜均值 ${fmt(mean)} / 标准差 ${fmt(sig)}<br>`
+        + `当前 <b>${fmt(cur)}</b>，z=<b>${zTxt}</b>，历史分位 <b>${pctTxt}</b>`
+        + `（历史上 ${pctTxt} 的周期更小）`
+      : `${sampTxt}｜均值 ${fmt(mean)} / 标准差 ${fmt(sig)}`;
+  }
 }
 
 // ---------- ② 1m ----------
 async function load1mDates() {
-  const j = await fetchJson(`${API}/1m/dates`);
+  const j = await fetchJson(withAsOf(`${API}/1m/dates`));
   const sel = document.getElementById('oneMinDate');
   if (!j.success || !j.dates.length) {
     sel.innerHTML = '<option>无 1m 数据</option>';
@@ -230,6 +1263,9 @@ async function load1mDates() {
     j.dates.map(d => `<option value="${d}">${d}</option>`).join('');
   document.getElementById('oneMinSummary').innerText =
     `1m 数据范围: ${j.earliest} → ${j.latest}（共 ${j.count} 个交易日）`;
+  // 默认选中并加载最新 1 个交易日
+  sel.value = j.latest;
+  load1m();
 }
 
 async function load1m() {
@@ -301,7 +1337,7 @@ function fmtNum(v) {
 
 // ---------- ④ 指标 ----------
 async function loadMetrics() {
-  const j = await fetchJson(`${API}/metrics`);
+  const j = await fetchJson(withAsOf(`${API}/metrics`));
   const box = document.getElementById('metricsBox');
   if (!j.success) { box.innerHTML = `<div style="color:#dc2626;">${j.message}</div>`; return; }
   const m = j.metrics;
@@ -337,7 +1373,7 @@ async function loadMetrics() {
 
 // ---------- ⑤ 预测 ----------
 async function loadPredictions() {
-  const j = await fetchJson(`${API}/predictions?limit=30`);
+  const j = await fetchJson(withAsOf(`${API}/predictions?limit=30`));
   const tbody = document.getElementById('predBody');
   document.getElementById('predCount').innerText = j.success ? `共 ${j.count} 条` : '';
   if (!j.success || !j.data.length) {
@@ -359,8 +1395,12 @@ async function loadPredictions() {
 // ---------- ⑥ 基金持仓时序 ----------
 async function loadFundHoldings() {
   const days = document.getElementById('fundDays').value;
-  const j = await fetchJson(`${API}/fund_holdings?days=${days}`);
+  const j = await fetchJson(withAsOf(`${API}/fund_holdings?days=${days}`));
   if (!j.success) { document.getElementById('fundChart').innerText = j.message || '加载失败'; return; }
+  if (typeof Plotly === 'undefined') {
+    document.getElementById('fundChart').innerHTML = '<div style="color:#dc2626;padding:2rem;text-align:center;">Plotly 未加载（强制刷新 Ctrl+F5）</div>';
+    return;
+  }
   if (!j.data.length) {
     document.getElementById('fundChart').innerHTML = '<div style="text-align:center;color:#9ca3af;padding:2rem;">该窗口内无基金持仓数据</div>';
     return;
@@ -379,14 +1419,83 @@ async function loadFundHoldings() {
 }
 
 document.getElementById('kRange').onchange = load15m;
+document.getElementById('dsOnlyIssues').onchange = loadDailySummary;
 document.getElementById('oneMinDate').onchange = load1m;
 document.getElementById('paramMonth').onchange = loadParams;
 document.getElementById('fundDays').onchange = loadFundHoldings;
 
-(async () => {
-  await loadOverview();
-  load15m(); load1mDates(); loadParamMonths();
-  loadMetrics(); loadPredictions(); loadFundHoldings();
+// ---------- 历史回放：时光机日期 ----------
+if (VIEW_MODE === 'replay') {
+  (function initAsOf() {
+    const dateEl   = document.getElementById('asOfDate');
+    const applyBtn = document.getElementById('asOfApply');
+    const banner   = document.getElementById('asOfBanner');
+    const bannerDt = document.getElementById('asOfBannerDate');
+    const pageEl   = document.querySelector('.stock-detail');
+
+    function syncUI() {
+      if (ASOF) {
+        dateEl.value = ASOF;
+        banner.style.display = '';
+        bannerDt.innerText = ASOF;
+        pageEl.style.boxShadow = 'inset 0 0 0 3px #c7d2fe';
+        pageEl.style.borderRadius = '12px';
+      } else {
+        banner.style.display = 'none';
+        pageEl.style.boxShadow = '';
+      }
+    }
+
+    function reloadAll() {
+      load15m();
+      if (typeof loadCycles === 'function') loadCycles();
+      if (typeof load1mDates === 'function') load1mDates();
+      if (typeof loadMetrics === 'function') loadMetrics();
+      if (typeof loadPredictions === 'function') loadPredictions();
+      if (typeof loadFundHoldings === 'function') loadFundHoldings();
+    }
+
+    applyBtn.onclick = () => {
+      const v = (dateEl.value || '').trim();
+      if (!v) { alert('请先选日期'); return; }
+      if (v === ASOF) return;
+      ASOF = v;
+      sessionStorage.setItem('stockReplayAsOf', ASOF);
+      // 同步 URL，方便分享
+      const u = new URL(window.location.href);
+      u.searchParams.set('as_of', ASOF);
+      history.replaceState(null, '', u.toString());
+      syncUI();
+      reloadAll();
+    };
+
+    syncUI();
+  })();
+}
+
+// ---------- 周期切换器 ----------
+(function initPeriod() {
+  const sel = document.getElementById('periodSelect');
+  if (!sel) return;
+  sel.value = PERIOD;
+  sel.onchange = () => {
+    const newP = sel.value;
+    if (newP === PERIOD) return;
+    PERIOD = newP;
+    // 同步 URL（默认 15m 不写）
+    const u = new URL(window.location.href);
+    if (PERIOD === '15m') u.searchParams.delete('period');
+    else u.searchParams.set('period', PERIOD);
+    history.replaceState(null, '', u.toString());
+    // 重刷依赖周期的图表 + 统计
+    load15m();
+    if (typeof loadCycles === 'function') loadCycles();
+  };
 })();
+
+// 所有加载相互独立，互不阻塞（loadOverview 如果挂起也不应让 K 线/分布图卡死）
+loadOverview().catch(e => console.error('[loadOverview]', e));
+load15m(); loadSchema(); loadDailySummary(); loadCycles(); load1mDates(); loadParamMonths();
+loadMetrics(); loadPredictions(); loadFundHoldings();
 </script>
 {% endblock %}

@@ -480,8 +480,12 @@ class SignalMethod:
 
     @classmethod
     def signal_by_MACD_3ema(cls, data, data1m):
-
-        data = MacdSignalPipeline.compute_macd_signals_pipeline(data)
+        # 切到 v2：MACD>0/<0 + 连续 7 根 low>MA30 / high<MA30。
+        # 下游 s_StartEndIndex / s_CycleAmplitude / s_CycleLength 都通过 Signal/SignalChoice
+        # 列工作，对生成方算法无感知，继续可用。
+        # 这一行 import 放函数内避免顶层循环依赖（MacdSignalV2 间接 import MacdParser）。
+        from App.codes.Signals.MacdSignalV2 import compute_v2_signals_pipeline
+        data = compute_v2_signals_pipeline(data, n=7)
 
         data = StatisticsMACD.s_Daily1mMax(data, data1m)
 

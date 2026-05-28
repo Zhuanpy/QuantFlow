@@ -1,0 +1,27 @@
+{# 视角导航 tabs：3 个独立路由
+
+   调用方需传：
+     - stock_code: 当前股票代码（可空）
+     - view_mode: 'after_close' / 'live' / 'replay'
+     - period:    可选，'15m' / '30m' / '60m' / 'daily'（默认 15m 不写进 URL）
+#}
+{% set _qs = ('?code=' ~ stock_code) if stock_code else '' %}
+{% if period and period != '15m' %}
+  {% set _qs = (_qs ~ ('&' if _qs else '?') ~ 'period=' ~ period) %}
+{% endif %}
+<div style="display:flex;gap:.25rem;margin-bottom:.85rem;border-bottom:2px solid #e5e7eb;align-items:flex-end;">
+  {%- set _tabs = [
+    ('after_close', '/stock/'         ~ _qs, '📊 收盘后',   '完整 widget',           '#2563eb', '#eff6ff'),
+    ('live',       '/stock/live'      ~ _qs, '⚡ 盘中',     '聚焦交易决策',           '#ea580c', '#fff7ed'),
+    ('replay',     '/stock/replay'    ~ _qs, '⏱ 历史回放', '时光机视角',             '#4f46e5', '#eef2ff')
+  ] -%}
+  {%- for key, href, label, sub, fg, bg in _tabs -%}
+    {%- set active = (view_mode == key) -%}
+    <a href="{{ href }}"
+       title="{{ sub }}"
+       style="text-decoration:none;padding:.55rem 1rem .5rem;border:1px solid {{ '#e5e7eb' if not active else fg }};border-bottom:0;border-radius:8px 8px 0 0;background:{{ '#fff' if not active else bg }};color:{{ '#6b7280' if not active else fg }};font-size:.92rem;font-weight:{{ '600' if active else '500' }};margin-bottom:-2px;display:inline-flex;align-items:baseline;gap:.4rem;">
+      <span>{{ label }}</span>
+      <span style="font-size:.72rem;color:{{ '#9ca3af' if not active else fg }};opacity:{{ '1' if active else '.75' }};">{{ sub }}</span>
+    </a>
+  {%- endfor -%}
+</div>
