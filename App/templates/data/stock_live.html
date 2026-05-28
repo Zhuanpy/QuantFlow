@@ -104,7 +104,7 @@
   <div class="card" style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:1.25rem;margin-bottom:1rem;">
     <h2 style="margin:0 0 .35rem;font-size:1.125rem;">周期振幅分布（上涨 / 下跌 分开正态拟合 + 当前位置）</h2>
     <div style="color:#6b7280;font-size:.8rem;margin-bottom:.75rem;">
-      口径: (本周期末根 close − 上一反向周期极值) / 上一反向周期极值；当前振幅越接近右侧，越接近趋势耗尽
+      口径: 周期内极值 vs 起点 = |(上涨 high.max / 下跌 low.min − 起点价) / 起点价|（真·周期最大摆动）；当前振幅越接近右侧，趋势剩余空间越小
     </div>
     <div style="display:flex;gap:1rem;flex-wrap:wrap;">
       <div style="flex:1;min-width:320px;">
@@ -460,10 +460,11 @@ async function loadCycles() {
   renderDist(all.filter(c => c.direction < 0), distDnEl, distDnInfo,
              current && current.direction < 0 ? current : null, '#16a34a', lenOpt);
 
-  // 振幅分布（小数 → %）
-  const ampAll = d.filter(c => c.amplitude_max != null);
+  // 振幅分布：用 amplitude_extreme（周期内极值 vs 起点 = 真·周期振幅），
+  // 不是 amplitude_close（末根 close vs 起点 = 周期涨跌幅）
+  const ampAll = d.filter(c => c.amplitude_extreme != null);
   const ampCur = ampAll.length ? ampAll[ampAll.length - 1] : null;
-  const ampOpt = { value: c => c.amplitude_max != null ? c.amplitude_max * 100 : null,
+  const ampOpt = { value: c => c.amplitude_extreme != null ? c.amplitude_extreme * 100 : null,
                    xtitle: '周期振幅 (%)', numfmt: '.2f', fmt: v => `${v.toFixed(2)}%` };
   renderDist(ampAll.filter(c => c.direction > 0), ampUpEl, ampUpInfo,
              ampCur && ampCur.direction > 0 ? ampCur : null, '#dc2626', ampOpt);

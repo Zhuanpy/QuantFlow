@@ -885,45 +885,37 @@ def api_cycles(code):
         else:
             clen = pd.to_numeric(g['CycleLengthMax'], errors='coerce').max()
 
-        # CycleAmplitudeMax 原始字段：用周期内 high.max/low.min 算的极值口径
-        # （RNN 训练等下游继续读这个，所以保留）
-        amp_extreme = None
-        if is_inprogress and has_sp and has_high and has_low:
-            # as-of 模式下重算：当下为止的极值价（high.max / low.min）对比 StartPrice
-            sp_series = pd.to_numeric(g['StartPrice'], errors='coerce').dropna()
-            if len(sp_series):
-                sp = float(sp_series.iloc[-1])
-                if sp != 0:
-                    hi = float(pd.to_numeric(g['high'], errors='coerce').max())
-                    lo = float(pd.to_numeric(g['low'], errors='coerce').min())
-                    # 方向决定取哪一端：上涨看 high - sp，下跌看 lo - sp
-                    if direction > 0:
-                        amp_extreme = abs(round((hi - sp) / sp, 3))
-                    elif direction < 0:
-                        amp_extreme = abs(round((lo - sp) / sp, 3))
-                    else:
-                        amp_extreme = max(abs((hi - sp) / sp), abs((lo - sp) / sp))
-                        amp_extreme = round(amp_extreme, 3)
-        elif has_amp:
-            a = pd.to_numeric(g['CycleAmplitudeMax'], errors='coerce').dropna()
-            amp_extreme = float(a.abs().max()) if len(a) else None
+        # 周期起点价：用 flip 行（组首行）的 StartPrice，不要用 iloc[-1]。
+        # 关键 bug 修复：周期边界处 StartPrice/EndPrice/CycleAmplitudeMax 会被相邻周期的
+        # ffill 值污染，iloc[-1] / abs().max() 会抓到下一周期的值，导致振幅算错
+        # （例如 156 根的下跌段算出 1% / 29% 都不对，真值是 21.7%）。
+        # g 已按 date 升序，dropna().iloc[0] = flip 行的 StartPrice = 本周期真正起点。
+        sp_at_flip = None
+        if has_sp:
+            _sp = pd.to_numeric(g['StartPrice'], errors='coerce').dropna()
+            if len(_sp):
+                sp_at_flip = float(_sp.iloc[0])
 
-        # 周期振幅（close 口径，前端图表用）：
-        #   (本周期最后一根 close − StartPrice) / StartPrice
-        # StartPrice = 上一个反向周期的极值（由 s_StartEndIndex 计算，已 ffill 到每行）
-        # 已完成周期 → 周期收盘价对比上一极值，更贴近"实际兑现的振幅"
-        # 进行中周期 → 最新 close 对比上一极值，更贴近"当前持仓 P&L"
-        # 注：上涨周期 close > StartPrice 得正、下跌周期 close < StartPrice 得负；
-        #     图表分上涨/下跌两幅展示，统一取绝对值放在正区间方便对比"幅度大小"
+        # 真振幅（极值口径）：周期内 high.max(上涨) / low.min(下跌) 对比起点。
+        # 用组内真实 high/low（非 ffill 字段，不会被污染）；对完成/进行中周期都正确。
+        amp_extreme = None
+        if sp_at_flip and sp_at_flip != 0 and has_high and has_low:
+            hi = float(pd.to_numeric(g['high'], errors='coerce').max())
+            lo = float(pd.to_numeric(g['low'], errors='coerce').min())
+            if direction > 0:
+                amp_extreme = abs(round((hi - sp_at_flip) / sp_at_flip, 4))
+            elif direction < 0:
+                amp_extreme = abs(round((lo - sp_at_flip) / sp_at_flip, 4))
+            else:
+                amp_extreme = round(max(abs((hi - sp_at_flip) / sp_at_flip),
+                                        abs((lo - sp_at_flip) / sp_at_flip)), 4)
+
+        # close 口径（周期涨跌幅）：周期末根 close 对比起点（用于参考，非主指标）
         amp_close_signed = None
-        if has_close and has_sp:
-            sp_series = pd.to_numeric(g['StartPrice'], errors='coerce').dropna()
+        if sp_at_flip and sp_at_flip != 0 and has_close:
             close_series = pd.to_numeric(g['close'], errors='coerce').dropna()
-            if len(sp_series) and len(close_series):
-                sp = float(sp_series.iloc[-1])
-                cl = float(close_series.iloc[-1])
-                if sp != 0:
-                    amp_close_signed = round((cl - sp) / sp, 4)
+            if len(close_series):
+                amp_close_signed = round((float(close_series.iloc[-1]) - sp_at_flip) / sp_at_flip, 4)
         amp_close = abs(amp_close_signed) if amp_close_signed is not None else None
 
         v5 = None
@@ -945,11 +937,11 @@ def api_cycles(code):
             'direction': direction,                       # 1 上 / -1 下 / 0 未知
             'cycle_length_max': None if pd.isna(clen) else int(clen),
             'bar_count': int(len(g)),
-            # 周期振幅：默认用 close 口径（绝对值），回退到 extreme 口径（旧数据无 StartPrice 时）
-            'amplitude_max': amp_close if amp_close is not None else amp_extreme,
-            'amplitude_close': amp_close,                 # close 口径绝对值（图表用）
+            # 周期振幅：默认用 extreme 口径（周期内极值摆动 = 真振幅），回退到 close 口径
+            'amplitude_max': amp_extreme if amp_extreme is not None else amp_close,
+            'amplitude_close': amp_close,                 # close 口径绝对值（周期涨跌幅，参考）
             'amplitude_close_signed': amp_close_signed,   # close 口径带符号（上涨正/下跌负）
-            'amplitude_extreme': amp_extreme,             # extreme 口径（CycleAmplitudeMax 原始）
+            'amplitude_extreme': amp_extreme,             # extreme 口径（真·周期最大摆动）
             'cycle_1m_vol_max5': v5,
             'completed': completed,
         })
