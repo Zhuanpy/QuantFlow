@@ -41,6 +41,29 @@ class StockInfo(db.Model):
     def __repr__(self):
         return f'<StockInfo {self.code}:{self.name}>'
 
+    @classmethod
+    def find_stock(cls, code: str):
+        """按代码查个股，处理同 code 多条的歧义。
+
+        典型场景：code='000001' 同时存在
+            - 平安银行 (MarketCode=sz000001) 个股
+            - 上证指数 (MarketCode=zs000001) 指数
+          原 .filter_by(code=code).first() 可能返回指数，
+          导致股票详情/筛选页显示错误的名字。
+
+        优先级：个股 (sz/sh/bj 前缀) > 其他；都没有时退回第一条。
+        """
+        rows = cls.query.filter_by(code=code).all()
+        if not rows:
+            return None
+        if len(rows) == 1:
+            return rows[0]
+        for r in rows:
+            mc = (r.MarketCode or '').lower()
+            if mc.startswith(('sz', 'sh', 'bj')):
+                return r
+        return rows[0]
+
 
 # 保持向后兼容的别名
 StockCodes = StockInfo

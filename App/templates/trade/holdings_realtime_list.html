@@ -1,0 +1,162 @@
+{% extends "base.html" %}
+
+{% block content %}
+<style>
+.hr-container { padding: 1rem 1.5rem; }
+.hr-header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 1rem; }
+.hr-header h1 { font-size: 1.5rem; margin: 0; }
+.hr-meta { color: #64748b; font-size: 0.875rem; }
+.hr-table { width: 100%; border-collapse: collapse; background: #fff;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.08); border-radius: 6px; overflow: hidden; }
+.hr-table th { background: #f1f5f9; padding: 0.6rem 0.9rem; text-align: left;
+               font-weight: 600; font-size: 0.875rem; color: #475569; border-bottom: 1px solid #e2e8f0; }
+.hr-table td { padding: 0.6rem 0.9rem; border-bottom: 1px solid #f1f5f9; font-size: 0.9rem; }
+.hr-table tr:hover { background: #f8fafc; cursor: pointer; }
+.hr-table a { color: #2563eb; text-decoration: none; font-weight: 600; }
+.hr-table a:hover { text-decoration: underline; }
+.hr-empty { padding: 2rem; text-align: center; color: #94a3b8; }
+.hr-loading { padding: 2rem; text-align: center; color: #64748b; }
+.hr-num { text-align: right; font-variant-numeric: tabular-nums; }
+.hr-toolbar { display: flex; gap: 0.5rem; }
+.hr-btn { padding: 0.4rem 0.8rem; border: 1px solid #cbd5e1; border-radius: 4px;
+          cursor: pointer; font-size: 0.875rem; background: #fff;
+          text-decoration: none; color: #1e293b; display: inline-flex; align-items: center; gap: 0.3rem; }
+.hr-btn:hover { background: #f1f5f9; border-color: #94a3b8; }
+.hr-btn.primary { background: #2563eb; color: #fff; border-color: #2563eb; }
+.hr-btn.primary:hover { background: #1d4ed8; }
+.hr-row-action { color: #475569; text-decoration: none; font-size: 0.78rem;
+                 padding: 0.15rem 0.45rem; border: 1px solid #e2e8f0; border-radius: 3px;
+                 background: #fff; }
+.hr-row-action:hover { background: #f1f5f9; color: #1e293b; border-color: #94a3b8; }
+.hr-badge { display: inline-block; padding: 0.1rem 0.5rem; border-radius: 4px;
+            font-size: 0.75rem; font-weight: 600; }
+.hr-badge.holding  { background: #fee2e2; color: #991b1b; }
+.hr-badge.watching { background: #dbeafe; color: #1e40af; }
+.hr-muted { color: #cbd5e1; }
+.hr-section { color: #475569; font-weight: 600; font-size: 0.85rem;
+              padding: 0.5rem 0.9rem; background: #f8fafc; }
+</style>
+
+<div class="hr-container">
+    <div class="hr-header">
+        <div>
+            <h1>持仓股票实时 15m 趋势</h1>
+            <div class="hr-meta" id="hrMeta">加载中...</div>
+            <div class="hr-meta" style="margin-top:0.25rem;font-size:0.78rem;">
+                列表数据来源：<code>trade_records</code>（持仓）+ <code>trade_plans</code>（关注）
+            </div>
+        </div>
+        <div class="hr-toolbar">
+            <a class="hr-btn primary" href="/trade/real?mode=real" target="_blank"
+               title="去交易计划/成交管理页（新标签打开）">📋 管理列表来源</a>
+            <button class="hr-btn" onclick="loadHoldings()">↻ 刷新列表</button>
+        </div>
+    </div>
+
+    <table class="hr-table" id="hrTable" style="display:none;">
+        <thead>
+            <tr>
+                <th>类型</th>
+                <th>代码</th>
+                <th>名称</th>
+                <th class="hr-num">净持仓 / 计划量</th>
+                <th class="hr-num">平均成本</th>
+                <th class="hr-num">心里价位</th>
+                <th class="hr-num">止损</th>
+                <th class="hr-num">止盈</th>
+                <th>实时图</th>
+                <th>管理</th>
+            </tr>
+        </thead>
+        <tbody id="hrTbody"></tbody>
+    </table>
+
+    <div class="hr-loading" id="hrLoading">加载中...</div>
+    <div class="hr-empty" id="hrEmpty" style="display:none;">
+        <div style="margin-bottom:0.75rem;">无持仓也无等待入场计划。</div>
+        <div style="font-size:0.85rem;">
+            想要新增？去
+            <a href="/trade/real?mode=real" target="_blank" class="hr-btn primary" style="font-size:0.85rem;padding:0.3rem 0.7rem;">
+                📋 /trade/real 管理列表来源
+            </a>
+            添加成交记录（持仓）或新建状态为 planning/pending 的计划（关注）。
+        </div>
+    </div>
+</div>
+
+<script>
+function fmtNum(v, decimals = 4) {
+    if (v == null) return '<span class="hr-muted">-</span>';
+    return Number(v).toFixed(decimals);
+}
+function fmtInt(v) {
+    if (v == null) return '<span class="hr-muted">-</span>';
+    return Number(v).toLocaleString();
+}
+function rowHtml(it) {
+    const code = it.stock_code;
+    const url  = `/trade/holdings/realtime/${code}`;
+    const manageUrl = `/trade/real?mode=real&stock_code=${code}`;
+    const isHold = it.kind === 'holding';
+    const badge = isHold
+        ? `<span class="hr-badge holding">持仓</span>`
+        : `<span class="hr-badge watching">关注</span>`;
+    const qty   = isHold ? fmtInt(it.net_quantity) : fmtInt(it.target_quantity);
+    const cost  = isHold ? fmtNum(it.avg_cost) : `<span class="hr-muted">-</span>`;
+    const tgt   = isHold ? `<span class="hr-muted">-</span>` : fmtNum(it.target_entry_price);
+    const sl    = fmtNum(it.stop_loss_price);
+    const tp    = fmtNum(it.take_profit_price);
+    const manageLabel = isHold ? '✎ 成交记录' : '✎ 编辑计划';
+    const manageTitle = isHold
+        ? `在 /trade/real 查看/管理 ${code} 的成交记录`
+        : `在 /trade/real 查看/编辑 ${code} 的交易计划`;
+    return `
+        <tr onclick="location.href='${url}'">
+            <td>${badge}</td>
+            <td><a href="${url}" onclick="event.stopPropagation();">${code}</a></td>
+            <td>${it.stock_name || '<span class="hr-muted">-</span>'}</td>
+            <td class="hr-num">${qty}</td>
+            <td class="hr-num">${cost}</td>
+            <td class="hr-num">${tgt}</td>
+            <td class="hr-num">${sl}</td>
+            <td class="hr-num">${tp}</td>
+            <td><a href="${url}" onclick="event.stopPropagation();">实时 15m →</a></td>
+            <td><a class="hr-row-action" href="${manageUrl}" target="_blank"
+                   onclick="event.stopPropagation();" title="${manageTitle}">${manageLabel}</a></td>
+        </tr>`;
+}
+
+async function loadHoldings() {
+    const loading = document.getElementById('hrLoading');
+    const empty   = document.getElementById('hrEmpty');
+    const table   = document.getElementById('hrTable');
+    const tbody   = document.getElementById('hrTbody');
+    const meta    = document.getElementById('hrMeta');
+    loading.style.display = 'block';
+    empty.style.display = 'none';
+    table.style.display = 'none';
+
+    try {
+        const r = await fetch('/api/trade/holdings/realtime/list').then(r => r.json());
+        loading.style.display = 'none';
+        if (!r.success) {
+            meta.textContent = '加载失败：' + (r.message || '未知错误');
+            return;
+        }
+        const items = r.data || [];
+        meta.textContent = `持仓 ${r.holding_count || 0} 只 · 关注 ${r.watching_count || 0} 只 · ${new Date().toLocaleTimeString()}`;
+        if (items.length === 0) {
+            empty.style.display = 'block';
+            return;
+        }
+        tbody.innerHTML = items.map(rowHtml).join('');
+        table.style.display = 'table';
+    } catch (e) {
+        loading.style.display = 'none';
+        meta.textContent = '加载失败：' + e;
+    }
+}
+
+loadHoldings();
+</script>
+{% endblock %}

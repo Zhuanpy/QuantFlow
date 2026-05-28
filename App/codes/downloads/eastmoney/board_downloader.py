@@ -49,8 +49,10 @@ class BoardDownloader:
         下载板块多天 1 分钟数据。
 
         优先级：
-          1) East Money kline API（fqt=0，与日 K 同源）
-          2) AKShare 兜底（stock_board_industry_hist_min_em / concept_min_em，按板块中文名拉）
+          1) push2delay trends2（HTTPS）—— push2his:80 常被整段 TCP RST，
+             浏览器能直连 push2delay https，故作为首选源
+          2) East Money push2his kline API（fqt=0，与日 K 同源）
+          3) AKShare 兜底（stock_board_industry_hist_min_em / concept_min_em，按板块中文名拉）
 
         不能用 pytdx：pytdx get_security_bars 返回的板块指数被"成份股复权"过，
         数值约为真实指数的 56%–64%（与东财官网/日 K 不一致）。
@@ -69,12 +71,37 @@ class BoardDownloader:
         lmt = min(days * 240, 2000)  # 最多2000条记录
         logger.info(f"计算记录数量: {days}天 x 240 = {lmt} 条")
 
-        # ---------- 主路径：East Money ----------
+        # ---------- 首选：push2delay trends2（HTTPS，ndays 1–5）----------
+        # push2his:80 的 kline 当前被整段 TCP RST（含所有子域名前缀、Selenium、
+        # AKShare），而 push2delay https 浏览器可直连，故优先走这条。
+        ndays = min(max(int(days), 1), 5)
+        try:
+            url = my_url('board_1m_trends_delay').format(code, ndays)
+            logger.info(f"尝试 push2delay trends2 源: {url}")
+
+            source = EastMoneyHttpClient.get_source_with_rotation(
+                url, 'board_1m_trends_delay', force_selenium=True)
+
+            if source:
+                dl = get_1m_data(source, match=False, multiple=True)
+                if not dl.empty:
+                    show_download('1m', code)
+                    logger.info(f"push2delay 成功下载板块 {code} 的 {len(dl)} 条记录")
+                    return dl
+                else:
+                    logger.warning(f"push2delay 板块 {code} 数据解析后为空")
+            else:
+                logger.warning(f"push2delay 返回空数据")
+        except Exception as e:
+            logger.warning(f"push2delay 获取失败: {e}")
+
+        # ---------- 次选：East Money push2his kline ----------
         try:
             url = my_url('board_1m_multiple_days').format(code, lmt)
             logger.info(f"尝试访问URL: {url}")
 
-            source = EastMoneyHttpClient.get_source_with_rotation(url, 'board_1m_multiple_days')
+            source = EastMoneyHttpClient.get_source_with_rotation(
+                url, 'board_1m_multiple_days', force_selenium=True)
 
             if source:
                 dl = get_1m_data(source, match=False, multiple=True)
@@ -202,7 +229,8 @@ class BoardDownloader:
         try:
             url = my_url('board_daily_kline').format(code, lmt)
             logger.info(f'[board_daily] {code} URL: {url}')
-            source = EastMoneyHttpClient.get_source_with_rotation(url, 'board_daily_kline')
+            source = EastMoneyHttpClient.get_source_with_rotation(
+                url, 'board_daily_kline', force_selenium=True)
             if not source:
                 logger.warning(f'[board_daily] {code} 无返回')
                 return pd.DataFrame()

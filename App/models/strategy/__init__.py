@@ -13,11 +13,13 @@ from .RnnRunningRecords import RnnRunningRecord
 from .StockRecordModels import Top500FundRecord
 from .StockIssueModels import Issue
 from .StockPool import StockPool
+from .StockDistSnapshot import StockDistSnapshot
 
 __all__ = [
     'RnnTrainingRecords',
-    'RnnRunningRecord', 
+    'RnnRunningRecord',
     'Top500FundRecord',
     'Issue',
-    'StockPool'
-] 
+    'StockPool',
+    'StockDistSnapshot',
+]

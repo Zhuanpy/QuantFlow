@@ -42,23 +42,24 @@ class StockDataDaily:
         # 优先尝试从数据库加载
         if FLASK_AVAILABLE:
             try:
-                from App.exts import db
-                with db.session.begin():
-                    data = get_daily_stock_data(stock_code, start_date, end_date)
-                    if not data.empty:
-                        logger.info(f"成功从数据库加载股票 {stock_code} 日线数据，共 {len(data)} 条记录")
-                        return data
+                # 不用 db.session.begin()：Flask-SQLAlchemy 的 db.session 已 auto-begin
+                data = get_daily_stock_data(stock_code, start_date, end_date)
+                if not data.empty:
+                    logger.info(f"成功从数据库加载股票 {stock_code} 日线数据，共 {len(data)} 条记录")
+                    return data
             except Exception as e:
                 logger.warning(f"从数据库加载失败，尝试从文件加载: {e}")
-        
+                try:
+                    from App.exts import db
+                    db.session.rollback()
+                except Exception:
+                    pass
+
         # 如果数据库加载失败，尝试从CSV文件加载
         try:
-            if FLASK_AVAILABLE:
-                file_path = StockDataPath.get_stock_data_directory() / 'daily' / f'{stock_code}.csv'
-            else:
-                from config import Config
-                project_root = Path(Config.get_project_root())
-                file_path = project_root / 'data' / 'data' / 'daily' / f'{stock_code}.csv'
+            # 真实落盘在 <root>/data/daily/，旧代码用了 <root>/data/data/daily/（多一层）
+            from config import Config
+            file_path = Path(Config.get_project_root()) / 'data' / 'daily' / f'{stock_code}.csv'
             
             if file_path.exists():
                 data = pd.read_csv(file_path, parse_dates=['date'])
@@ -97,12 +98,19 @@ class StockDataDaily:
         
         try:
             from App.exts import db
-            with db.session.begin():
-                success = save_daily_stock_data_to_sql(stock_code, data)
-                if success:
-                    logger.info(f"成功保存股票 {stock_code} 日线数据到数据库，共 {len(data)} 条记录")
-                return success
+            success = save_daily_stock_data_to_sql(stock_code, data)
+            if success:
+                db.session.commit()
+                logger.info(f"成功保存股票 {stock_code} 日线数据到数据库，共 {len(data)} 条记录")
+            else:
+                db.session.rollback()
+            return success
         except Exception as e:
+            try:
+                from App.exts import db
+                db.session.rollback()
+            except Exception:
+                pass
             logger.error(f"保存股票 {stock_code} 日线数据失败: {e}")
             return False
 

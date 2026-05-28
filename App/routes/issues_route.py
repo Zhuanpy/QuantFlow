@@ -16,8 +16,9 @@ API：
 """
 from datetime import datetime
 import logging
+import re
 
-from flask import Blueprint, render_template, request, jsonify
+from flask import Blueprint, render_template, request, jsonify, abort
 
 from App.exts import db
 from App.models.strategy.StockIssueModels import Issue
@@ -28,10 +29,36 @@ logger = logging.getLogger(__name__)
 issue_bp = Blueprint('issue_bp', __name__)
 
 
+# 列表预览里把 base64 内嵌图替换成占位符
+# Why: solution 走富文本后可能塞进 data:image/...（动辄几十 KB），
+#      列表里一次返回几十条会把页面拖慢；编辑页拉单条时仍是完整 HTML。
+_IMG_DATA_RE = re.compile(
+    r'<img\b[^>]*\bsrc=["\']data:[^"\']*["\'][^>]*>', re.IGNORECASE)
+def _strip_inline_images(html):
+    if not html:
+        return html
+    return _IMG_DATA_RE.sub('<span class="img-ph">🖼️ 图片</span>', html)
+
+
 # --------------- 页面 ---------------
 @issue_bp.route('/issues')
 def issues():
-    return render_template('issues.html', statuses=list(Issue.ALL_STATUSES))
+    return render_template('issues.html',
+                           statuses=list(Issue.ALL_STATUSES),
+                           types=list(Issue.ALL_TYPES),
+                           TYPE_EMOJI=Issue.TYPE_EMOJI)
+
+
+@issue_bp.route('/issues/<int:item_id>/edit')
+def issue_edit_page(item_id):
+    row = Issue.query.get(item_id)
+    if not row:
+        abort(404)
+    return render_template('issue_edit.html',
+                           issue=row,
+                           statuses=list(Issue.ALL_STATUSES),
+                           types=list(Issue.ALL_TYPES),
+                           TYPE_EMOJI=Issue.TYPE_EMOJI)
 
 
 # --------------- API ---------------
@@ -53,6 +80,11 @@ def _parse_payload(data):
         if st not in Issue.ALL_STATUSES:
             raise ValueError(f'非法 status: {st}')
         out['status'] = st
+    if 'type' in data:
+        tp = (data.get('type') or '').strip()
+        if tp and tp not in Issue.ALL_TYPES:
+            raise ValueError(f'非法 type: {tp}')
+        out['type'] = tp or Issue.TYPE_IDEA
     return out
 
 
@@ -60,11 +92,14 @@ def _parse_payload(data):
 def api_list():
     try:
         status = (request.args.get('status') or '').strip()
+        type_ = (request.args.get('type') or '').strip()
         q_text = (request.args.get('q') or '').strip()
 
         query = Issue.query
         if status and status in Issue.ALL_STATUSES:
             query = query.filter(Issue.status == status)
+        if type_ and type_ in Issue.ALL_TYPES:
+            query = query.filter(Issue.type == type_)
         if q_text:
             like = f'%{q_text}%'
             query = query.filter(db.or_(Issue.question.like(like),
@@ -83,7 +118,8 @@ def api_list():
             Issue.id.desc(),
         ).all()
 
-        # 状态计数（始终基于关键词过滤但不带状态过滤，方便 UI 展示每个 tab 的数量）
+        # 状态/类型计数：只跟随关键词过滤，不跟随状态/类型过滤
+        # 这样切 tab 时数字不会"跳没"——展示的是"如果我只点这个 tab 会看到多少"
         count_query = Issue.query
         if q_text:
             like = f'%{q_text}%'
@@ -98,12 +134,27 @@ def api_list():
             if st in counts:
                 counts[st] = int(c)
             total += int(c)
+        # 类型计数
+        type_rows = (count_query
+                     .with_entities(Issue.type, db.func.count(Issue.id))
+                     .group_by(Issue.type).all())
+        type_counts = {t: 0 for t in Issue.ALL_TYPES}
+        for tp, c in type_rows:
+            # 旧数据 type=None 归到默认类型
+            key = tp if tp in type_counts else Issue.TYPE_IDEA
+            type_counts[key] = type_counts.get(key, 0) + int(c)
 
+        items_payload = []
+        for r in items:
+            d = r.to_dict()
+            d['solution_preview'] = _strip_inline_images(d.get('solution'))
+            items_payload.append(d)
         return jsonify({
             'success': True,
             'data': {
-                'items': [r.to_dict() for r in items],
+                'items': items_payload,
                 'counts': counts,
+                'type_counts': type_counts,
                 'total': total,
             },
         })
@@ -123,6 +174,7 @@ def api_create():
             question=fields['question'],
             solution=fields.get('solution'),
             status=fields.get('status') or Issue.STATUS_PENDING,
+            type=fields.get('type') or Issue.TYPE_IDEA,
         )
         if row.status == Issue.STATUS_DONE:
             row.resolved_at = datetime.utcnow()

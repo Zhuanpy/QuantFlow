@@ -1,3 +1,5 @@
+import os
+
 import numpy as np
 from keras.models import load_model
 from keras import backend as k
@@ -21,8 +23,17 @@ class TrendDistinguishModel:
 
         """
         模型预估，return value & label ;
+
+        若 MACD 趋势分类模型文件不存在（未训练），抛出 FileNotFoundError，
+        让上层降级为 ('unknown', 0)；避免 Keras 层抛长堆栈。
         """
-        # load_path = os.path.join(self.trend_path, 'predict', f'{stock_code}.jpg')
+        load_file_h5 = 'model.h5'
+        model_path = AnalysisDataPath.macd_model_path(load_file_h5)
+        if not os.path.exists(model_path):
+            raise FileNotFoundError(
+                f"MACD 趋势分类模型未训练（缺 {model_path}）。"
+                "已自动降级为 unknown，可在板块趋势辨别页面训练后启用。"
+            )
 
         load_file_jpg = f'{stock_code}.jpg'
         load_path = AnalysisDataPath.macd_predict_path(load_file_jpg)
@@ -30,9 +41,6 @@ class TrendDistinguishModel:
         img.shape = (1, img.shape[0], img.shape[1], img.shape[2])
 
         k.clear_session()
-        load_file_h5 = 'model.h5'
-
-        model_path = AnalysisDataPath.macd_model_path(load_file_h5)
         model = load_model(model_path)
 
         value = model.predict(img)

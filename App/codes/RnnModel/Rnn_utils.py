@@ -26,22 +26,35 @@ def reset_id_time(id_, _date):
     LoadRnnModel.set_table_run_record(sql, params)
 
 
-def date_range(_date, date_, code_='bk0424') -> list:
+def date_range(_date, date_, code_=None) -> list:
+    """返回 [_date, date_] 区间内的交易日列表。
+
+    实现方式：找一只有数据的"日历股"，把它的 1m 数据按日聚合，取出现的日期。
+    原来默认 'bk0424' 会被 6 位数字校验器拒绝，改为依次尝试几只蓝筹股。
+    """
     if _date == date_:
         _date = pd.to_datetime(_date).date()
         date_ = pd.to_datetime(date_) + pd.Timedelta(days=1)  # .date()
         date_ = date_.date()
-
     else:
         _date = pd.to_datetime(_date).date()
         date_ = pd.to_datetime(date_).date()
 
-    data = StockData1m.load_1m(code_, _year=str(_date.year))
+    # 依次尝试已知大概率有数据的代码（蓝筹/指数代表）
+    candidates = [c for c in [code_, '000001', '600000', '600519', '000002'] if c]
+    data = pd.DataFrame()
+    for c in candidates:
+        d = StockData1m.load_1m(c, year=str(_date.year))
+        if d is not None and not d.empty:
+            data = d
+            break
+
+    if data is None or data.empty or 'date' not in data.columns:
+        return []
+
     data = ResampleData.resample_1m_data(data=data, freq='day').drop_duplicates(subset=['date'])
     data = data[(data['date'] >= _date) & (data['date'] <= date_)]
-    data = list(data['date'])
-
-    return data
+    return list(data['date'])
 
 
 def rnn_data_path(month: str):

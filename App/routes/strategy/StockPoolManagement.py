@@ -120,6 +120,38 @@ def get_stocks():
                     s['latest_close'] = None
                     s['latest_close_date'] = None
 
+            # 批量查所属板块（industry_eastmoney），优先用每只股票最新一条记录
+            try:
+                from sqlalchemy import text
+                eng = db.engines['quanttradingsystem']
+                with eng.connect() as conn:
+                    rows = conn.execute(text(
+                        """
+                        SELECT t.stock_code, t.board_name, t.board_code
+                        FROM industry_eastmoney t
+                        JOIN (
+                            SELECT stock_code, MAX(date) AS md
+                            FROM industry_eastmoney
+                            WHERE stock_code IN :codes
+                            GROUP BY stock_code
+                        ) m ON m.stock_code = t.stock_code AND m.md = t.date
+                        """
+                    ), {'codes': tuple(codes)}).fetchall()
+                board_map = {r[0]: {'board_name': r[1], 'board_code': r[2]} for r in rows}
+                for s in stocks:
+                    b = board_map.get(s['stock_code'])
+                    if b:
+                        s['board_name'] = b['board_name']
+                        s['board_code'] = b['board_code']
+                    else:
+                        s['board_name'] = None
+                        s['board_code'] = None
+            except Exception as merr:
+                logger.warning(f'附加 board 信息失败: {merr}')
+                for s in stocks:
+                    s.setdefault('board_name', None)
+                    s.setdefault('board_code', None)
+
         return jsonify({
             'success': True,
             'data': {

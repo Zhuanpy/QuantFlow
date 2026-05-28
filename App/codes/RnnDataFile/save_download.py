@@ -175,25 +175,14 @@ def save_1m_to_daily(data: pd.DataFrame, stock_code: str) -> bool:
 
 
 def save_1m_to_mysql(stock_code: str, year: str, data: pd.DataFrame) -> bool:
+    """已废弃：1m 数据已统一落本地 parquet（save_1m_to_csv 在同一处调用）。
+
+    历史上写入 per-year MySQL（bind 'data1m{year}'），但这些 bind 从未配置进
+    SQLALCHEMY_BINDS，每次都失败再被 except 吞掉，纯粹刷日志。
+    保留函数签名以免破坏旧调用方，但内部已 no-op。
     """
-    将1分钟数据保存到MySQL数据库
-    
-    Args:
-        stock_code: 股票代码
-        year: 年份
-        data: 1分钟数据DataFrame
-        
-    Returns:
-        bool: 保存是否成功
-    """
-    try:
-        from App.models.data.Stock1m import save_1m_stock_data_to_sql
-        save_1m_stock_data_to_sql(stock_code, year, data)
-        logger.info(f"成功保存1分钟数据到MySQL: {stock_code}, 年份: {year}")
-        return True
-    except Exception as e:
-        logger.error(f"保存1分钟数据到MySQL失败: {stock_code}, 错误: {e}")
-        return False
+    logger.debug(f"save_1m_to_mysql({stock_code}, {year}) skipped — 已统一到本地 parquet")
+    return True
 
 
 def complete_download_process(stock_code: str, days: int = 1, update_record: bool = True) -> Dict[str, any]:

@@ -7,20 +7,41 @@
             <h1>想法 / 待办清单</h1>
             <div class="hd-sub">把"突然冒出的想法、暂时来不及做的功能、注意到的小问题"先记一行；有空再回头实现。</div>
         </div>
+        <button class="btn-primary btn-new" onclick="openAddModal()" title="新建（快捷键 N）">＋ 新建</button>
     </div>
 
-    <!-- 新建 -->
-    <div class="card add-card">
-        <div class="add-row">
-            <input id="newQuestion" type="text" placeholder="一句话标题（必填，比如：板块详情页需要 5m 切换）"
-                   maxlength="200" autocomplete="off" />
-            <select id="newStatus">
-                {% for s in statuses %}<option value="{{ s }}">{{ s }}</option>{% endfor %}
-            </select>
-            <button class="btn-primary" onclick="createIssue()">＋ 添加</button>
+    <!-- 新建弹窗 -->
+    <!-- 不绑 backdrop click：避免在写半截时误点遮罩丢内容；关闭走 ×/取消/Esc -->
+    <div class="modal-mask" id="addModal">
+        <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="addModalTitle">
+            <div class="modal-head">
+                <h2 id="addModalTitle">新建</h2>
+                <button class="modal-close" onclick="closeAddModal()" title="关闭 (Esc)">×</button>
+            </div>
+            <div class="modal-body">
+                <input id="newQuestion" type="text" placeholder="一句话标题（必填，比如：板块详情页需要 5m 切换）"
+                       maxlength="200" autocomplete="off" />
+                <div class="modal-row">
+                    <label>类型
+                        <select id="newType">
+                            {% for t in types %}<option value="{{ t }}">{{ TYPE_EMOJI.get(t, '') }} {{ t }}</option>{% endfor %}
+                        </select>
+                    </label>
+                    <label>状态
+                        <select id="newStatus">
+                            {% for s in statuses %}<option value="{{ s }}">{{ s }}</option>{% endfor %}
+                        </select>
+                    </label>
+                </div>
+                <textarea id="newSolution" rows="4"
+                          placeholder="详细描述 / 实现思路 / 备注（可选；想要排版/插图，可以建好后点 ✎ 进富文本编辑）"></textarea>
+            </div>
+            <div class="modal-foot">
+                <span class="modal-hint">Ctrl/⌘+Enter 提交，Esc 关闭</span>
+                <button class="btn-cancel-modal" onclick="closeAddModal()">取消</button>
+                <button class="btn-primary" onclick="createIssue()">＋ 添加</button>
+            </div>
         </div>
-        <textarea id="newSolution" rows="2"
-                  placeholder="详细描述 / 实现思路 / 备注（可选；多行可粘贴片段）"></textarea>
     </div>
 
     <!-- 工具条 -->
@@ -37,6 +58,16 @@
             <input id="searchBox" type="text" placeholder="搜索标题或内容…" />
         </div>
     </div>
+    <div class="toolbar type-toolbar">
+        <div class="tabs" id="typeTabs">
+            <button data-type="" class="tab type-tab active">全部类型</button>
+            {% for t in types %}
+            <button data-type="{{ t }}" class="tab type-tab">
+                {{ TYPE_EMOJI.get(t, '') }} {{ t }} <span class="cnt" id="tcnt{{ loop.index }}">0</span>
+            </button>
+            {% endfor %}
+        </div>
+    </div>
 
     <!-- 列表 -->
     <div class="list" id="issueList"><div class="empty">加载中…</div></div>
@@ -49,21 +80,54 @@
     .hd-sub { color: var(--text-secondary); font-size: .85rem; margin-top:.25rem; }
 
     .card { background:#fff; border-radius:.6rem; padding:1rem; box-shadow:var(--shadow-sm); margin-bottom:1rem; }
-    .add-card .add-row { display:flex; gap:.5rem; margin-bottom:.5rem; }
-    .add-card input[type=text] { flex:1; padding:.5rem .75rem; border:1px solid #d1d5db; border-radius:.35rem; font-size:.9rem; }
-    .add-card select { padding:.5rem; border:1px solid #d1d5db; border-radius:.35rem; font-size:.85rem; background:#fff; }
-    .add-card textarea { width:100%; padding:.5rem .75rem; border:1px solid #d1d5db; border-radius:.35rem; font-size:.85rem; font-family:inherit; resize:vertical; }
     .btn-primary { padding:.45rem 1rem; background:var(--primary-color); color:#fff; border:none; border-radius:.35rem; font-size:.88rem; cursor:pointer; font-weight:500; }
     .btn-primary:hover { background:var(--secondary-color); }
     .btn-primary:disabled { background:#9ca3af; cursor:not-allowed; }
+    .btn-new { padding:.5rem 1.1rem; font-size:.92rem; }
+
+    /* ---- 新建弹窗 ---- */
+    .modal-mask {
+        display:none; position:fixed; inset:0; background:rgba(15,23,42,.5);
+        z-index:200; align-items:flex-start; justify-content:center;
+        padding:5vh 1rem 2rem; overflow-y:auto;
+    }
+    .modal-mask.open { display:flex; }
+    .modal-box {
+        background:#fff; border-radius:.6rem; box-shadow:0 20px 50px rgba(0,0,0,.25);
+        width:100%; max-width:640px; display:flex; flex-direction:column;
+        animation: modalIn .14s ease-out;
+    }
+    @keyframes modalIn {
+        from { transform: translateY(-12px); opacity:0; }
+        to   { transform: translateY(0); opacity:1; }
+    }
+    .modal-head { display:flex; justify-content:space-between; align-items:center; padding:.85rem 1.1rem .65rem; border-bottom:1px solid #f1f5f9; }
+    .modal-head h2 { font-size:1.05rem; margin:0; }
+    .modal-close { background:none; border:none; font-size:1.5rem; line-height:1; color:#9ca3af; cursor:pointer; padding:0 .25rem; }
+    .modal-close:hover { color:#1f2937; }
+    .modal-body { padding:1rem 1.1rem; display:flex; flex-direction:column; gap:.65rem; }
+    .modal-body input[type=text] { padding:.55rem .75rem; border:1px solid #d1d5db; border-radius:.4rem; font-size:.95rem; }
+    .modal-body input[type=text]:focus { outline:none; border-color:var(--primary-color); box-shadow:0 0 0 3px rgba(37,99,235,.12); }
+    .modal-row { display:flex; gap:.75rem; flex-wrap:wrap; }
+    .modal-row label { display:flex; flex-direction:column; gap:.2rem; font-size:.78rem; color:var(--text-secondary); flex:1; min-width:160px; }
+    .modal-row select { padding:.45rem .55rem; border:1px solid #d1d5db; border-radius:.4rem; font-size:.88rem; background:#fff; }
+    .modal-body textarea { padding:.55rem .75rem; border:1px solid #d1d5db; border-radius:.4rem; font-size:.88rem; font-family:inherit; resize:vertical; }
+    .modal-foot { display:flex; justify-content:flex-end; align-items:center; gap:.5rem; padding:.65rem 1.1rem 1rem; border-top:1px solid #f1f5f9; }
+    .modal-hint { color: var(--text-secondary); font-size:.75rem; margin-right:auto; }
+    .btn-cancel-modal { padding:.45rem .9rem; background:#f3f4f6; color:#374151; border:none; border-radius:.35rem; font-size:.88rem; cursor:pointer; }
+    .btn-cancel-modal:hover { background:#e5e7eb; }
 
     .toolbar { display:flex; justify-content:space-between; align-items:center; margin-bottom:.75rem; flex-wrap:wrap; gap:.5rem; }
+    .type-toolbar { margin-top:-.4rem; margin-bottom:.6rem; }
     .tabs { display:flex; gap:.25rem; flex-wrap:wrap; }
     .tab { padding:.4rem .8rem; background:#fff; border:1px solid #e5e7eb; border-radius:.35rem; cursor:pointer; font-size:.85rem; color:#374151; display:inline-flex; align-items:center; gap:.4rem; }
     .tab:hover { background:#f9fafb; }
     .tab.active { background:var(--primary-color); color:#fff; border-color:var(--primary-color); }
     .tab .cnt { background:rgba(0,0,0,.08); padding:.05rem .4rem; border-radius:.6rem; font-size:.72rem; min-width:1.2rem; text-align:center; }
     .tab.active .cnt { background:rgba(255,255,255,.25); }
+    /* 类型 tab 比状态 tab 略小一点，避免视觉抢戏 */
+    .type-tab { padding:.3rem .65rem; font-size:.78rem; }
+    .type-tab.active { background:#6366f1; border-color:#6366f1; }
     .search-wrap input { padding:.4rem .75rem; border:1px solid #d1d5db; border-radius:.35rem; font-size:.85rem; width:240px; }
 
     .list { display:flex; flex-direction:column; gap:.5rem; }
@@ -85,10 +149,33 @@
     .status-badge.已实现 { background:#d1fae5; color:#065f46; }
     .status-badge.已关闭 { background:#f3f4f6; color:#4b5563; }
 
-    .item-body { margin-top:.5rem; padding:.5rem .65rem; background:#f9fafb; border-radius:.35rem; font-size:.85rem; color:#374151; white-space:pre-wrap; word-break:break-word; }
-    .item-body.editing textarea { width:100%; min-height:5rem; padding:.4rem; border:1px solid #d1d5db; border-radius:.3rem; font-family:inherit; font-size:.85rem; resize:vertical; }
+    /* 类型徽章（标题前的小色标） */
+    .type-chip-wrap { cursor:pointer; margin-right:.4rem; }
+    .type-chip { padding:.1rem .5rem; border-radius:.6rem; font-size:.72rem; font-weight:500; display:inline-flex; align-items:center; gap:.15rem; white-space:nowrap; }
+    .type-chip.type-idea { background:#fef3c7; color:#92400e; }
+    .type-chip.type-bug { background:#fee2e2; color:#991b1b; }
+    .type-chip.type-feature { background:#ede9fe; color:#5b21b6; }
+    .type-chip.type-improvement { background:#cffafe; color:#155e75; }
+
+    .item-body { margin-top:.5rem; padding:.5rem .65rem; background:#f9fafb; border-radius:.35rem; font-size:.85rem; color:#374151; word-break:break-word; }
+    .item-body-link { display:block; text-decoration:none; max-height: 14em; overflow:hidden; position:relative; cursor:pointer; }
+    .item-body-link:hover { background:#f3f4f6; }
+    /* 渐隐底边：内容过长时给个"还有更多"的暗示 */
+    .item-body-link::after {
+        content: ''; position:absolute; left:0; right:0; bottom:0; height:1.2em;
+        background: linear-gradient(to bottom, rgba(249,250,251,0), #f9fafb);
+        pointer-events:none;
+    }
+    .item-body-link:hover::after { background: linear-gradient(to bottom, rgba(243,244,246,0), #f3f4f6); }
+    /* 富文本里的图占位 */
+    .item-body .img-ph { display:inline-block; padding:.05rem .4rem; background:#dbeafe; color:#1e40af; border-radius:.25rem; font-size:.75rem; }
+    /* 富文本内联元素继承外层颜色，避免链接里的 <a> 变蓝 */
+    .item-body-link, .item-body-link * { color:#374151; }
+    .item-body-link p { margin: 0 0 .3rem; }
+    .item-body-link p:last-child { margin-bottom: 0; }
+    .item-body-link h1, .item-body-link h2, .item-body-link h3 { font-size:.95rem; margin:.2rem 0; }
     .item-actions { display:flex; gap:.25rem; }
-    .icon-btn { background:none; border:none; cursor:pointer; padding:.25rem .4rem; color:#6b7280; font-size:.8rem; border-radius:.3rem; }
+    .icon-btn { background:none; border:none; cursor:pointer; padding:.25rem .4rem; color:#6b7280; font-size:.8rem; border-radius:.3rem; text-decoration:none; display:inline-block; }
     .icon-btn:hover { background:#f3f4f6; color:#1f2937; }
     .icon-btn.del:hover { background:#fee2e2; color:#dc2626; }
 
@@ -103,7 +190,10 @@
 
 <script>
 const STATUSES = {{ statuses|tojson }};
+const TYPES = {{ types|tojson }};
+const TYPE_EMOJI = {{ TYPE_EMOJI|tojson }};
 let CURRENT_STATUS = '';
+let CURRENT_TYPE = '';
 let SEARCH_DEBOUNCE = null;
 
 function fmtTime(s) {
@@ -113,6 +203,10 @@ function fmtTime(s) {
 
 function statusClass(s) {
     return ({'待实现':'pending','进行中':'in_progress','已实现':'done','已关闭':'closed'})[s] || '';
+}
+
+function typeClass(t) {
+    return ({'想法':'idea','问题':'bug','功能':'feature','优化':'improvement'})[t] || 'idea';
 }
 
 async function fetchJson(url, opts) {
@@ -129,6 +223,7 @@ async function loadList() {
     const q = document.getElementById('searchBox').value.trim();
     const params = new URLSearchParams();
     if (CURRENT_STATUS) params.set('status', CURRENT_STATUS);
+    if (CURRENT_TYPE) params.set('type', CURRENT_TYPE);
     if (q) params.set('q', q);
 
     const r = await fetchJson(`/issues/api/list?${params}`);
@@ -143,6 +238,11 @@ async function loadList() {
     STATUSES.forEach((s, i) => {
         const el = document.getElementById('cnt' + (i + 1));
         if (el) el.textContent = data.counts[s] || 0;
+    });
+    const typeCounts = data.type_counts || {};
+    TYPES.forEach((t, i) => {
+        const el = document.getElementById('tcnt' + (i + 1));
+        if (el) el.textContent = typeCounts[t] || 0;
     });
 
     // 列表
@@ -159,21 +259,32 @@ function renderItem(it) {
     const created = fmtTime(it.created_at);
     const resolved = it.resolved_at ? `· 完成 ${fmtTime(it.resolved_at)}` : '';
     const safeTitle = escapeHtml(it.question);
-    const safeSolution = it.solution ? escapeHtml(it.solution) : '';
+    const typ = it.type || TYPES[0];
+    const typeChip = `<span class="type-chip type-${typeClass(typ)}" title="类型：${typ}">${TYPE_EMOJI[typ] || ''} ${typ}</span>`;
+    // solution_preview 是后端去掉 base64 图后的 HTML；纯文本（无 <）也安全（不会包含脚本来源，单用户场景）
+    const previewHtml = it.solution_preview || '';
+    const hasContent = previewHtml && previewHtml.trim() !== '';
+    const editUrl = `/issues/${it.id}/edit`;
+    // 旧数据可能是纯文本（无 HTML 标签）—— 用 <pre> 包装以保留换行
+    const looksLikeHtml = /<[a-zA-Z][^>]*>/.test(previewHtml);
+    const bodyInner = looksLikeHtml
+        ? previewHtml
+        : `<pre style="margin:0;font-family:inherit;white-space:pre-wrap;">${escapeHtml(previewHtml)}</pre>`;
     return `
     <div class="item ${cls}" data-id="${it.id}">
         <div class="item-head">
+            <span class="type-chip-wrap" onclick="openTypeMenu(event, ${it.id})" title="点击切换类型">${typeChip}</span>
             <div class="item-title" data-field="question" onclick="editField(this)">${safeTitle}</div>
             <div class="item-meta">
                 <span class="status-badge ${it.status}" onclick="openStatusMenu(event, ${it.id})">${it.status}</span>
                 <span>#${it.id} · ${created} ${resolved}</span>
                 <div class="item-actions">
-                    <button class="icon-btn" onclick="editSolution(${it.id})" title="编辑详情">✎</button>
+                    <a class="icon-btn" href="${editUrl}" title="打开富文本编辑器">✎</a>
                     <button class="icon-btn del" onclick="deleteItem(${it.id})" title="删除">✕</button>
                 </div>
             </div>
         </div>
-        ${safeSolution ? `<div class="item-body" data-field="solution" onclick="editField(this)">${safeSolution}</div>` : ''}
+        ${hasContent ? `<a class="item-body item-body-link" href="${editUrl}" title="点击编辑">${bodyInner}</a>` : ''}
     </div>
     `;
 }
@@ -187,16 +298,29 @@ async function createIssue() {
     const q = document.getElementById('newQuestion');
     const s = document.getElementById('newSolution');
     const st = document.getElementById('newStatus');
+    const tp = document.getElementById('newType');
     const question = q.value.trim();
     if (!question) { q.focus(); alert('请输入标题'); return; }
 
     const r = await fetchJson('/issues/api/create', {
         method: 'POST',
-        body: { question, solution: s.value || null, status: st.value },
+        body: { question, solution: s.value || null, status: st.value, type: tp.value },
     });
     if (!r.success) { alert('创建失败：' + r.message); return; }
     q.value = ''; s.value = '';
+    closeAddModal();
     loadList();
+}
+
+// ----- 新建弹窗 -----
+function openAddModal() {
+    const m = document.getElementById('addModal');
+    m.classList.add('open');
+    // 聚焦标题，方便直接打字
+    setTimeout(() => document.getElementById('newQuestion').focus(), 30);
+}
+function closeAddModal() {
+    document.getElementById('addModal').classList.remove('open');
 }
 
 async function deleteItem(id) {
@@ -206,67 +330,24 @@ async function deleteItem(id) {
     loadList();
 }
 
-// ----- 内联编辑标题 / 详情 -----
+// ----- 内联编辑标题（详情已迁移到独立编辑页 /issues/<id>/edit） -----
 function editField(el) {
     const item = el.closest('.item');
     const id = item.dataset.id;
     const field = el.dataset.field;
+    if (field !== 'question') return;   // 只剩标题走内联
     const old = el.textContent;
+    if (el.querySelector('input')) return; // 已经在编辑
 
-    if (el.querySelector('input,textarea')) return; // 已经在编辑
-
-    if (field === 'question') {
-        el.innerHTML = `<input type="text" value="${escapeHtml(old)}" maxlength="200"
-                            style="width:100%;padding:.3rem;border:1px solid #d1d5db;border-radius:.3rem;font-size:.9rem;font-weight:600;" />`;
-        const input = el.querySelector('input');
-        input.focus(); input.select();
-        input.addEventListener('keydown', ev => {
-            if (ev.key === 'Enter') saveField(id, field, input.value, el, old);
-            else if (ev.key === 'Escape') { el.textContent = old; }
-        });
-        input.addEventListener('blur', () => saveField(id, field, input.value, el, old));
-    } else if (field === 'solution') {
-        const txt = old;
-        el.classList.add('editing');
-        el.innerHTML = `<textarea>${escapeHtml(txt)}</textarea>
-                        <div class="editing-controls">
-                            <button class="btn-cancel" onclick="cancelEdit(this, '${escapeHtml(old).replace(/'/g, '\\\'')}')">取消</button>
-                            <button class="btn-save" onclick="saveSolution(${id}, this)">保存</button>
-                        </div>`;
-        el.querySelector('textarea').focus();
-    }
-}
-
-function editSolution(id) {
-    const item = document.querySelector(`.item[data-id="${id}"]`);
-    let body = item.querySelector('.item-body');
-    if (!body) {
-        body = document.createElement('div');
-        body.className = 'item-body';
-        body.dataset.field = 'solution';
-        body.textContent = '';
-        item.appendChild(body);
-    }
-    editField(body);
-}
-
-function cancelEdit(btn, oldHtml) {
-    const body = btn.closest('.item-body');
-    body.classList.remove('editing');
-    body.innerHTML = oldHtml || '';
-    if (!body.textContent.trim()) body.remove();
-}
-
-async function saveSolution(id, btn) {
-    const body = btn.closest('.item-body');
-    const ta = body.querySelector('textarea');
-    const v = ta.value;
-    const r = await fetchJson(`/issues/api/${id}/update`, {
-        method: 'POST',
-        body: { solution: v || null },
+    el.innerHTML = `<input type="text" value="${escapeHtml(old)}" maxlength="200"
+                        style="width:100%;padding:.3rem;border:1px solid #d1d5db;border-radius:.3rem;font-size:.9rem;font-weight:600;" />`;
+    const input = el.querySelector('input');
+    input.focus(); input.select();
+    input.addEventListener('keydown', ev => {
+        if (ev.key === 'Enter') saveField(id, field, input.value, el, old);
+        else if (ev.key === 'Escape') { el.textContent = old; }
     });
-    if (!r.success) { alert('保存失败：' + r.message); return; }
-    loadList();
+    input.addEventListener('blur', () => saveField(id, field, input.value, el, old));
 }
 
 async function saveField(id, field, value, el, oldVal) {
@@ -311,7 +392,42 @@ async function changeStatus(id, newStatus) {
     loadList();
 }
 
+// ----- 类型切换菜单（点徽章弹出） -----
+function openTypeMenu(ev, id) {
+    ev.stopPropagation();
+    if (openMenu) openMenu.remove();
+    const menu = document.createElement('div');
+    menu.className = 'status-menu';
+    menu.innerHTML = TYPES.map(t =>
+        `<div onclick="changeType(${id}, '${t}')">${TYPE_EMOJI[t] || ''} ${t}</div>`
+    ).join('');
+    document.body.appendChild(menu);
+    const rect = ev.target.getBoundingClientRect();
+    menu.style.top = (rect.bottom + window.scrollY + 4) + 'px';
+    menu.style.left = (rect.left + window.scrollX) + 'px';
+    openMenu = menu;
+}
+
+async function changeType(id, newType) {
+    if (openMenu) { openMenu.remove(); openMenu = null; }
+    const r = await fetchJson(`/issues/api/${id}/update`, {
+        method: 'POST',
+        body: { type: newType },
+    });
+    if (!r.success) { alert('更新失败：' + r.message); return; }
+    loadList();
+}
+
 // ----- Tabs / 搜索 -----
+document.getElementById('typeTabs').addEventListener('click', ev => {
+    const t = ev.target.closest('.tab');
+    if (!t) return;
+    document.querySelectorAll('#typeTabs .tab').forEach(x => x.classList.remove('active'));
+    t.classList.add('active');
+    CURRENT_TYPE = t.dataset.type;
+    loadList();
+});
+
 document.getElementById('statusTabs').addEventListener('click', ev => {
     const t = ev.target.closest('.tab');
     if (!t) return;
@@ -326,9 +442,30 @@ document.getElementById('searchBox').addEventListener('input', () => {
     SEARCH_DEBOUNCE = setTimeout(loadList, 250);
 });
 
-// 在新建标题里按 Enter 直接提交
+// 新建标题里 Enter 直接提交（modal 内）
 document.getElementById('newQuestion').addEventListener('keydown', ev => {
     if (ev.key === 'Enter') { ev.preventDefault(); createIssue(); }
+});
+// 详情 textarea 里 Ctrl/⌘+Enter 提交（普通 Enter 仍是换行）
+document.getElementById('newSolution').addEventListener('keydown', ev => {
+    if ((ev.ctrlKey || ev.metaKey) && ev.key === 'Enter') {
+        ev.preventDefault();
+        createIssue();
+    }
+});
+
+// 全局快捷键：N 打开新建弹窗、Esc 关闭弹窗
+document.addEventListener('keydown', ev => {
+    const inField = /^(INPUT|TEXTAREA|SELECT)$/.test((ev.target.tagName || ''));
+    const modal = document.getElementById('addModal');
+    const isOpen = modal.classList.contains('open');
+    if (ev.key === 'Escape' && isOpen) {
+        closeAddModal();
+    } else if ((ev.key === 'n' || ev.key === 'N') && !inField && !isOpen
+               && !ev.ctrlKey && !ev.metaKey && !ev.altKey) {
+        ev.preventDefault();
+        openAddModal();
+    }
 });
 
 loadList();

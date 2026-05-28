@@ -622,7 +622,7 @@ class Data15MOriginalCalculate(ModelData):
                 'RecordEndDate': self.data_15m.iloc[-1]['date'].strftime('%Y-%m-%d %H:%M:%S'),
                 'RecordEndSignal': self.data_15m.iloc[-1]['Signal'],
                 'RecordEndSignalTimes': self.data_15m.iloc[-1]['SignalTimes'],
-                'RecordEndSignalStartTime': self.data_15m.iloc[-1]['SignalStartTime'].strftime('%Y-%m-%d %H:%M:%S'),
+                'RecordEndSignalStartTime': self.data_15m.iloc[-1]['SignalStartIndex'].strftime('%Y-%m-%d %H:%M:%S'),
                 'RecordNextStartDate': self.data_15m.drop_duplicates(
                     subset=[SignalTimes]).tail(6).iloc[0]['date'].strftime('%Y-%m-%d %H:%M:%S')
             }

@@ -34,6 +34,187 @@ def real_trade_page():
     return render_template('trade/trade_plan.html', trade_mode='real')
 
 
+# ============ 交易记录导入 ============
+
+@trade_plan_bp.route('/api/trade/records/import', methods=['POST'])
+def import_trade_records():
+    """从同花顺导出的交易记录文件导入到 trade_records 表。
+
+    Multipart form:
+        file: 要导入的文件（.csv/.tsv/.txt/.xls/.xlsx）
+        dry_run: 'true' 则只解析不写库
+    """
+    try:
+        from App.services.trade_import_service import import_from_ths
+
+        if 'file' not in request.files:
+            return jsonify({'success': False, 'message': '未上传文件'}), 400
+        f = request.files['file']
+        if not f or not f.filename:
+            return jsonify({'success': False, 'message': '文件为空'}), 400
+
+        dry_run = (request.form.get('dry_run', 'false').lower() == 'true')
+        stats = import_from_ths(f, dry_run=dry_run)
+        return jsonify({'success': True, 'data': stats, 'dry_run': dry_run})
+    except Exception as e:
+        logger.exception('交易记录导入失败')
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@trade_plan_bp.route('/api/trade/records/statistics', methods=['GET'])
+def trade_records_statistics():
+    """从 trade_records 按周期聚合后的统计：胜率、盈亏比、ROI 等。
+
+    Query 参数：
+        mode: '' (全部) | 'simulate' | 'real'，与前端 currentMode 对齐。
+              为兼容旧调用，也接受 trade_mode；都不传时返回全部。
+    """
+    try:
+        from App.services.trade_import_service import calculate_trade_statistics
+        trade_mode = (request.args.get('mode')
+                      or request.args.get('trade_mode')
+                      or '').strip()
+        stats = calculate_trade_statistics(trade_mode=trade_mode)
+        return jsonify({'success': True, 'data': stats})
+    except Exception as e:
+        logger.exception('计算交易统计失败')
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@trade_plan_bp.route('/api/trade/plans/infer_from_records', methods=['POST'])
+def infer_plans_from_records_route():
+    """从 trade_records 推断 trade_plans（持仓/已平仓）。
+
+    Body (JSON, 都可选):
+        stock_code: 只推断指定股票
+        trade_mode: 推断出的 plan 标记为哪种模式（默认 'real'）
+        dry_run: true 则只解析返回会做什么，不写库
+    """
+    try:
+        from App.services.trade_import_service import infer_plans_from_records
+        body = request.get_json(silent=True) or {}
+        stock_code = (body.get('stock_code') or '').strip() or None
+        trade_mode = body.get('trade_mode', 'real')
+        dry_run = bool(body.get('dry_run', False))
+
+        result = infer_plans_from_records(
+            trade_mode=trade_mode, stock_code=stock_code, dry_run=dry_run
+        )
+        return jsonify({
+            'success': True,
+            'dry_run': dry_run,
+            'data': {
+                'active_count': len(result['active']),
+                'completed_count': len(result['completed']),
+                'short_anomaly_count': len(result['short_anomaly']),
+                'inserted_or_updated': result['inserted_or_updated'],
+                'active': result['active'],
+                'completed': result['completed'],
+                'short_anomaly': result['short_anomaly'],
+            }
+        })
+    except Exception as e:
+        logger.exception('推断交易计划失败')
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@trade_plan_bp.route('/api/trade/records', methods=['GET'])
+def list_trade_records():
+    """查询 trade_records，供前端展示导入结果。
+
+    Query 参数（都可选）:
+        page, page_size
+        mode: 'simulate' | 'real' （与 trade_plans 的 mode 参数对齐）
+        stock_code: 股票代码模糊匹配
+        stock_name: 股票名称模糊匹配
+        trade_type: 'buy' | 'sell'
+        market: 交易市场（深圳A股/上海A股）
+        start_date, end_date: 成交时间区间 YYYY-MM-DD
+        sort_by: time_desc / time_asc / amount_desc / amount_asc
+    """
+    try:
+        from App.models.trade.trade_records import TradeRecord
+        page = request.args.get('page', 1, type=int)
+        page_size = min(max(request.args.get('page_size', 10, type=int), 1), 200)
+        trade_mode = (request.args.get('mode') or '').strip()
+        stock_code = (request.args.get('stock_code') or '').strip()
+        stock_name = (request.args.get('stock_name') or '').strip()
+        trade_type = (request.args.get('trade_type') or '').strip()
+        market = (request.args.get('market') or '').strip()
+        start_date_s = (request.args.get('start_date') or '').strip()
+        end_date_s = (request.args.get('end_date') or '').strip()
+        sort_by = (request.args.get('sort_by') or 'time_desc').strip()
+
+        q = TradeRecord.query
+        if trade_mode:
+            q = q.filter(TradeRecord.trade_mode == trade_mode)
+        if stock_code:
+            q = q.filter(TradeRecord.stock_code.like(f'%{stock_code}%'))
+        if stock_name:
+            q = q.filter(TradeRecord.stock_name.like(f'%{stock_name}%'))
+        if trade_type:
+            q = q.filter(TradeRecord.trade_type == trade_type)
+        if market:
+            q = q.filter(TradeRecord.market == market)
+        if start_date_s:
+            try:
+                start_dt = datetime.strptime(start_date_s, '%Y-%m-%d')
+                q = q.filter(TradeRecord.execute_time >= start_dt)
+            except ValueError:
+                pass
+        if end_date_s:
+            try:
+                end_dt = datetime.strptime(end_date_s, '%Y-%m-%d') + timedelta(days=1)
+                q = q.filter(TradeRecord.execute_time < end_dt)
+            except ValueError:
+                pass
+
+        sort_map = {
+            'time_desc':   TradeRecord.execute_time.desc(),
+            'time_asc':    TradeRecord.execute_time.asc(),
+            'amount_desc': TradeRecord.total_amount.desc(),
+            'amount_asc':  TradeRecord.total_amount.asc(),
+        }
+        q = q.order_by(sort_map.get(sort_by, TradeRecord.execute_time.desc()))
+
+        # 聚合统计（在分页前算）：总买金额 / 总卖金额 / 净流
+        agg_rows = q.with_entities(
+            TradeRecord.trade_type,
+            db.func.sum(TradeRecord.total_amount),
+            db.func.sum(TradeRecord.net_amount),
+            db.func.count(TradeRecord.id),
+        ).group_by(TradeRecord.trade_type).all()
+        summary = {'total_count': 0, 'buy_count': 0, 'sell_count': 0,
+                   'buy_amount': 0.0, 'sell_amount': 0.0, 'net_cash_flow': 0.0}
+        for tt, total_amt, net_amt, cnt in agg_rows:
+            summary['total_count'] += int(cnt or 0)
+            if tt == TradeRecord.TRADE_TYPE_BUY:
+                summary['buy_count'] = int(cnt or 0)
+                summary['buy_amount'] = float(total_amt or 0)
+            elif tt == TradeRecord.TRADE_TYPE_SELL:
+                summary['sell_count'] = int(cnt or 0)
+                summary['sell_amount'] = float(total_amt or 0)
+            summary['net_cash_flow'] += float(net_amt or 0)
+
+        pagination = q.paginate(page=page, per_page=page_size, error_out=False)
+        items = [r.to_dict() for r in pagination.items]
+        return jsonify({
+            'success': True,
+            'data': {
+                'items': items,
+                'summary': summary,
+                'pagination': {
+                    'page': pagination.page, 'pages': pagination.pages,
+                    'per_page': pagination.per_page, 'total': pagination.total,
+                    'has_prev': pagination.has_prev, 'has_next': pagination.has_next,
+                }
+            }
+        })
+    except Exception as e:
+        logger.exception('查询交易记录失败')
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
 # ============ API 接口 ============
 
 @trade_plan_bp.route('/api/trade/plans', methods=['GET'])

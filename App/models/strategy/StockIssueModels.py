@@ -3,6 +3,7 @@
 用于管理股票相关的问题和解决方案
 """
 from App.exts import db
+from sqlalchemy.dialects.mysql import MEDIUMTEXT
 from datetime import datetime
 import logging
 
@@ -27,14 +28,32 @@ class Issue(db.Model):
 
     ALL_STATUSES = (STATUS_PENDING, STATUS_IN_PROGRESS, STATUS_DONE, STATUS_CLOSED)
 
+    # 类型常量（不存 emoji，避免编码/搜索麻烦；emoji 由前端贴）
+    TYPE_IDEA = '想法'
+    TYPE_BUG = '问题'
+    TYPE_FEATURE = '功能'
+    TYPE_IMPROVEMENT = '优化'
+
+    ALL_TYPES = (TYPE_IDEA, TYPE_BUG, TYPE_FEATURE, TYPE_IMPROVEMENT)
+
+    # emoji 映射（仅前端展示用；后端/DB 都用纯中文存）
+    TYPE_EMOJI = {
+        TYPE_IDEA: '💡',
+        TYPE_BUG: '🐛',
+        TYPE_FEATURE: '✨',
+        TYPE_IMPROVEMENT: '🔧',
+    }
+
     # 兼容旧调用
     STATUS_UNRESOLVED = STATUS_PENDING
     STATUS_RESOLVED = STATUS_DONE
 
     id = db.Column(db.Integer, primary_key=True, autoincrement=True, comment='主键ID')
     question = db.Column(db.String(200), nullable=False, comment='标题（一句话说明）')
-    solution = db.Column(db.Text, nullable=True, comment='详细描述 / 实现说明 / 备注')
+    # MEDIUMTEXT 而不是默认 TEXT：富文本里粘贴 base64 截图很容易突破 64KB
+    solution = db.Column(MEDIUMTEXT, nullable=True, comment='详细描述 / 实现说明 / 备注（富文本 HTML，含 base64 图片）')
     status = db.Column(db.String(20), default=STATUS_PENDING, comment='状态')
+    type = db.Column(db.String(20), default=TYPE_IDEA, comment='类型：想法/问题/功能/优化')
     
     # 时间戳
     created_at = db.Column(db.DateTime, default=datetime.utcnow, comment='创建时间')
@@ -117,6 +136,7 @@ class Issue(db.Model):
             'question': self.question,
             'solution': self.solution,
             'status': self.status,
+            'type': self.type or self.TYPE_IDEA,
             'created_at': self.created_at.strftime('%Y-%m-%d %H:%M:%S') if self.created_at else None,
             'updated_at': self.updated_at.strftime('%Y-%m-%d %H:%M:%S') if self.updated_at else None,
             'resolved_at': self.resolved_at.strftime('%Y-%m-%d %H:%M:%S') if self.resolved_at else None

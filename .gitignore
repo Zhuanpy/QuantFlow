@@ -45,3 +45,6 @@ Thumbs.db
 # Windows 特殊文件
 nul
 NUL
+
+# Jupyter checkpoint 垃圾
+.ipynb_checkpoints/

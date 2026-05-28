@@ -1,0 +1,554 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8">
+  <title>财经新闻热点话题</title>
+  <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='quant.ico') }}">
+  <style>
+    body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans SC",sans-serif;
+           background:#f1f5f9; color:#111827; }
+    .container { max-width:1400px; margin:0 auto; padding:1.25rem; }
+    .header { display:flex; justify-content:space-between; align-items:center;
+              flex-wrap:wrap; gap:.75rem; margin-bottom:1rem; }
+    h1 { margin:0; font-size:1.35rem; }
+    .nav-back a { color:#2563eb; text-decoration:none; font-size:.9rem; }
+    .nav-back a:hover { text-decoration:underline; }
+    .meta { color:#6b7280; font-size:.85rem; }
+    .card { background:#fff; border:1px solid #e5e7eb; border-radius:8px;
+            padding:1.25rem; margin-bottom:1rem; }
+    .toolbar { display:flex; gap:.5rem; align-items:center; flex-wrap:wrap; }
+    select, button { padding:.4rem .65rem; border:1px solid #d1d5db; border-radius:6px;
+                     background:#fff; font-size:.875rem; cursor:pointer; }
+    button.primary { background:#2563eb; color:#fff; border-color:#2563eb; }
+    button.primary:hover { background:#1d4ed8; }
+    .grid-2 { display:grid; grid-template-columns: 1fr 1fr; gap:1rem; }
+    @media (max-width: 1000px) { .grid-2 { grid-template-columns: 1fr; } }
+    table { width:100%; border-collapse:collapse; font-size:.875rem; }
+    th { background:#f9fafb; padding:.55rem .5rem; text-align:left;
+         font-weight:600; color:#374151; border-bottom:1px solid #e5e7eb; }
+    td { padding:.5rem; border-bottom:1px solid #f3f4f6; vertical-align:top; }
+    tr.clickable { cursor:pointer; }
+    tr.clickable:hover { background:#f8fafc; }
+    tr.expanded { background:#eff6ff; }
+    .rank { color:#9ca3af; font-family:monospace; width:2rem; }
+    .topic-name { font-weight:600; color:#1f2937; }
+    .badge { display:inline-block; padding:.05rem .45rem; border-radius:9999px;
+             font-size:.72rem; margin-left:.3rem; }
+    .badge-keyword { background:#fef3c7; color:#92400e; }
+    .badge-board { background:#dbeafe; color:#1d4ed8; }
+    .stock-chip { display:inline-block; background:#f1f5f9; color:#1e293b;
+                  padding:.05rem .4rem; border-radius:4px; font-size:.75rem;
+                  margin:.05rem; text-decoration:none; }
+    .stock-chip:hover { background:#dbeafe; color:#1d4ed8; }
+    .sample-titles { font-size:.78rem; color:#6b7280; margin-top:.25rem; }
+    .empty { color:#9ca3af; text-align:center; padding:1.5rem; }
+    .article-list { background:#f8fafc; padding:.5rem .75rem; border-radius:6px;
+                    margin-top:.5rem; font-size:.82rem; }
+    .article-list a { color:#1e40af; text-decoration:none; }
+    .article-list a:hover { text-decoration:underline; }
+    .article-time { color:#9ca3af; font-family:monospace; margin-right:.5rem; }
+    /* 词表管理 */
+    .op-btn { display:inline-flex; align-items:center; justify-content:center;
+              width:1.4rem; height:1.4rem; border-radius:4px; font-size:.75rem;
+              cursor:pointer; border:1px solid transparent; user-select:none;
+              transition: background .15s; }
+    .op-btn:hover { background:#e5e7eb; }
+    .op-stop { color:#9ca3af; }
+    .op-stop:hover { color:#b91c1c; background:#fee2e2; }
+    .op-fin { color:#9ca3af; }
+    .op-fin:hover { color:#dc2626; background:#fef3c7; }
+    .op-active { background:#fee2e2 !important; color:#b91c1c !important; }
+    .ov-panel { padding:.75rem 1rem; background:#fafafa; border-radius:6px;
+                font-size:.82rem; margin-top:.5rem; }
+    .ov-chip { display:inline-flex; align-items:center; gap:.3rem; padding:.15rem .55rem;
+               border-radius:9999px; font-size:.78rem; margin:.2rem .3rem .2rem 0; }
+    .ov-chip-stop { background:#fee2e2; color:#991b1b; }
+    .ov-chip-fin  { background:#fef3c7; color:#92400e; }
+    .ov-chip .x { cursor:pointer; opacity:.6; font-weight:700; }
+    .ov-chip .x:hover { opacity:1; }
+    .ov-toggle { color:#2563eb; cursor:pointer; user-select:none; font-size:.85rem; }
+    .ov-toggle:hover { text-decoration:underline; }
+    @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <div>
+      <h1>财经新闻热点话题</h1>
+      <div class="nav-back"><a href="/">← 返回首页</a></div>
+    </div>
+    <div class="toolbar">
+      <span class="meta">日期:</span>
+      <select id="dateSel"><option>加载中...</option></select>
+      <button class="primary" onclick="reload()">刷新视图</button>
+      <button id="forceFetchBtn" onclick="manualFetch()" title="立即去东财再抓一次（无视陈旧阈值）">立即抓取</button>
+    </div>
+  </div>
+
+  <!-- 抓取状态横幅：>24h 未抓会自动后台触发抓取并在这里提示进度 -->
+  <div id="fetchBanner" style="display:none;margin-bottom:1rem;padding:.55rem .9rem;border-radius:8px;font-size:.88rem;"></div>
+
+  <div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem;">
+      <div id="summaryBox" class="meta">加载中...</div>
+      <span class="ov-toggle" id="ovToggle" onclick="toggleOv()">我的词表 ▾</span>
+    </div>
+    <div id="ovPanel" class="ov-panel" style="display:none;">
+      <div style="display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;margin-bottom:.5rem;">
+        <input id="ovTermInput" placeholder="输入要添加的词" type="text"
+               style="padding:.35rem .6rem;border:1px solid #d1d5db;border-radius:6px;font-size:.85rem;min-width:160px;">
+        <button onclick="addOverride('finance')" style="background:#fef3c7;border-color:#fcd34d;color:#92400e;">+ 核心财经词</button>
+        <button onclick="addOverride('stopword')" style="background:#fee2e2;border-color:#fca5a5;color:#991b1b;">+ 停用词</button>
+        <span class="meta" style="margin-left:.5rem;">或在右下表格里直接点 ★ / ×</span>
+      </div>
+      <div>
+        <div style="font-weight:600;font-size:.8rem;color:#92400e;margin-top:.3rem;">核心财经词（红色大字 / FIN）</div>
+        <div id="ovListFin" style="margin-top:.2rem;"></div>
+      </div>
+      <div>
+        <div style="font-weight:600;font-size:.8rem;color:#991b1b;margin-top:.5rem;">停用词（屏蔽）</div>
+        <div id="ovListStop" style="margin-top:.2rem;"></div>
+      </div>
+      <div class="meta" style="margin-top:.5rem;font-size:.75rem;">
+        ※ 用户覆盖会叠加在内置词表之上；停用词优先级最高，加进停用词后该词不再出现
+      </div>
+    </div>
+  </div>
+
+  <div class="grid-2">
+    <!-- 左：话题排行 -->
+    <div class="card">
+      <h2 style="margin:0 0 .75rem 0; font-size:1.05rem;">话题排行（点击展开文章）</h2>
+      <div style="max-height:680px; overflow-y:auto;">
+        <table>
+          <thead>
+            <tr>
+              <th class="rank">#</th>
+              <th>话题</th>
+              <th style="text-align:right;">文章</th>
+              <th>关联股票</th>
+              <th style="text-align:center;width:4.5rem;" title="操作">操作</th>
+            </tr>
+          </thead>
+          <tbody id="topicBody">
+            <tr><td colspan="5" class="empty">加载中…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- 右：词云（独立于左侧"当日话题排行"，按最近 N 天聚合） -->
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:.5rem;margin-bottom:.5rem;">
+        <h2 style="margin:0;font-size:1.05rem;">话题词云</h2>
+        <div style="display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;">
+          <label style="font-size:.8rem;color:#374151;">窗口
+            <select id="cloudDays" onchange="loadCloud()" style="padding:.15rem .4rem;border:1px solid #d1d5db;border-radius:4px;font-size:.8rem;">
+              <option value="7">最近 7 天</option>
+              <option value="14">最近 14 天</option>
+              <option value="30" selected>最近 30 天</option>
+              <option value="60">最近 60 天</option>
+              <option value="90">最近 90 天</option>
+            </select>
+          </label>
+          <span style="font-size:.78rem;color:#6b7280;">
+            <span style="color:#dc2626;">■</span> 核心财经词
+            <span style="margin-left:.6rem;color:#2563eb;">■</span> 关联个股
+            <span style="margin-left:.6rem;color:#6b7280;">字号 = 累计文章数</span>
+          </span>
+        </div>
+      </div>
+      <div id="cloudMeta" style="font-size:.78rem;color:#9ca3af;margin-bottom:.4rem;">加载中…</div>
+      <div id="wordCloud"
+           style="width:100%; min-height:600px; padding:1rem;
+                  display:flex; flex-wrap:wrap; align-items:center;
+                  justify-content:center; align-content:center; gap:.55rem 1rem;
+                  background:linear-gradient(180deg,#fafbfc 0%, #f1f5f9 100%);
+                  border-radius:6px;">
+        加载中…
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="{{ url_for('static', filename='js/plotly.min.js') }}"></script>
+<script>
+let currentDate = null;
+let _pollTimer = null;     // 后台抓取轮询句柄
+let _polledOnce = false;   // 防止重复触发
+
+async function fetchJson(url, opts) {
+  try { const r = await fetch(url, opts); return await r.json(); }
+  catch (e) { return { success:false, message:e.message }; }
+}
+
+// ---------------- 抓取状态横幅 + 自动触发 ----------------
+function renderFetchBanner(st, mode) {
+  // mode: 'fresh' | 'stale' | 'running' | 'done' | 'failed'
+  const el = document.getElementById('fetchBanner');
+  const palette = {
+    fresh:   { bg:'#f0fdf4', bd:'#bbf7d0', fg:'#15803d', icon:'✓' },
+    stale:   { bg:'#fef3c7', bd:'#fcd34d', fg:'#92400e', icon:'⚠' },
+    running: { bg:'#eff6ff', bd:'#bfdbfe', fg:'#1d4ed8', icon:'↻' },
+    done:    { bg:'#f0fdf4', bd:'#bbf7d0', fg:'#15803d', icon:'✓' },
+    failed:  { bg:'#fef2f2', bd:'#fecaca', fg:'#b91c1c', icon:'✗' },
+  };
+  const c = palette[mode] || palette.fresh;
+  const hrs = st && st.hours_since != null ? st.hours_since.toFixed(1) : '—';
+  const last = st && st.last_run_at ? st.last_run_at : '从未';
+  let text = '';
+  if (mode === 'fresh')        text = `上次成功抓取：<b>${last}</b>（${hrs} 小时前）— 数据已是最新`;
+  else if (mode === 'stale')   text = `上次成功抓取：<b>${last}</b>（${hrs} 小时前，超 ${st.stale_threshold_hours}h）— 已自动后台触发新抓取…`;
+  else if (mode === 'running') text = `<span style="display:inline-block;animation:spin 1.2s linear infinite;">↻</span> 正在后台抓取最新新闻… 完成后会自动刷新页面`;
+  else if (mode === 'done') {
+    const r = st && st.last_result;
+    const ins = r && r.inserted != null ? r.inserted : 0;
+    const agg = r && r.aggregated ? r.aggregated.map(a => `${a.date}(${a.topic_rows})`).join(' ') : '';
+    text = `本次抓取完成：新入库 <b>${ins}</b> 条${agg ? '；聚合 ' + agg : ''}`;
+  } else if (mode === 'failed') {
+    const r = st && st.last_result;
+    text = `抓取失败：${r && r.error ? r.error : '未知错误'}`;
+  }
+  el.style.display = '';
+  el.style.background = c.bg;
+  el.style.border = `1px solid ${c.bd}`;
+  el.style.color = c.fg;
+  el.innerHTML = `${c.icon} ${text}`;
+}
+
+async function checkAndAutoFetch() {
+  // 1) 拉一下当前状态
+  let st = await fetchJson('/news/api/fetch_status');
+  if (!st || !st.success) return;
+  // 已经有别的请求触发了抓取在跑（页面 reload 等场景）
+  if (st.running) {
+    renderFetchBanner(st, 'running');
+    startPolling();
+    return;
+  }
+  if (!st.stale) {
+    renderFetchBanner(st, 'fresh');
+    // 数据已新鲜，不需要后台抓取
+    return;
+  }
+  if (_polledOnce) return;    // 同一次页面会话只自动触发一次
+  _polledOnce = true;
+  renderFetchBanner(st, 'stale');
+  // 2) 触发后台抓取（不阻塞 UI）
+  const tr = await fetchJson('/news/api/auto_fetch', { method: 'POST' });
+  if (!tr || !tr.success) return;
+  renderFetchBanner(tr, tr.running ? 'running' : 'fresh');
+  if (tr.running) startPolling();
+}
+
+function startPolling() {
+  if (_pollTimer) return;
+  _pollTimer = setInterval(async () => {
+    const st = await fetchJson('/news/api/fetch_status');
+    if (!st || !st.success) return;
+    if (st.running) {
+      renderFetchBanner(st, 'running');
+      return;
+    }
+    // 后台跑完了 —— 看结果，刷新数据
+    clearInterval(_pollTimer); _pollTimer = null;
+    const lr = st.last_result || {};
+    renderFetchBanner(st, lr.status === 'failed' ? 'failed' : 'done');
+    if (lr.status !== 'failed') {
+      await loadDates();    // 拉最新日期列表 + 自动展示
+    }
+  }, 5000);
+}
+
+async function manualFetch() {
+  // 强制再抓一次（无视 24h 阈值）
+  const btn = document.getElementById('forceFetchBtn');
+  btn.disabled = true; btn.innerText = '抓取中…';
+  const tr = await fetchJson('/news/api/auto_fetch?force=1', { method: 'POST' });
+  btn.disabled = false; btn.innerText = '立即抓取';
+  if (!tr || !tr.success) { alert('触发失败'); return; }
+  renderFetchBanner(tr, tr.running ? 'running' : 'fresh');
+  if (tr.running) startPolling();
+}
+
+async function loadDates() {
+  const j = await fetchJson('/news/api/hotspots/dates');
+  const sel = document.getElementById('dateSel');
+  if (!j.success || !j.dates.length) {
+    sel.innerHTML = '<option>无数据</option>';
+    document.getElementById('summaryBox').innerText = '尚无聚合数据，请先运行 python scripts/run_news_pipeline.py';
+    return;
+  }
+  sel.innerHTML = j.dates.map((d,i) =>
+    `<option value="${d.date}"${i===0?' selected':''}>${d.date}（${d.topic_count} 话题）</option>`
+  ).join('');
+  sel.onchange = () => { currentDate = sel.value; reload(); };
+  currentDate = j.dates[0].date;
+  reload();
+}
+
+async function reload() {
+  if (!currentDate) return;
+  const j = await fetchJson(`/news/api/hotspots?date=${currentDate}&limit=30`);
+  if (!j.success) {
+    document.getElementById('topicBody').innerHTML =
+      `<tr><td colspan="4" class="empty">${j.message || '加载失败'}</td></tr>`;
+    return;
+  }
+  document.getElementById('summaryBox').innerHTML =
+    `日期 <b>${j.date}</b>　|　当日新闻 <b>${j.total_articles}</b> 条　|　热点话题 <b>${j.topic_count}</b> 个`;
+  renderTopics(j.topics);
+  // 词云不依赖当前日期 —— 独立函数 loadCloud 用窗口聚合
+}
+
+// 词云：聚合最近 N 天的话题热度
+async function loadCloud() {
+  const days = document.getElementById('cloudDays').value || 30;
+  const j = await fetchJson(`/news/api/hotspots/cloud?days=${days}&limit=80`);
+  const el = document.getElementById('wordCloud');
+  const meta = document.getElementById('cloudMeta');
+  if (!j.success || !(j.topics || []).length) {
+    meta.innerText = '';
+    el.innerHTML = '<span style="color:#9ca3af;">该窗口暂无话题</span>';
+    return;
+  }
+  const w = j.window || {};
+  meta.innerHTML = `窗口 <b>${w.start} → ${w.end}</b>（${days} 天）｜聚合后 <b>${j.topics.length}</b> 个话题（按累计文章数）`;
+  renderChart(j.topics);
+}
+
+function renderTopics(topics) {
+  if (!topics.length) {
+    document.getElementById('topicBody').innerHTML =
+      `<tr><td colspan="5" class="empty">该日无话题数据</td></tr>`;
+    return;
+  }
+  const rows = topics.map((t, i) => {
+    const stocks = (t.related_stocks || []).slice(0, 4).map(s =>
+      `<a class="stock-chip" href="/stock/?code=${s.code}" target="_blank">${s.name} ×${s.count}</a>`
+    ).join('');
+    const samples = (t.sample_titles || []).slice(0, 2).map(s => `· ${s}`).join('<br>');
+    const isFin = t.topic_type === 'finance';
+    const badgeCls = isFin ? 'badge-keyword' : 'badge-keyword';
+    const badgeText = isFin ? 'FIN' : 'kw';
+    // ★ 已是 FIN 时高亮；× 任何时候都能加为停用词
+    const starCls = isFin ? 'op-btn op-fin op-active' : 'op-btn op-fin';
+    const starTitle = isFin ? '已是核心财经词' : '加为核心财经词';
+    return `
+      <tr class="clickable" data-topic="${encodeURIComponent(t.topic)}" data-i="${i}">
+        <td class="rank">${i+1}</td>
+        <td>
+          <span class="topic-name">${t.topic}</span>
+          <span class="badge ${badgeCls}">${badgeText}</span>
+          <div class="sample-titles">${samples || ''}</div>
+        </td>
+        <td style="text-align:right;font-family:monospace;font-weight:600;">${t.article_count}</td>
+        <td>${stocks || '<span style="color:#9ca3af;">—</span>'}</td>
+        <td style="text-align:center;white-space:nowrap;" onclick="event.stopPropagation();">
+          <span class="${starCls}" title="${starTitle}"
+                onclick="quickOverride('${encodeURIComponent(t.topic)}','finance',event)">★</span>
+          <span class="op-btn op-stop" title="加为停用词（从词云移除）"
+                onclick="quickOverride('${encodeURIComponent(t.topic)}','stopword',event)">×</span>
+        </td>
+      </tr>
+      <tr id="art-${i}" style="display:none;"><td colspan="5"><div id="art-body-${i}" class="article-list">加载中…</div></td></tr>
+    `;
+  }).join('');
+  document.getElementById('topicBody').innerHTML = rows;
+
+  document.querySelectorAll('tr.clickable').forEach(tr => {
+    tr.onclick = (e) => {
+      // 点操作按钮时不要触发行展开
+      if (e.target.closest('.op-btn')) return;
+      toggleTopic(tr);
+    };
+  });
+}
+
+async function toggleTopic(tr) {
+  const i = tr.dataset.i;
+  const topic = decodeURIComponent(tr.dataset.topic);
+  const detail = document.getElementById(`art-${i}`);
+  if (detail.style.display === 'none') {
+    document.querySelectorAll('tr.expanded').forEach(t => t.classList.remove('expanded'));
+    document.querySelectorAll('[id^="art-"]').forEach(d => {
+      if (d.id !== `art-${i}`) d.style.display = 'none';
+    });
+    tr.classList.add('expanded');
+    detail.style.display = '';
+    // 展开看最近 10 篇（跨日，便于看话题的持续发酵情况），日期一并显示
+    const j = await fetchJson(`/news/api/hotspots/articles?topic=${encodeURIComponent(topic)}&recent=1&limit=10`);
+    const body = document.getElementById(`art-body-${i}`);
+    if (!j.success || !j.articles.length) {
+      body.innerHTML = '<span style="color:#9ca3af;">无关联文章</span>';
+      return;
+    }
+    const fmt = (s) => {
+      if (!s) return { d: '--', t: '--:--' };
+      // ISO: 2026-05-24T13:45:00
+      return { d: s.substring(5, 10), t: s.substring(11, 16) };  // MM-DD / HH:MM
+    };
+    body.innerHTML =
+      `<div style="color:#9ca3af;font-size:.78rem;margin-bottom:.3rem;">该话题最近 ${j.count} 篇（共 ${j.limit} 上限）</div>` +
+      j.articles.map(a => {
+        const { d, t } = fmt(a.published_at);
+        return `<div>
+          <span class="article-time" title="${a.published_at || ''}">${d} ${t}</span>
+          <a href="${a.url}" target="_blank" rel="noopener">${a.title}</a>
+        </div>`;
+      }).join('');
+  } else {
+    detail.style.display = 'none';
+    tr.classList.remove('expanded');
+  }
+}
+
+function renderChart(topics) {
+  // 渲染词云：字号按文章数线性映射到 [16px, 56px]
+  const el = document.getElementById('wordCloud');
+  if (!topics.length) {
+    el.innerHTML = '<span style="color:#9ca3af;">该日无话题</span>';
+    return;
+  }
+  const counts = topics.map(t => t.article_count);
+  const minC = Math.min(...counts), maxC = Math.max(...counts);
+  const MIN_FS = 16, MAX_FS = 56;
+  const scale = (c) => (maxC === minC) ? (MIN_FS + MAX_FS) / 2
+    : MIN_FS + (c - minC) / (maxC - minC) * (MAX_FS - MIN_FS);
+
+  // 按热度降序，让大词出现在中心区域（flex 居中布局会自动靠拢）
+  // 但混搭一点顺序更像云，先大后小交替
+  const ordered = topics.slice().sort((a, b) => b.article_count - a.article_count);
+
+  el.innerHTML = ordered.map((t, i) => {
+    const fs = scale(t.article_count).toFixed(1);
+    const isFin = t.topic_type === 'finance';
+    const hasStock = (t.related_stocks || []).length > 0;
+    // 颜色策略：财经词红、有股票关联但非财经词蓝、否则灰（理论上聚合阶段已过滤掉，留作兜底）
+    let color = '#6b7280';
+    if (isFin) color = '#dc2626';
+    else if (hasStock) color = '#2563eb';
+    // 透明度按热度衰减：高热度 1.0，最低 0.55
+    const opacity = (maxC === minC) ? 0.85
+      : (0.55 + 0.45 * (t.article_count - minC) / (maxC - minC)).toFixed(2);
+    const title = `${t.topic} · ${t.article_count} 篇`
+      + (hasStock ? `\n关联: ${t.related_stocks.slice(0,3).map(s=>s.name).join(' / ')}` : '');
+    return `<span class="cloud-word"
+                  data-topic="${encodeURIComponent(t.topic)}"
+                  data-i="${i}"
+                  title="${title.replace(/"/g, '&quot;')}"
+                  style="font-size:${fs}px; color:${color}; opacity:${opacity};
+                         font-weight:${t.article_count >= (maxC + minC) / 2 ? 700 : 500};
+                         line-height:1; cursor:pointer; padding:.1em .15em;
+                         transition: transform .15s ease, opacity .15s ease;">
+              ${t.topic}
+            </span>`;
+  }).join('');
+
+  // 交互：hover 放大，点击触发对应行的展开
+  el.querySelectorAll('.cloud-word').forEach(span => {
+    span.onmouseenter = () => { span.style.transform = 'scale(1.12)'; span.style.opacity = '1'; };
+    span.onmouseleave = () => { span.style.transform = ''; span.style.opacity = span.dataset.origOpacity || ''; };
+    span.dataset.origOpacity = span.style.opacity;
+    span.onclick = () => {
+      const topic = decodeURIComponent(span.dataset.topic);
+      // 找左侧表格对应行触发展开
+      const tr = document.querySelector(`tr[data-topic="${encodeURIComponent(topic)}"]`);
+      if (tr) {
+        tr.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        toggleTopic(tr);
+      }
+    };
+  });
+}
+
+// ---------------------------------------------------------------
+// 词表覆盖管理
+// ---------------------------------------------------------------
+
+let _busyReproc = false;
+
+function toggleOv() {
+  const p = document.getElementById('ovPanel');
+  const t = document.getElementById('ovToggle');
+  const open = p.style.display === 'none';
+  p.style.display = open ? '' : 'none';
+  t.innerText = '我的词表 ' + (open ? '▴' : '▾');
+  if (open) loadOverrides();
+}
+
+async function loadOverrides() {
+  const j = await fetchJson('/news/api/overrides');
+  if (!j.success) return;
+  const fin = j.items.filter(i => i.action === 'finance');
+  const stop = j.items.filter(i => i.action === 'stopword');
+  document.getElementById('ovListFin').innerHTML =
+    fin.length ? fin.map(i =>
+      `<span class="ov-chip ov-chip-fin">${i.term}<span class="x" onclick="delOverride(${i.id})">×</span></span>`
+    ).join('') : '<span class="meta">（暂无）</span>';
+  document.getElementById('ovListStop').innerHTML =
+    stop.length ? stop.map(i =>
+      `<span class="ov-chip ov-chip-stop">${i.term}<span class="x" onclick="delOverride(${i.id})">×</span></span>`
+    ).join('') : '<span class="meta">（暂无）</span>';
+}
+
+async function addOverride(action) {
+  const inp = document.getElementById('ovTermInput');
+  const term = (inp.value || '').trim();
+  if (!term) { inp.focus(); return; }
+  await postOverride(term, action);
+  inp.value = '';
+}
+
+async function quickOverride(termEnc, action, ev) {
+  if (ev) ev.stopPropagation();
+  const term = decodeURIComponent(termEnc);
+  await postOverride(term, action);
+}
+
+async function postOverride(term, action) {
+  if (_busyReproc) return;
+  _busyReproc = true;
+  try {
+    const r = await fetch('/news/api/overrides', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ term, action }),
+    });
+    const j = await r.json();
+    if (!j.success) { alert(j.message || '操作失败'); return; }
+    await reprocessAndReload();
+  } finally { _busyReproc = false; }
+}
+
+async function delOverride(id) {
+  if (_busyReproc) return;
+  _busyReproc = true;
+  try {
+    const r = await fetch(`/news/api/overrides/${id}`, { method: 'DELETE' });
+    const j = await r.json();
+    if (!j.success) { alert(j.message || '删除失败'); return; }
+    await reprocessAndReload();
+  } finally { _busyReproc = false; }
+}
+
+async function reprocessAndReload() {
+  // 给用户一个"正在更新"的视觉反馈
+  const sb = document.getElementById('summaryBox');
+  const old = sb.innerHTML;
+  sb.innerHTML = '<span style="color:#2563eb;">⟳ 正在重算词云...</span>';
+  await fetch('/news/api/reprocess', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ date: currentDate }),
+  });
+  await loadOverrides();
+  await reload();
+}
+
+// 启动：先检查抓取新鲜度（陈旧就后台触发），再加载页面数据
+checkAndAutoFetch();
+loadDates();
+loadCloud();   // 词云独立：默认聚合最近 30 天
+</script>
+</body>
+</html>

@@ -372,11 +372,12 @@ class TrainingDataCalculate:
         data_15m = data_15m.dropna(subset=[SignalTimes])
 
         # 获取新数据的 开始信号 和 结束信号信息
+        # DataFrame 侧用新列名 SignalStartIndex（SQL 表里仍是 SignalStartTime）
         current_StartSignal_SignalName = data_15m.iloc[0]['SignalTimes']
-        current_StartSignal_StartTime = data_15m.iloc[0]['SignalStartTime']
+        current_StartSignal_StartTime = data_15m.iloc[0]['SignalStartIndex']
 
         current_EndSignal_SignalName = data_15m.iloc[-1]['SignalTimes']
-        current_EndSignal_StartTime = data_15m.iloc[-1]['SignalStartTime']
+        current_EndSignal_StartTime = data_15m.iloc[-1]['SignalStartIndex']
 
         # 整理 data_daily 数据， 大于 current_StartSignal_StartTime & 小于 current_EndSignal_StartTime
         data_daily = data_daily[(data_daily['date'] > current_StartSignal_StartTime) &

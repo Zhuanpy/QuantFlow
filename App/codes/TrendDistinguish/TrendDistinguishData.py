@@ -87,7 +87,8 @@ class CountTrendData(TrendDistinguishData):
             signal_times = df.loc[y, 'SignalTimes']
             signal_ = df.loc[y, 'Signal']
 
-            start_time = df.loc[y, 'SignalStartTime']
+            # DataFrame 侧用新列名 SignalStartIndex（SQL 表里仍是 SignalStartTime）
+            start_time = df.loc[y, 'SignalStartIndex']
             end_time = df.loc[y, 'EndPriceIndex']
 
             print(f'{self.stock_code}: {signal_times}')

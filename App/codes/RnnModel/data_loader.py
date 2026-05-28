@@ -209,7 +209,8 @@ class ModelData(RnnBase):
         for _, row in new_data.iterrows():
             data_id = row['date']
             signal_times = row['SignalTimes']
-            signal_start_time = row['SignalStartTime']
+            # DataFrame 侧用新列名 SignalStartIndex；SQL 表里还是 SignalStartTime（老 schema 保留）
+            signal_start_time = row['SignalStartIndex']
             signal = row['Signal']
             signal_choice = row['SignalChoice']
 
@@ -218,7 +219,7 @@ class ModelData(RnnBase):
 
         # 保存 15m 数据截止日期
         date_ = self.data_15m.iloc[-1]['date'].strftime('%Y-%m-%d %H:%M:%S')
-        signal_start_time_ = self.data_15m.iloc[-1]['SignalStartTime'].strftime('%Y-%m-%d %H:%M:%S')
+        signal_start_time_ = self.data_15m.iloc[-1]['SignalStartIndex'].strftime('%Y-%m-%d %H:%M:%S')
         signal_ = self.data_15m.iloc[-1]['Signal']
         signal_times_ = self.data_15m.iloc[-1]['SignalTimes']
 
@@ -307,8 +308,12 @@ class ModelData(RnnBase):
             self.trendLabel, self.trendValue = distinguish.distinguish_freq(
                 self.stock_code, self.data_15m
             )
-        except (FileNotFoundError, OSError, Exception) as e:
-            print(f'[predict] 趋势辨别模块不可用（默认 unknown）: {e}')
+        except FileNotFoundError:
+            # 模型未训练是常态，不打印完整路径堆栈
+            self.trendLabel = 'unknown'
+            self.trendValue = 0.0
+        except (OSError, Exception) as e:
+            print(f'[predict] 趋势辨别模块异常（默认 unknown）: {e}')
             self.trendLabel = 'unknown'
             self.trendValue = 0.0
 

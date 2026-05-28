@@ -939,6 +939,101 @@ def api_sync_stocks():
         return jsonify({'success': False, 'message': str(e)}), 500
 
 
+@stock_trend_bp.route('/api/sync_downloaded_stocks', methods=['POST'])
+def api_sync_downloaded_stocks():
+    """从"已下载日 K 数据的全部个股"同步到打分表。
+
+    与 /api/sync_stocks 的区别：
+      - sync_stocks 源：strategy_stock_pool（用户精选清单）
+      - 本接口源：data_stock_daily（所有已下载日 K 的股票）
+    适用场景：希望对所有下载过的票打分，不只是股票池里的。
+
+    body: {
+        record_date: 'YYYY-MM-DD'（可选，缺省今天）,
+        overwrite: false   True 时覆盖已有记录的 stock_name；否则只补缺
+    }
+    """
+    try:
+        data = request.get_json(silent=True) or {}
+        record_date = data.get('record_date')
+        if record_date:
+            record_date = datetime.strptime(record_date, '%Y-%m-%d').date()
+        else:
+            record_date = date.today()
+        overwrite = bool(data.get('overwrite'))
+
+        # 1) 已下载（data_stock_daily 里有日 K 数据的）所有非板块代码
+        eng = db.engines['quanttradingsystem']
+        with eng.connect() as conn:
+            with_data = _stocks_with_daily_data(conn)
+
+        if not with_data:
+            return jsonify({
+                'success': False,
+                'message': 'data_stock_daily 表里没有任何已下载的个股日 K 数据。请先在 /download_minute_data_page 下载。',
+            }), 404
+
+        # 2) 批量查 StockInfo 拿股票名
+        from App.models.data.basic_info import StockInfo
+        codes_upper = sorted(with_data.keys())
+        info_rows = (StockInfo.query
+                     .filter(StockInfo.code.in_(codes_upper))
+                     .all())
+        name_map = {(r.code or '').strip().upper(): (r.name or '').strip()
+                    for r in info_rows}
+
+        # 3) 批量取该 record_date 已有的打分行
+        existing_rows = (StockTrendScore.query
+                         .filter_by(record_date=record_date)
+                         .all())
+        existing_map = {(r.stock_code or '').strip().upper(): r
+                        for r in existing_rows}
+
+        new_rows = []
+        created = 0
+        updated_name = 0
+        skipped = 0
+        for code in codes_upper:
+            name = name_map.get(code) or code
+            existing = existing_map.get(code)
+            if existing is None:
+                new_rows.append(StockTrendScore(
+                    stock_code=code,
+                    stock_name=name,
+                    record_date=record_date,
+                    trend_stage='unknown',
+                    formula_version='v0',
+                    is_manual=False,
+                ))
+                created += 1
+            elif overwrite and name and existing.stock_name != name:
+                existing.stock_name = name
+                existing.updated_at = datetime.utcnow()
+                updated_name += 1
+            else:
+                skipped += 1
+
+        if new_rows:
+            db.session.bulk_save_objects(new_rows)
+        db.session.commit()
+
+        return jsonify({
+            'success': True,
+            'data': {
+                'record_date': record_date.isoformat(),
+                'total_in_source': len(with_data),
+                'total_stocks': len(with_data),
+                'created': created,
+                'updated_name': updated_name,
+                'skipped': skipped,
+            }
+        })
+    except Exception as e:
+        db.session.rollback()
+        logger.exception('从已下载股票同步失败')
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
 @stock_trend_bp.route('/api/stock/<code>/enroll', methods=['POST'])
 def api_enroll_stock(code):
     """一键下载历史数据并纳入股票池。

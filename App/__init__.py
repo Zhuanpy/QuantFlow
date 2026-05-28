@@ -147,6 +147,13 @@ def register_blueprints(app):
     except ImportError as e:
         print(f"警告: 无法导入 trade_plan_route 蓝图: {e}")
 
+    # 持仓股票实时 15m 趋势
+    try:
+        from App.routes.trade.holdings_realtime_route import holdings_realtime_bp
+        app.register_blueprint(holdings_realtime_bp)
+    except ImportError as e:
+        print(f"警告: 无法导入 holdings_realtime_route 蓝图: {e}")
+
     # 策略相关路由
     try:
         from App.routes.strategy.StockPoolManagement import stock_pool_bp
@@ -197,6 +204,20 @@ def register_blueprints(app):
     except ImportError:
         pass
     
+    # 新闻 / 热点话题路由
+    try:
+        from App.routes.news.hotspots_route import news_hotspots_bp
+        app.register_blueprint(news_hotspots_bp)
+    except ImportError as e:
+        print(f"警告: 无法导入 news.hotspots_route 蓝图: {e}")
+
+    # 个股筛选器（/screener/）：基于 stock_dist_snapshot 的全市场分布筛选
+    try:
+        from App.routes.strategy.dist_filter import screener_bp
+        app.register_blueprint(screener_bp)
+    except ImportError as e:
+        print(f"警告: 无法导入 strategy.dist_filter (screener_bp) 蓝图: {e}")
+
     # 注：原 others/issues.py 和 others/route_stock_issue.py 已并入
     # App.routes.issues_route，不再单独注册（避免 /issues 路由冲突）
 

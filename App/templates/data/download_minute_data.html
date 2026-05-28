@@ -164,53 +164,66 @@
                 <div class="details-header">
                     <h3>下载详情</h3>
                     <div class="details-tabs">
-                        <button class="tab-button" onclick="showTab('pending')">等待下载</button>
-                        <button class="tab-button active" onclick="showTab('success')">成功列表</button>
-                        <button class="tab-button" onclick="showTab('failed')">失败列表</button>
+                        <button class="tab-button active" onclick="showTab('all')">全部记录</button>
                         <button class="tab-button" onclick="showTab('preview')">数据预览</button>
                         <button class="tab-button" onclick="showTab('logs')">实时日志</button>
                     </div>
                 </div>
 
-                <div id="pendingTab" class="tab-content">
-                    <div class="pending-header">
-                        <span id="pendingInfo">加载中...</span>
+                <div id="allTab" class="tab-content active">
+                    <div class="pending-header all-records-toolbar">
+                        <div class="all-records-filters">
+                            <input type="text" id="allSearchInput" class="all-search"
+                                   placeholder="按代码搜索..." onkeydown="if(event.key==='Enter')loadAllRecords(1)">
+                            <select id="allCodeTypeFilter" class="all-status-select" onchange="loadAllRecords(1)">
+                                <option value="stock" selected>个股</option>
+                                <option value="board">板块</option>
+                                <option value="">全部</option>
+                            </select>
+                            <select id="allStatusFilter" class="all-status-select" onchange="loadAllRecords(1)">
+                                <option value="">全部状态</option>
+                                <option value="pending">pending</option>
+                                <option value="processing">processing</option>
+                                <option value="success">success</option>
+                                <option value="failed">failed</option>
+                            </select>
+                            <button class="btn-small" onclick="loadAllRecords(1)">查询</button>
+                        </div>
                         <div class="pending-pagination">
-                            <button id="prevPageBtn" class="btn-small" onclick="loadPendingStocks(currentPendingPage - 1)" disabled>上一页</button>
-                            <span id="pageInfo">第 1 页</span>
-                            <button id="nextPageBtn" class="btn-small" onclick="loadPendingStocks(currentPendingPage + 1)" disabled>下一页</button>
+                            <span id="allInfo">加载中...</span>
+                            <select id="allPerPage" class="all-status-select" onchange="loadAllRecords(1)">
+                                <option value="20" selected>20/页</option>
+                                <option value="50">50/页</option>
+                                <option value="100">100/页</option>
+                            </select>
+                            <button id="allPrevBtn" class="btn-small" onclick="loadAllRecords(currentAllPage - 1)" disabled>上一页</button>
+                            <span id="allPageInfo">第 1 页</span>
+                            <button id="allNextBtn" class="btn-small" onclick="loadAllRecords(currentAllPage + 1)" disabled>下一页</button>
                         </div>
                     </div>
-                    <div class="stock-list" id="pendingList">
-                        <div class="empty-message">加载中...</div>
-                    </div>
-                </div>
-
-                <div id="successTab" class="tab-content active">
-                    <div class="pending-header">
-                        <span id="successInfo">加载中...</span>
-                        <div class="pending-pagination">
-                            <button id="successPrevBtn" class="btn-small" onclick="loadSuccessStocks(currentSuccessPage - 1)" disabled>上一页</button>
-                            <span id="successPageInfo">第 1 页</span>
-                            <button id="successNextBtn" class="btn-small" onclick="loadSuccessStocks(currentSuccessPage + 1)" disabled>下一页</button>
-                        </div>
-                    </div>
-                    <div class="stock-list" id="successList">
-                        <div class="empty-message">加载中...</div>
-                    </div>
-                </div>
-
-                <div id="failedTab" class="tab-content">
-                    <div class="pending-header">
-                        <span id="failedInfo">加载中...</span>
-                        <div class="pending-pagination">
-                            <button id="failedPrevBtn" class="btn-small" onclick="loadFailedStocks(currentFailedPage - 1)" disabled>上一页</button>
-                            <span id="failedPageInfo">第 1 页</span>
-                            <button id="failedNextBtn" class="btn-small" onclick="loadFailedStocks(currentFailedPage + 1)" disabled>下一页</button>
-                        </div>
-                    </div>
-                    <div class="stock-list" id="failedList">
-                        <div class="empty-message">加载中...</div>
+                    <div class="records-table-wrap">
+                        <table class="records-table">
+                            <thead>
+                                <tr>
+                                    <th>ID</th>
+                                    <th>代码</th>
+                                    <th>名称</th>
+                                    <th>状态</th>
+                                    <th>进度</th>
+                                    <th>起始日期</th>
+                                    <th>结束日期</th>
+                                    <th>记录日期</th>
+                                    <th>总数</th>
+                                    <th>已下载</th>
+                                    <th>最后下载</th>
+                                    <th>更新时间</th>
+                                    <th>错误信息</th>
+                                </tr>
+                            </thead>
+                            <tbody id="allRecordsBody">
+                                <tr><td colspan="13" class="empty-message">加载中...</td></tr>
+                            </tbody>
+                        </table>
                     </div>
                 </div>
 
@@ -749,6 +762,97 @@
     grid-column: 1 / -1;
 }
 
+.all-records-toolbar {
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.all-records-filters {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.all-search,
+.all-status-select {
+    padding: 0.25rem 0.5rem;
+    border: 1px solid #d1d5db;
+    border-radius: 0.25rem;
+    font-size: 0.75rem;
+}
+
+.all-search {
+    width: 140px;
+}
+
+.records-table-wrap {
+    overflow-x: auto;
+    padding: 0.25rem 0;
+}
+
+.records-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.75rem;
+}
+
+.records-table th,
+.records-table td {
+    padding: 0.35rem 0.5rem;
+    text-align: left;
+    border-bottom: 1px solid #e5e7eb;
+    white-space: nowrap;
+}
+
+.records-table th {
+    background-color: var(--background-color);
+    color: var(--text-secondary);
+    font-weight: 600;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+}
+
+.records-table tbody tr:hover {
+    background-color: #f9fafb;
+}
+
+.records-table td.name-cell {
+    color: var(--primary-color);
+    cursor: pointer;
+    font-weight: 500;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+
+.records-table td.name-cell:hover {
+    color: var(--text-primary);
+    background-color: #eef2ff;
+}
+
+.records-table td.err-cell {
+    max-width: 260px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: #b91c1c;
+    white-space: normal;
+    word-break: break-all;
+}
+
+.rec-badge {
+    display: inline-block;
+    padding: 0.1rem 0.45rem;
+    border-radius: 0.25rem;
+    font-size: 0.68rem;
+    font-weight: 600;
+    color: #fff;
+}
+
+.rec-badge.success { background-color: #16a34a; }
+.rec-badge.failed { background-color: #dc2626; }
+.rec-badge.pending { background-color: #f59e0b; }
+.rec-badge.processing { background-color: #2563eb; }
+
 .pending-header {
     display: flex;
     justify-content: space-between;
@@ -1086,6 +1190,7 @@ let boardTrendInFlight = false;       // 防止重入
 let currentPendingPage = 1, totalPendingPages = 1, totalPendingCount = 0;
 let currentSuccessPage = 1, totalSuccessPages = 1, totalSuccessCount = 0;
 let currentFailedPage = 1, totalFailedPages = 1, totalFailedCount = 0;
+let currentAllPage = 1, totalAllPages = 1, totalAllCount = 0;
 
 // 标签页切换功能
 function showTab(tabName) {
@@ -1106,19 +1211,98 @@ function showTab(tabName) {
     event.target.classList.add('active');
 
     // 切换标签页时刷新对应数据
-    if (tabName === 'failed') {
-        loadFailedStocks(currentFailedPage);
-    } else if (tabName === 'success') {
-        loadSuccessStocks(currentSuccessPage);
-    } else if (tabName === 'pending') {
-        loadPendingStocks(currentPendingPage);
+    if (tabName === 'all') {
+        loadAllRecords(currentAllPage);
     } else if (tabName === 'preview') {
         loadPreview();
     }
 }
 
+// 加载全部 RecordStockMinute 记录（完整字段，支持搜索/状态筛选/分页）
+function loadAllRecords(page = 1) {
+    if (page < 1) page = 1;
+    if (page > totalAllPages && totalAllPages > 0) page = totalAllPages;
+    currentAllPage = page;
+
+    const search = (document.getElementById('allSearchInput').value || '').trim();
+    const status = document.getElementById('allStatusFilter').value || '';
+    const codeType = document.getElementById('allCodeTypeFilter').value || '';
+    const perPage = document.getElementById('allPerPage').value || '20';
+    const params = new URLSearchParams({ page: page, per_page: perPage });
+    if (search) params.set('search', search);
+    if (status) params.set('status', status);
+    if (codeType) params.set('code_type', codeType);
+
+    const body = document.getElementById('allRecordsBody');
+    body.innerHTML = '<tr><td colspan="13" class="empty-message">加载中...</td></tr>';
+
+    fetch(`{{ url_for("download_data_bp.api_get_download_records") }}?${params.toString()}`)
+        .then(res => res.json())
+        .then(data => {
+            if (data.error) {
+                body.innerHTML = `<tr><td colspan="13" class="empty-message">加载失败: ${data.error}</td></tr>`;
+                return;
+            }
+            const records = data.records || [];
+            totalAllCount = data.total || 0;
+            totalAllPages = data.total_pages || 1;
+            currentAllPage = data.page || 1;
+            renderAllRecords(records);
+            updateAllPagination();
+        })
+        .catch(error => {
+            console.error('获取全部记录失败:', error);
+            body.innerHTML = `<tr><td colspan="13" class="empty-message">加载失败: ${error.message}</td></tr>`;
+        });
+}
+
+function escapeHtml(s) {
+    return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+}
+
+function renderAllRecords(records) {
+    const body = document.getElementById('allRecordsBody');
+    if (!records.length) {
+        body.innerHTML = '<tr><td colspan="13" class="empty-message">暂无记录</td></tr>';
+        return;
+    }
+    body.innerHTML = records.map(r => {
+        const st = r.download_status || '-';
+        const badgeCls = ['success', 'failed', 'pending', 'processing'].includes(st) ? st : '';
+        const prog = (r.download_progress != null) ? r.download_progress + '%' : '-';
+        const err = r.error_message ? escapeHtml(r.error_message) : '';
+        return `<tr>
+            <td>${r.id}</td>
+            <td class="stock-code">${escapeHtml(r.stock_code)}</td>
+            <td class="name-cell" title="点击查看数据详情"
+                onclick="viewStockData('${escapeHtml(r.stock_code)}')">${escapeHtml(r.stock_name || '-')}</td>
+            <td><span class="rec-badge ${badgeCls}">${escapeHtml(st)}</span></td>
+            <td>${prog}</td>
+            <td>${r.start_date || '-'}</td>
+            <td>${r.end_date || '-'}</td>
+            <td>${r.record_date || '-'}</td>
+            <td>${r.total_records != null ? r.total_records : '-'}</td>
+            <td>${r.downloaded_records != null ? r.downloaded_records : '-'}</td>
+            <td>${r.last_download_time || '-'}</td>
+            <td>${r.updated_at || '-'}</td>
+            <td class="err-cell" title="${err}">${err}</td>
+        </tr>`;
+    }).join('');
+}
+
+function updateAllPagination() {
+    document.getElementById('allInfo').textContent = `共 ${totalAllCount} 条记录`;
+    document.getElementById('allPageInfo').textContent =
+        `第 ${currentAllPage} / ${totalAllPages} 页`;
+    document.getElementById('allPrevBtn').disabled = currentAllPage <= 1;
+    document.getElementById('allNextBtn').disabled = currentAllPage >= totalAllPages;
+}
+
 // 加载成功下载的股票列表
 function loadSuccessStocks(page = 1) {
+    if (!document.getElementById('successList')) return;  // 该标签页已移除
     if (page < 1) page = 1;
     if (page > totalSuccessPages && totalSuccessPages > 0) page = totalSuccessPages;
     currentSuccessPage = page;
@@ -1148,6 +1332,7 @@ function loadSuccessStocks(page = 1) {
 // 更新成功股票列表显示
 function updateSuccessList() {
     const container = document.getElementById('successList');
+    if (!container) return;  // 列表标签已移除
     if (successStocks.length === 0) {
         container.innerHTML = '<div class="empty-message">暂无数据最新的股票</div>';
         return;
@@ -1176,6 +1361,7 @@ function updateSuccessPagination() {
 
 // 加载失败的股票列表
 function loadFailedStocks(page = 1) {
+    if (!document.getElementById('failedList')) return;  // 该标签页已移除
     if (page < 1) page = 1;
     if (page > totalFailedPages && totalFailedPages > 0) page = totalFailedPages;
     currentFailedPage = page;
@@ -1205,6 +1391,7 @@ function loadFailedStocks(page = 1) {
 // 更新失败股票列表显示
 function updateFailedList() {
     const container = document.getElementById('failedList');
+    if (!container) return;  // 列表标签已移除
     if (failedStocks.length === 0) {
         container.innerHTML = '<div class="empty-message">暂无下载失败的股票</div>';
         return;
@@ -1233,6 +1420,7 @@ function updateFailedPagination() {
 
 // 加载等待下载的股票列表
 function loadPendingStocks(page = 1) {
+    if (!document.getElementById('pendingList')) return;  // 该标签页已移除
     if (page < 1) page = 1;
     if (page > totalPendingPages && totalPendingPages > 0) page = totalPendingPages;
 
@@ -1270,6 +1458,7 @@ function viewStockData(code) {
 // 更新等待下载列表显示
 function updatePendingList() {
     const container = document.getElementById('pendingList');
+    if (!container) return;  // 列表标签已移除
 
     if (pendingStocks.length === 0) {
         container.innerHTML = '<div class="empty-message">所有股票数据已是最新，无需下载</div>';
@@ -1525,9 +1714,7 @@ function updateStatus() {
                     console.log('[DEBUG] previewPolling定时器已清理');
                 }
                 // 下载完成后刷新完整列表数据并恢复基础轮询
-                loadFailedStocks(1);
-                loadSuccessStocks(1);
-                loadPendingStocks(1);
+                loadAllRecords(currentAllPage);
                 startBasicPolling();
 
                 // 仅在真正完成或数据已是最新时自动跑板块趋势打分；
@@ -1862,9 +2049,7 @@ document.addEventListener('DOMContentLoaded', function() {
     // 立即执行一次更新
     updateStatistics();
     loadTodayTaskStatus();
-    loadPendingStocks(1);   // 加载等待下载的股票列表
-    loadSuccessStocks(1);   // 加载成功下载的股票列表
-    loadFailedStocks(1);    // 加载失败下载的股票列表
+    loadAllRecords(1);      // 加载全部记录列表
     checkNetworkStatus();
     checkDataSourceStatus();
     updateDownloadStatusDisplay();
@@ -1917,9 +2102,7 @@ document.getElementById('startBtn').onclick = function() {
             updateStatus();
             updateStatistics();
             updateDownloadDetails();
-            loadPendingStocks(currentPendingPage);
-            loadSuccessStocks(currentSuccessPage);
-            loadFailedStocks(currentFailedPage);
+            loadAllRecords(currentAllPage);
 
             // 启动高频轮询（下载时使用）
             console.log('[DEBUG] 启动高频轮询...');
@@ -1943,9 +2126,7 @@ document.getElementById('stopBtn').onclick = function() {
             // 立即更新一次状态
             updateStatistics();
             updateDownloadDetails();
-            loadPendingStocks(currentPendingPage);
-            loadSuccessStocks(currentSuccessPage);
-            loadFailedStocks(currentFailedPage);
+            loadAllRecords(currentAllPage);
 
             // 清理高频轮询，回到基础轮询
             console.log('[DEBUG] 清理高频轮询，回到基础轮询...');
@@ -2046,9 +2227,7 @@ document.getElementById('setDateBtn').onclick = function() {
                 alert(data.message);
                 // 刷新统计数据和列表
                 updateStatistics();
-                loadPendingStocks(1);
-                loadSuccessStocks(1);
-                loadFailedStocks(1);
+                loadAllRecords(1);
             } else {
                 addLog('设置失败: ' + data.message, 'error');
                 alert('设置失败: ' + data.message);

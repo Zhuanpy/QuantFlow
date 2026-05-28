@@ -10,7 +10,8 @@
         <div class="header-actions">
             <button class="btn btn-outline" onclick="toggleHelp()">ⓘ 字段说明 / 公式</button>
             <button class="btn btn-primary" onclick="openEditModal()">+ 新增/录入</button>
-            <button class="btn btn-outline" onclick="syncStocks()" title="从股票池拉取清单">⤓ 从股票池同步</button>
+            <button class="btn btn-outline" onclick="syncStocks()" title="从股票池（strategy_stock_pool）拉取活跃个股">⤓ 从股票池同步</button>
+            <button class="btn btn-outline" onclick="syncDownloadedStocks()" title="从 data_stock_daily 拉取所有已下载日 K 的个股（含未在股票池的）">⤓ 从已下载同步</button>
             <button class="btn btn-outline" onclick="cleanupEmpty()">🧹 清理无数据个股</button>
             <button class="btn btn-outline" onclick="triggerCompute()">⚙ 自动计算</button>
         </div>
@@ -526,6 +527,22 @@ async function syncStocks() {
     if (!r.success) { alert('同步失败：' + (r.message || '')); return; }
     const d = r.data;
     alert(`同步完成\n股票池中活跃个股：${d.total_in_source} 只\n过滤无日 K 数据：${d.filtered_out_no_data} 只\n实际导入：${d.total_stocks} 只（新建 ${d.created} / 跳过 ${d.skipped}）`);
+    await loadDates();
+    document.getElementById('filterDate').value = d.record_date;
+    loadList();
+}
+
+async function syncDownloadedStocks() {
+    const date = document.getElementById('filterDate').value || new Date().toISOString().slice(0, 10);
+    if (!confirm(`将从 data_stock_daily 拉取所有已下载日 K 数据的个股（含未在股票池的），\n同步到 ${date} 的打分表（占位 unknown，需再点"自动计算"才会打分）。\n\n注意：数据量可能较大（数千只），耗时数秒。继续？`)) return;
+    const r = await fetch('/stock_trend/api/sync_downloaded_stocks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ record_date: date }),
+    }).then(r => r.json()).catch(() => ({ success: false, message: '请求失败' }));
+    if (!r.success) { alert('同步失败：' + (r.message || '')); return; }
+    const d = r.data;
+    alert(`同步完成\n已下载个股总数：${d.total_in_source} 只\n实际导入：${d.total_stocks} 只（新建 ${d.created} / 跳过 ${d.skipped}）`);
     await loadDates();
     document.getElementById('filterDate').value = d.record_date;
     loadList();

@@ -24,6 +24,10 @@ from .StockDaily import (
 )
 from .summary import DataSummary
 from .DailyTaskStatus import DailyTaskStatus
+from .news import (
+    NewsArticle, NewsArticleEntity, NewsTopicDaily, NewsFetchLog,
+    NewsKeywordOverride,
+)
 
 __all__ = [
     # 新类名
@@ -44,4 +48,10 @@ __all__ = [
     'get_market_overview',
     'update_fund_holdings_data',
     'DailyTaskStatus',
+    # 新闻 / 热点话题
+    'NewsArticle',
+    'NewsArticleEntity',
+    'NewsTopicDaily',
+    'NewsFetchLog',
+    'NewsKeywordOverride',
 ]

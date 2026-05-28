@@ -61,7 +61,14 @@ class Config:
         }
 
     # 静态属性，保持向后兼容
-    DB_CONFIG = property(lambda self: Config.get_db_config())
+    # 不能用 property —— Config 一直是当类用（Config.DB_CONFIG[...]），
+    # 走类访问会拿到 property descriptor 本身，触发 "'property' object is not subscriptable"
+    DB_CONFIG = {
+        'host': DB_HOST,
+        'user': DB_USER,
+        'password': DB_PASSWORD,
+        'charset': 'utf8mb4',
+    }
 
     # 使用 Secrets 模块构建数据库连接字符串
     SQLALCHEMY_DATABASE_URI = Secrets.get_database_uri()
@@ -160,6 +167,11 @@ class Config:
             'Host': 'push2his.eastmoney.com',
             'Cookie': Secrets.get_eastmoney_cookie()
         },
+        'board_1m_trends_delay': {
+            **_EASTMONEY_BASE_HEADERS_TEMPLATE,
+            'Host': 'push2delay.eastmoney.com',
+            'Cookie': Secrets.get_eastmoney_cookie()
+        },
         'stock_quote': {
             **_EASTMONEY_BASE_HEADERS_TEMPLATE,
             'Host': 'push2.eastmoney.com',
@@ -182,6 +194,11 @@ class Config:
         # 单日分时数据（trends2 API）
         'stock_1m_data': 'http://push2.eastmoney.com/api/qt/stock/trends2/get?secid={}&fields1=f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13&fields2=f51,f52,f53,f54,f55,f56,f57,f58',
         'board_1m_data': 'http://push2.eastmoney.com/api/qt/stock/trends2/get?secid=90.{}&fields1=f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13&fields2=f51,f52,f53,f54,f55,f56,f57,f58',
+        # 板块多日 1m —— push2delay 备用源（trends2，HTTPS，ndays 1–5）。
+        # push2his:80 的 kline 接口常被整段 TCP RST，而浏览器能直连
+        # push2delay 的 https，故板块优先走这条。无 cb → 原始 JSON（match=False），
+        # fields2 8 段对应解析器 8 列分支（date/open/close/high/low/volume/money/avg）。
+        'board_1m_trends_delay': 'https://push2delay.eastmoney.com/api/qt/stock/trends2/get?secid=90.{}&fields1=f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13&fields2=f51,f52,f53,f54,f55,f56,f57,f58&iscr=0&iscca=0&ut=fa5fd1943c7b386f172d6893dbfba10b&ndays={}',
         # 多天K线数据（kline API）- klt=1表示1分钟K线
         'stock_1m_multiple_days': 'http://push2his.eastmoney.com/api/qt/stock/kline/get?secid={}&klt=1&fqt=1&lmt={}&end=20500101&fields1=f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61',
         # 注意：板块指数没有"复权"概念，必须使用 fqt=0（不复权）。

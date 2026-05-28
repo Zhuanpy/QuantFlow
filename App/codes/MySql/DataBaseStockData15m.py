@@ -1,150 +1,118 @@
 # -*- coding: utf-8 -*-
 """
-股票15分钟数据访问层
-提供从数据库或文件加载15分钟数据的功能
+股票15分钟数据访问层（本地 parquet 唯一来源）
+
+历史背景：原版"MySQL 优先，失败再读本地"。但 15m 模型绑定的 SQLAlchemy bind
+`datadaily` 从未配置进 SQLALCHEMY_BINDS，所有 SQL 调用都会失败再 fallback。
+现在统一只用本地 `<root>/data/15m/<code>.parquet`（与 viewer_15m / 个股趋势同源）。
+
+公开 API 全部保留：load_15m / save_15m / append_15m / replace_15m / delete_15m /
+set_data_15m_data / get_data_15m_data_end_date —— 调用方无需改。
 """
 import pandas as pd
 import logging
 from pathlib import Path
-from typing import Optional
+
+from config import Config
 
 logger = logging.getLogger(__name__)
 
-# 尝试导入 Flask 相关模块（如果可用）
-try:
-    from App.models.data.Stock15m import load_15m_stock_data_from_sql, save_15m_stock_data_to_sql, get_15m_stock_data
-    from App.codes.RnnDataFile.stock_path import StockDataPath
-    FLASK_AVAILABLE = True
-except ImportError:
-    FLASK_AVAILABLE = False
-    logger.warning("Flask 模块不可用，DataBaseStockData15m 功能可能受限")
+
+def _local_15m_path(stock_code: str, ext: str = 'parquet') -> Path:
+    base = Path(Config.get_project_root()) / 'data' / '15m'
+    base.mkdir(parents=True, exist_ok=True)
+    return base / f'{stock_code}.{ext}'
+
+
+def _read_local_15m(stock_code: str) -> pd.DataFrame:
+    """parquet 优先，csv 兜底，都没有返回空"""
+    p = _local_15m_path(stock_code, 'parquet')
+    c = _local_15m_path(stock_code, 'csv')
+    if p.exists():
+        df = pd.read_parquet(p)
+        df['date'] = pd.to_datetime(df['date'])
+        return df
+    if c.exists():
+        return pd.read_csv(c, parse_dates=['date'])
+    return pd.DataFrame()
+
+
+def _write_local_15m(stock_code: str, data: pd.DataFrame) -> bool:
+    """覆盖式写入 parquet（同时清掉旧 csv，避免读到陈旧数据）"""
+    try:
+        if data is None or data.empty:
+            return False
+        df = data.copy()
+        if 'date' in df.columns:
+            df['date'] = pd.to_datetime(df['date'])
+        df.to_parquet(_local_15m_path(stock_code, 'parquet'), index=False)
+        c = _local_15m_path(stock_code, 'csv')
+        if c.exists():
+            try:
+                c.unlink()
+            except Exception:
+                pass
+        return True
+    except Exception as e:
+        logger.error(f"写本地 15m 失败 {stock_code}: {e}")
+        return False
 
 
 class StockData15m:
-    """
-    股票15分钟数据访问类
-    提供从数据库或CSV文件加载数据的功能
-    """
-    
+    """股票15分钟数据访问类（本地 parquet）"""
+
     @staticmethod
     def load_15m(stock_code: str) -> pd.DataFrame:
-        """
-        加载股票15分钟数据
-        
-        Args:
-            stock_code: 股票代码
-            
-        Returns:
-            pd.DataFrame: 包含15分钟数据的DataFrame，包含列：date, open, close, high, low, volume, money
-        """
-        # 优先尝试从数据库加载
-        if FLASK_AVAILABLE:
-            try:
-                from App.exts import db
-                with db.session.begin():
-                    data = load_15m_stock_data_from_sql(stock_code)
-                    if not data.empty:
-                        logger.info(f"成功从数据库加载股票 {stock_code} 15分钟数据，共 {len(data)} 条记录")
-                        return data
-            except Exception as e:
-                logger.warning(f"从数据库加载失败，尝试从文件加载: {e}")
-        
-        # 如果数据库加载失败，尝试从Parquet/CSV文件加载
+        """加载股票15分钟数据"""
         try:
-            if FLASK_AVAILABLE:
-                base_dir = Path(StockDataPath.get_stock_data_directory()) / '15m'
-            else:
-                from config import Config
-                project_root = Path(Config.get_project_root())
-                base_dir = project_root / 'data' / 'data' / '15m'
-
-            # 优先读取parquet文件
-            parquet_path = base_dir / f'{stock_code}.parquet'
-            csv_path = base_dir / f'{stock_code}.csv'
-
-            if parquet_path.exists():
-                data = pd.read_parquet(parquet_path)
-                data['date'] = pd.to_datetime(data['date'])
-                logger.info(f"成功从Parquet加载股票 {stock_code} 15分钟数据，共 {len(data)} 条记录")
-                return data
-            elif csv_path.exists():
-                data = pd.read_csv(csv_path, parse_dates=['date'])
-                logger.info(f"成功从CSV加载股票 {stock_code} 15分钟数据，共 {len(data)} 条记录")
-                return data
-            else:
-                logger.warning(f"15m文件不存在: {parquet_path}")
+            df = _read_local_15m(stock_code)
+            if df.empty:
+                logger.warning(f"15m 本地文件不存在: {stock_code}")
+                return df
+            logger.info(f"加载 {stock_code} 15m: {len(df)} 条")
+            return df
         except Exception as e:
-            logger.error(f"从文件加载失败: {e}")
+            logger.error(f"加载 {stock_code} 15m 失败: {e}")
+            return pd.DataFrame()
 
-        logger.error(f"无法加载股票 {stock_code} 15分钟数据")
-        return pd.DataFrame()
-    
     @staticmethod
     def save_15m(stock_code: str, data: pd.DataFrame) -> bool:
-        """
-        保存股票15分钟数据到数据库
-        
-        Args:
-            stock_code: 股票代码
-            data: 15分钟数据DataFrame
-            
-        Returns:
-            bool: 保存是否成功
-        """
-        if not FLASK_AVAILABLE:
-            logger.error("Flask 模块不可用，无法保存数据")
-            return False
-        
-        try:
-            from App.exts import db
-            with db.session.begin():
-                success = save_15m_stock_data_to_sql(stock_code, data)
-                if success:
-                    logger.info(f"成功保存股票 {stock_code} 15分钟数据到数据库，共 {len(data)} 条记录")
-                return success
-        except Exception as e:
-            logger.error(f"保存股票 {stock_code} 15分钟数据失败: {e}")
-            return False
-    
+        """保存（覆盖式）股票15分钟数据"""
+        ok = _write_local_15m(stock_code, data)
+        if ok:
+            logger.info(f"保存 {stock_code} 15m 成功: {len(data)} 条")
+        return ok
+
     @staticmethod
     def replace_15m(stock_code: str, data: pd.DataFrame) -> bool:
-        """
-        替换股票15分钟数据（先删除旧数据，再插入新数据）
-        
-        Args:
-            stock_code: 股票代码
-            data: 15分钟数据DataFrame
-            
-        Returns:
-            bool: 替换是否成功
-        """
-        # 先删除旧数据，再保存新数据
-        if StockData15m.delete_15m(stock_code):
-            return StockData15m.save_15m(stock_code, data)
-        return False
-    
+        """替换：直接覆盖写"""
+        return StockData15m.save_15m(stock_code, data)
+
     @staticmethod
     def append_15m(stock_code: str, data: pd.DataFrame) -> bool:
-        """
-        追加股票15分钟数据（不删除旧数据，直接插入新数据）
-        
-        Args:
-            stock_code: 股票代码
-            data: 15分钟数据DataFrame
-            
-        Returns:
-            bool: 追加是否成功
-        """
-        return StockData15m.save_15m(stock_code, data)
-    
+        """追加：合并已有数据后按 date 去重 + 排序 + 覆盖写"""
+        if data is None or data.empty:
+            return False
+        try:
+            old = _read_local_15m(stock_code)
+            new = data.copy()
+            new['date'] = pd.to_datetime(new['date'])
+            merged = (pd.concat([old, new], ignore_index=True)
+                      if not old.empty else new)
+            merged = (merged
+                      .drop_duplicates(subset=['date'], keep='last')
+                      .sort_values('date')
+                      .reset_index(drop=True))
+            return _write_local_15m(stock_code, merged)
+        except Exception as e:
+            logger.error(f"追加 {stock_code} 15m 失败: {e}")
+            return False
+
     @staticmethod
     def get_data_15m_data_end_date(stock_code: str):
-        """
-        获取该股票 15m 数据的最新日期（用于增量追加）。
-        没数据时返回 1900-01-01，让追加逻辑等同于"全量插入"。
-        """
+        """该股票 15m 数据的最新日期。无数据时返回 1900-01-01。"""
         try:
-            df = StockData15m.load_15m(stock_code)
+            df = _read_local_15m(stock_code)
             if df is None or df.empty:
                 return pd.Timestamp('1900-01-01')
             return pd.to_datetime(df['date']).max()
@@ -154,37 +122,36 @@ class StockData15m:
 
     @staticmethod
     def delete_15m(stock_code: str) -> bool:
-        """
-        删除股票15分钟数据
-        
-        Args:
-            stock_code: 股票代码
-            
-        Returns:
-            bool: 删除是否成功
-        """
-        if not FLASK_AVAILABLE:
-            logger.error("Flask 模块不可用，无法删除数据")
-            return False
-        
+        """删除本地 15m 文件"""
         try:
-            from App.exts import db
-            from App.models.data.Stock15m import create_15m_stock_model
-            
-            StockModel = create_15m_stock_model(stock_code)
-            with db.session.begin():
-                StockModel.query.delete()
-                db.session.commit()
-            logger.info(f"成功删除股票 {stock_code} 15分钟数据")
+            removed = False
+            for ext in ('parquet', 'csv'):
+                p = _local_15m_path(stock_code, ext)
+                if p.exists():
+                    p.unlink()
+                    removed = True
+            if removed:
+                logger.info(f"删除 {stock_code} 15m 成功")
             return True
         except Exception as e:
-            logger.error(f"删除股票 {stock_code} 15分钟数据失败: {e}")
+            logger.error(f"删除 {stock_code} 15m 失败: {e}")
             return False
+
+    @staticmethod
+    def set_data_15m_data(stock_code: str, sql: str = None, params=None) -> bool:
+        """旧 API：原本是对 MySQL 表做 UPDATE。本地化后不再支持按 SQL 部分更新。
+
+        调用方都在 try/except 里，返回 False 即可让上层走 fallback。
+        如需精确字段更新（如更新某一行的 Signal/SignalTimes），
+        请用 load_15m → 修改 DataFrame → replace_15m 的方式。
+        """
+        logger.debug(
+            f"set_data_15m_data({stock_code}) 已废弃（本地 parquet 不支持按 SQL UPDATE）"
+        )
+        return False
 
 
 if __name__ == '__main__':
-    # 测试代码
     data = StockData15m.load_15m('000001')
     print(f"加载数据: {len(data)} 条记录")
     print(data.head() if not data.empty else "数据为空")
-

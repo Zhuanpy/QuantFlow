@@ -42,23 +42,7 @@
 
     <!-- 主内容区 -->
     <div class="main-content">
-        <!-- 左侧：股票列表 -->
-        <div class="stock-list-panel">
-            <div class="panel-header">
-                <h3>股票列表</h3>
-                <span id="stockListInfo">加载中...</span>
-            </div>
-            <div class="stock-list" id="stockList">
-                <div class="loading-message">加载中...</div>
-            </div>
-            <div class="pagination">
-                <button id="stockPrevBtn" class="btn-small" onclick="loadStockList(currentStockPage - 1)" disabled>上一页</button>
-                <span id="stockPageInfo">第 1 页</span>
-                <button id="stockNextBtn" class="btn-small" onclick="loadStockList(currentStockPage + 1)" disabled>下一页</button>
-            </div>
-        </div>
-
-        <!-- 右侧：数据详情 -->
+        <!-- 数据详情（单列，铺满宽度） -->
         <div class="data-detail-panel">
             <div class="panel-header">
                 <h3>数据详情</h3>
@@ -221,10 +205,7 @@
 
 /* 主内容区 */
 .main-content {
-    display: grid;
-    grid-template-columns: 350px 1fr;
-    gap: 1rem;
-    align-items: start;
+    display: block;
 }
 
 /* 面板通用样式 */
@@ -537,23 +518,16 @@ document.addEventListener('DOMContentLoaded', function() {
     const stockParam = urlParams.get('stock');
 
     if (stockParam) {
-        // 如果有指定股票，先设置搜索框并加载
+        // 已移除左侧列表，直接按 URL 参数加载该股票详情
         document.getElementById('searchInput').value = stockParam;
-        loadStockList(1, function() {
-            // 加载完成后自动选中该股票
-            selectStock(stockParam);
-        });
-    } else {
-        loadStockList(1);
+        selectStock(stockParam);
     }
 
-    // 搜索框防抖
-    document.getElementById('searchInput').addEventListener('input', function() {
-        clearTimeout(searchTimeout);
-        searchTimeout = setTimeout(() => {
-            currentStockPage = 1;
-            loadStockList(1);
-        }, 300);
+    // 没有左侧列表了：搜索框改为「输入代码后回车直接加载该股票」
+    document.getElementById('searchInput').addEventListener('keydown', function(e) {
+        if (e.key !== 'Enter') return;
+        const code = (this.value || '').trim();
+        if (code) selectStock(code);
     });
 });
 
@@ -601,6 +575,10 @@ function loadYears(stockCode = null, callback = null, selectLatest = false) {
 
 // 加载股票列表
 function loadStockList(page = 1, callback = null) {
+    if (!document.getElementById('stockList')) {  // 左侧列表已移除
+        if (typeof callback === 'function') callback();
+        return;
+    }
     const search = document.getElementById('searchInput').value;
     currentStockPage = page;
 

@@ -146,8 +146,15 @@ atr_pct = ATR / close × 100
         <label>日期
             <select id="filterDate" onchange="loadList()"></select>
         </label>
+        <label>方向
+            <select id="filterDirection" onchange="onDirectionChange()">
+                <option value="">全部</option>
+                <option value="up">↑ 上涨（前期 + 后期）</option>
+                <option value="down">↓ 下跌（前期 + 后期）</option>
+            </select>
+        </label>
         <label>阶段
-            <select id="filterStage" onchange="loadList()">
+            <select id="filterStage" onchange="onStageChange()">
                 <option value="">全部</option>
                 {% for s in trend_stages %}
                 <option value="{{ s }}">{{ s }}</option>
@@ -452,11 +459,28 @@ function renderDataStatus(ds) {
          + `</span>`;
 }
 
+// 方向与具体阶段二选一：选了方向就清空阶段，反之亦然 —— 避免同时存在让用户困惑
+function onDirectionChange() {
+    if (document.getElementById('filterDirection').value) {
+        document.getElementById('filterStage').value = '';
+    }
+    currentPage = 1;
+    loadList();
+}
+function onStageChange() {
+    if (document.getElementById('filterStage').value) {
+        document.getElementById('filterDirection').value = '';
+    }
+    currentPage = 1;
+    loadList();
+}
+
 async function loadList() {
     const params = new URLSearchParams({
         page: currentPage,
         page_size: pageSize,
         record_date: document.getElementById('filterDate').value,
+        trend_direction: document.getElementById('filterDirection').value,
         trend_stage: document.getElementById('filterStage').value,
         signal: document.getElementById('filterSignal').value,
         sort_by: document.getElementById('filterSort').value,

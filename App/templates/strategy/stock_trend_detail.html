@@ -456,6 +456,36 @@ async function loadHistory() {
     }
 }
 
+// ---------------- 图表右侧留白工具 ----------------
+// 给 K 线图右边追加空槽位，避免最新数据贴边
+function _padCount(len, percent = 0.08, min = 3) {
+    return Math.max(min, Math.ceil(len * percent));
+}
+function _padDates(dates, n) {
+    const out = dates.slice();
+    for (let i = 0; i < n; i++) out.push('');  // 空字符串占槽不显示标签
+    return out;
+}
+// 线序列（ma20 / ma60 / DIF / DEA / 纯数字数组）：纯 null 占位即可
+function _padNulls(arr, n) {
+    const out = arr.slice();
+    for (let i = 0; i < n; i++) out.push(null);
+    return out;
+}
+// 蜡烛图：必须是 [null, null, null, null] 占位
+// （纯 null 会让 ECharts 内部 value[0]/value[1] 访问崩）
+function _padCandles(arr, n) {
+    const out = arr.slice();
+    for (let i = 0; i < n; i++) out.push([null, null, null, null]);
+    return out;
+}
+// 柱状图带 itemStyle：必须是 { value: null }（纯 null 同上崩）
+function _padValueObjects(arr, n) {
+    const out = arr.slice();
+    for (let i = 0; i < n; i++) out.push({ value: null });
+    return out;
+}
+
 async function loadChart() {
     const days = document.getElementById('daysSel').value;
     const r = await fetch(`/stock_trend/api/stock/${STOCK_CODE}/chart?days=${days}${rangeQuery()}`).then(r=>r.json());
@@ -478,6 +508,17 @@ async function loadChart() {
         itemStyle: { color: x.close >= x.open ? '#dc2626' : '#16a34a' }
     }));
 
+    // 右侧留白
+    const padN = _padCount(dates.length);
+    const datesP = _padDates(dates, padN);
+    const kdataP = _padCandles(kdata, padN);
+    const ma20P  = _padNulls(ma20, padN);
+    const ma60P  = _padNulls(ma60, padN);
+    const difP   = _padNulls(dif, padN);
+    const deaP   = _padNulls(dea, padN);
+    const barP   = _padNulls(bar, padN);
+    const volP   = _padValueObjects(vol, padN);
+
     if (!chart) chart = echarts.init(document.getElementById('kChart'));
     chart.setOption({
         animation: false,
@@ -490,9 +531,9 @@ async function loadChart() {
             { left: 60, right: 30, top: '80%', height: '17%' },
         ],
         xAxis: [
-            { type: 'category', data: dates, scale: true, boundaryGap: false, axisLine: { onZero: false }, splitLine: { show: false } },
-            { type: 'category', gridIndex: 1, data: dates, axisLabel: { show: false }, axisLine: { onZero: false }, splitLine: { show: false } },
-            { type: 'category', gridIndex: 2, data: dates, axisLabel: { show: false }, axisLine: { onZero: false }, splitLine: { show: false } },
+            { type: 'category', data: datesP, scale: true, boundaryGap: false, axisLine: { onZero: false }, splitLine: { show: false } },
+            { type: 'category', gridIndex: 1, data: datesP, axisLabel: { show: false }, axisLine: { onZero: false }, splitLine: { show: false } },
+            { type: 'category', gridIndex: 2, data: datesP, axisLabel: { show: false }, axisLine: { onZero: false }, splitLine: { show: false } },
         ],
         yAxis: [
             { scale: true, splitArea: { show: true } },
@@ -504,14 +545,14 @@ async function loadChart() {
             { show: true, xAxisIndex: [0,1,2], type: 'slider', bottom: 0, start: 60, end: 100 },
         ],
         series: [
-            { name: '日K', type: 'candlestick', data: kdata,
+            { name: '日K', type: 'candlestick', data: kdataP,
               itemStyle: { color: '#dc2626', color0: '#16a34a', borderColor: '#dc2626', borderColor0: '#16a34a' } },
-            { name: 'MA20', type: 'line', data: ma20, smooth: true, showSymbol: false, lineStyle: { width: 1.2, color: '#f59e0b' } },
-            { name: 'MA60', type: 'line', data: ma60, smooth: true, showSymbol: false, lineStyle: { width: 1.2, color: '#8b5cf6' } },
-            { name: '量', type: 'bar', xAxisIndex: 1, yAxisIndex: 1, data: vol },
-            { name: 'DIF', type: 'line', xAxisIndex: 2, yAxisIndex: 2, data: dif, smooth: true, showSymbol: false, lineStyle: { color: '#2563eb' } },
-            { name: 'DEA', type: 'line', xAxisIndex: 2, yAxisIndex: 2, data: dea, smooth: true, showSymbol: false, lineStyle: { color: '#f59e0b' } },
-            { name: 'MACD', type: 'bar', xAxisIndex: 2, yAxisIndex: 2, data: bar.map(v => ({
+            { name: 'MA20', type: 'line', data: ma20P, smooth: true, showSymbol: false, lineStyle: { width: 1.2, color: '#f59e0b' } },
+            { name: 'MA60', type: 'line', data: ma60P, smooth: true, showSymbol: false, lineStyle: { width: 1.2, color: '#8b5cf6' } },
+            { name: '量', type: 'bar', xAxisIndex: 1, yAxisIndex: 1, data: volP },
+            { name: 'DIF', type: 'line', xAxisIndex: 2, yAxisIndex: 2, data: difP, smooth: true, showSymbol: false, lineStyle: { color: '#2563eb' } },
+            { name: 'DEA', type: 'line', xAxisIndex: 2, yAxisIndex: 2, data: deaP, smooth: true, showSymbol: false, lineStyle: { color: '#f59e0b' } },
+            { name: 'MACD', type: 'bar', xAxisIndex: 2, yAxisIndex: 2, data: barP.map(v => (v == null ? { value: null } : {
                 value: v, itemStyle: { color: v >= 0 ? '#dc2626' : '#16a34a' }
             })) },
         ]
@@ -558,6 +599,16 @@ async function loadChart15m() {
         itemStyle: { color: x.close >= x.open ? '#dc2626' : '#16a34a' }
     }));
 
+    const padN = _padCount(dates.length);
+    const datesP = _padDates(dates, padN);
+    const kdataP = _padCandles(kdata, padN);
+    const ma20P  = _padNulls(ma20, padN);
+    const ma60P  = _padNulls(ma60, padN);
+    const difP   = _padNulls(dif, padN);
+    const deaP   = _padNulls(dea, padN);
+    const barP   = _padNulls(bar, padN);
+    const volP   = _padValueObjects(vol, padN);
+
     const dom = document.getElementById('kChart15m');
     if (!chart15m) chart15m = echarts.init(dom);
     chart15m.setOption({
@@ -571,9 +622,9 @@ async function loadChart15m() {
             { left: 60, right: 30, top: '80%', height: '17%' },
         ],
         xAxis: [
-            { type: 'category', data: dates, scale: true, boundaryGap: false, axisLine: { onZero: false }, splitLine: { show: false } },
-            { type: 'category', gridIndex: 1, data: dates, axisLabel: { show: false }, axisLine: { onZero: false }, splitLine: { show: false } },
-            { type: 'category', gridIndex: 2, data: dates, axisLabel: { show: false }, axisLine: { onZero: false }, splitLine: { show: false } },
+            { type: 'category', data: datesP, scale: true, boundaryGap: false, axisLine: { onZero: false }, splitLine: { show: false } },
+            { type: 'category', gridIndex: 1, data: datesP, axisLabel: { show: false }, axisLine: { onZero: false }, splitLine: { show: false } },
+            { type: 'category', gridIndex: 2, data: datesP, axisLabel: { show: false }, axisLine: { onZero: false }, splitLine: { show: false } },
         ],
         yAxis: [
             { scale: true, splitArea: { show: true } },
@@ -585,14 +636,14 @@ async function loadChart15m() {
             { show: true, xAxisIndex: [0,1,2], type: 'slider', bottom: 0, start: 60, end: 100 },
         ],
         series: [
-            { name: '15mK', type: 'candlestick', data: kdata,
+            { name: '15mK', type: 'candlestick', data: kdataP,
               itemStyle: { color: '#dc2626', color0: '#16a34a', borderColor: '#dc2626', borderColor0: '#16a34a' } },
-            { name: 'MA20', type: 'line', data: ma20, smooth: true, showSymbol: false, lineStyle: { width: 1.2, color: '#f59e0b' } },
-            { name: 'MA60', type: 'line', data: ma60, smooth: true, showSymbol: false, lineStyle: { width: 1.2, color: '#8b5cf6' } },
-            { name: '量', type: 'bar', xAxisIndex: 1, yAxisIndex: 1, data: vol },
-            { name: 'DIF', type: 'line', xAxisIndex: 2, yAxisIndex: 2, data: dif, smooth: true, showSymbol: false, lineStyle: { color: '#2563eb' } },
-            { name: 'DEA', type: 'line', xAxisIndex: 2, yAxisIndex: 2, data: dea, smooth: true, showSymbol: false, lineStyle: { color: '#f59e0b' } },
-            { name: 'MACD', type: 'bar', xAxisIndex: 2, yAxisIndex: 2, data: bar.map(v => ({
+            { name: 'MA20', type: 'line', data: ma20P, smooth: true, showSymbol: false, lineStyle: { width: 1.2, color: '#f59e0b' } },
+            { name: 'MA60', type: 'line', data: ma60P, smooth: true, showSymbol: false, lineStyle: { width: 1.2, color: '#8b5cf6' } },
+            { name: '量', type: 'bar', xAxisIndex: 1, yAxisIndex: 1, data: volP },
+            { name: 'DIF', type: 'line', xAxisIndex: 2, yAxisIndex: 2, data: difP, smooth: true, showSymbol: false, lineStyle: { color: '#2563eb' } },
+            { name: 'DEA', type: 'line', xAxisIndex: 2, yAxisIndex: 2, data: deaP, smooth: true, showSymbol: false, lineStyle: { color: '#f59e0b' } },
+            { name: 'MACD', type: 'bar', xAxisIndex: 2, yAxisIndex: 2, data: barP.map(v => (v == null ? { value: null } : {
                 value: v, itemStyle: { color: v >= 0 ? '#dc2626' : '#16a34a' }
             })) },
         ]
@@ -626,6 +677,17 @@ function renderBoardChart(domId, rows) {
         value: x.volume,
         itemStyle: { color: x.close >= x.open ? '#dc2626' : '#16a34a' }
     }));
+
+    const padN = _padCount(dates.length);
+    const datesP = _padDates(dates, padN);
+    const kdataP = _padCandles(kdata, padN);
+    const ma20P  = _padNulls(ma20, padN);
+    const ma60P  = _padNulls(ma60, padN);
+    const difP   = _padNulls(dif, padN);
+    const deaP   = _padNulls(dea, padN);
+    const barP   = _padNulls(bar, padN);
+    const volP   = _padValueObjects(vol, padN);
+
     if (!boardCharts[domId]) boardCharts[domId] = echarts.init(dom);
     boardCharts[domId].setOption({
         animation: false,
@@ -638,9 +700,9 @@ function renderBoardChart(domId, rows) {
             { left: 50, right: 20, top: '80%', height: '17%' },
         ],
         xAxis: [
-            { type: 'category', data: dates, scale: true, boundaryGap: false, axisLine: { onZero: false }, splitLine: { show: false } },
-            { type: 'category', gridIndex: 1, data: dates, axisLabel: { show: false }, axisLine: { onZero: false }, splitLine: { show: false } },
-            { type: 'category', gridIndex: 2, data: dates, axisLabel: { show: false }, axisLine: { onZero: false }, splitLine: { show: false } },
+            { type: 'category', data: datesP, scale: true, boundaryGap: false, axisLine: { onZero: false }, splitLine: { show: false } },
+            { type: 'category', gridIndex: 1, data: datesP, axisLabel: { show: false }, axisLine: { onZero: false }, splitLine: { show: false } },
+            { type: 'category', gridIndex: 2, data: datesP, axisLabel: { show: false }, axisLine: { onZero: false }, splitLine: { show: false } },
         ],
         yAxis: [
             { scale: true, splitArea: { show: true } },
@@ -652,14 +714,14 @@ function renderBoardChart(domId, rows) {
             { show: true, xAxisIndex: [0,1,2], type: 'slider', bottom: 0, start: 60, end: 100 },
         ],
         series: [
-            { name: '日K', type: 'candlestick', data: kdata,
+            { name: '日K', type: 'candlestick', data: kdataP,
               itemStyle: { color: '#dc2626', color0: '#16a34a', borderColor: '#dc2626', borderColor0: '#16a34a' } },
-            { name: 'MA20', type: 'line', data: ma20, smooth: true, showSymbol: false, lineStyle: { width: 1.2, color: '#f59e0b' } },
-            { name: 'MA60', type: 'line', data: ma60, smooth: true, showSymbol: false, lineStyle: { width: 1.2, color: '#8b5cf6' } },
-            { name: '量', type: 'bar', xAxisIndex: 1, yAxisIndex: 1, data: vol },
-            { name: 'DIF', type: 'line', xAxisIndex: 2, yAxisIndex: 2, data: dif, smooth: true, showSymbol: false, lineStyle: { color: '#2563eb' } },
-            { name: 'DEA', type: 'line', xAxisIndex: 2, yAxisIndex: 2, data: dea, smooth: true, showSymbol: false, lineStyle: { color: '#f59e0b' } },
-            { name: 'MACD', type: 'bar', xAxisIndex: 2, yAxisIndex: 2, data: bar.map(v => ({
+            { name: 'MA20', type: 'line', data: ma20P, smooth: true, showSymbol: false, lineStyle: { width: 1.2, color: '#f59e0b' } },
+            { name: 'MA60', type: 'line', data: ma60P, smooth: true, showSymbol: false, lineStyle: { width: 1.2, color: '#8b5cf6' } },
+            { name: '量', type: 'bar', xAxisIndex: 1, yAxisIndex: 1, data: volP },
+            { name: 'DIF', type: 'line', xAxisIndex: 2, yAxisIndex: 2, data: difP, smooth: true, showSymbol: false, lineStyle: { color: '#2563eb' } },
+            { name: 'DEA', type: 'line', xAxisIndex: 2, yAxisIndex: 2, data: deaP, smooth: true, showSymbol: false, lineStyle: { color: '#f59e0b' } },
+            { name: 'MACD', type: 'bar', xAxisIndex: 2, yAxisIndex: 2, data: barP.map(v => (v == null ? { value: null } : {
                 value: v, itemStyle: { color: v >= 0 ? '#dc2626' : '#16a34a' }
             })) },
         ],

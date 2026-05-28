@@ -33,6 +33,10 @@ class TradeRecord(db.Model):
     STATUS_FAILED = 'failed'         # 执行失败
     STATUS_PARTIAL = 'partial'       # 部分执行
 
+    # 交易模式常量（与 TradePlan 对齐）
+    MODE_SIMULATE = 'simulate'       # 模拟交易
+    MODE_REAL = 'real'               # 实盘交易
+
     # 主键
     id = db.Column(db.BigInteger, primary_key=True, autoincrement=True, comment='主键ID')
     
@@ -41,6 +45,8 @@ class TradeRecord(db.Model):
     stock_code = db.Column(db.String(10), nullable=False, comment='股票代码')
     stock_name = db.Column(db.String(100), nullable=False, comment='股票名称')
     trade_type = db.Column(db.String(20), nullable=False, comment='交易类型')
+    trade_mode = db.Column(db.String(20), nullable=False, default=MODE_REAL,
+                           comment='交易模式(simulate/real)，与 trade_plans.trade_mode 对齐')
     status = db.Column(db.String(20), default=STATUS_PENDING, comment='交易状态')
     
     # 交易数量和价格
@@ -49,9 +55,18 @@ class TradeRecord(db.Model):
     total_amount = db.Column(db.Numeric(12, 2), nullable=False, comment='交易总金额')
     
     # 手续费和税费
-    commission = db.Column(db.Numeric(10, 2), default=0, comment='手续费')
-    tax = db.Column(db.Numeric(10, 2), default=0, comment='税费')
-    net_amount = db.Column(db.Numeric(12, 2), nullable=False, comment='净交易金额')
+    commission = db.Column(db.Numeric(10, 2), default=0, comment='手续费/佣金')
+    tax = db.Column(db.Numeric(10, 2), default=0, comment='印花税（卖出收 0.1%）')
+    other_fee = db.Column(db.Numeric(10, 2), default=0, comment='其他杂费')
+    transfer_fee = db.Column(db.Numeric(10, 2), default=0, comment='过户费（沪市股票）')
+    # net_amount 改为"带符号净现金流"：买入负、卖出正，与同花顺"发生金额"对齐
+    net_amount = db.Column(db.Numeric(14, 2), nullable=False,
+                           comment='账户净现金流：买入=-(成交金额+各项费用)，卖出=成交金额-各项费用')
+
+    # 同花顺特有字段（导入功能使用）
+    account_balance = db.Column(db.Numeric(14, 2), nullable=True, comment='成交后账户余额（同花顺"本次金额"）')
+    contract_no = db.Column(db.String(40), nullable=True, comment='合同编号（同花顺内部订单ID）')
+    market = db.Column(db.String(20), nullable=True, comment='交易市场：深圳A股/上海A股')
     
     # 策略信息
     strategy_name = db.Column(db.String(100), nullable=True, comment='策略名称')
@@ -206,13 +221,19 @@ class TradeRecord(db.Model):
             'stock_code': self.stock_code,
             'stock_name': self.stock_name,
             'trade_type': self.trade_type,
+            'trade_mode': self.trade_mode,
             'status': self.status,
             'quantity': self.quantity,
             'price': float(self.price) if self.price else None,
             'total_amount': float(self.total_amount) if self.total_amount else None,
             'commission': float(self.commission) if self.commission else None,
             'tax': float(self.tax) if self.tax else None,
+            'other_fee': float(self.other_fee) if self.other_fee else None,
+            'transfer_fee': float(self.transfer_fee) if self.transfer_fee else None,
             'net_amount': float(self.net_amount) if self.net_amount else None,
+            'account_balance': float(self.account_balance) if self.account_balance else None,
+            'contract_no': self.contract_no,
+            'market': self.market,
             'strategy_name': self.strategy_name,
             'signal_source': self.signal_source,
             'confidence_score': self.confidence_score,

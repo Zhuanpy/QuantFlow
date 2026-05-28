@@ -65,11 +65,14 @@ class ModelData:
 
         try:
             # 前数据读取
-            file_path_x, pre_month = find_file_in_paths(self.month, 'train_data', file_x)
-            file_path_y, pre_month = find_file_in_paths(self.month, 'train_data', file_y)
+            # find_file_in_paths 找不到时返回 (False, False)，须先判定再 np.load
+            file_path_x, pre_month_x = find_file_in_paths(self.month, 'train_data', file_x)
+            file_path_y, pre_month_y = find_file_in_paths(self.month, 'train_data', file_y)
+            if not (file_path_x and file_path_y):
+                return np.zeros([0]), np.empty([0]), None
             data_x = np.load(file_path_x, allow_pickle=True)
             data_y = np.load(file_path_y, allow_pickle=True)
-            return data_x, data_y, pre_month
+            return data_x, data_y, pre_month_x
 
         except FileNotFoundError:
             return np.zeros([0]), np.empty([0]), None

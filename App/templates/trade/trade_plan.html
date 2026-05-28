@@ -63,6 +63,8 @@
         <div class="action-buttons">
             <button class="btn btn-primary" onclick="showCreateModal()">+ 新建计划</button>
             <a class="btn btn-secondary" href="{{ url_for('stock_pool.stock_pool_page') }}" target="_blank">📋 股票池</a>
+            <button class="btn btn-secondary" onclick="openImportModal()" title="从同花顺导出的成交记录文件（TSV/Excel）导入到 trade_records 表">⬇ 导入成交</button>
+            <button class="btn btn-secondary" onclick="inferPlans()" title="按股票汇总 trade_records：净买入→持仓中计划，完全平仓→已完成计划，含盈亏">🧮 从成交推断持仓</button>
             <button class="btn btn-secondary" onclick="loadPlans()">刷新</button>
         </div>
     </div>
@@ -100,6 +102,85 @@
                 </tbody>
             </table>
         </div>
+    </div>
+
+    <!-- 成交记录列表（trade_records）-->
+    <div class="plans-section" style="margin-top:1.5rem;">
+        <h2>成交记录 <span style="font-size:.75rem;color:#6b7280;font-weight:normal;">（从同花顺导入的实际成交流水）</span></h2>
+
+        <!-- 第 1 行：方向 tab + 汇总 -->
+        <div class="status-filter">
+            <button class="status-btn active" data-record-type="">全部</button>
+            <button class="status-btn" data-record-type="buy">买入</button>
+            <button class="status-btn" data-record-type="sell">卖出</button>
+            <div id="recordsSummary" style="margin-left:auto;font-size:.78rem;color:#6b7280;display:flex;gap:1rem;align-items:center;"></div>
+        </div>
+
+        <!-- 第 2 行：详细筛选 -->
+        <div style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;padding:.5rem 0;font-size:.85rem;">
+            <input type="text" id="recordStockCode" placeholder="股票代码" style="padding:.25rem .5rem;border:1px solid #d1d5db;border-radius:.25rem;width:110px;" onkeydown="if(event.key==='Enter')loadRecords()">
+            <input type="text" id="recordStockName" placeholder="股票名称" style="padding:.25rem .5rem;border:1px solid #d1d5db;border-radius:.25rem;width:110px;" onkeydown="if(event.key==='Enter')loadRecords()">
+            <span style="color:#6b7280;">成交日期：</span>
+            <input type="date" id="recordStartDate" style="padding:.2rem .4rem;border:1px solid #d1d5db;border-radius:.25rem;" onchange="loadRecords()">
+            <span style="color:#6b7280;">~</span>
+            <input type="date" id="recordEndDate" style="padding:.2rem .4rem;border:1px solid #d1d5db;border-radius:.25rem;" onchange="loadRecords()">
+            <select id="recordMarket" style="padding:.25rem .4rem;border:1px solid #d1d5db;border-radius:.25rem;" onchange="loadRecords()">
+                <option value="">全部市场</option>
+                <option value="深圳Ａ股">深圳A股</option>
+                <option value="上海Ａ股">上海A股</option>
+            </select>
+            <select id="recordSortBy" style="padding:.25rem .4rem;border:1px solid #d1d5db;border-radius:.25rem;" onchange="loadRecords()">
+                <option value="time_desc">时间倒序</option>
+                <option value="time_asc">时间正序</option>
+                <option value="amount_desc">金额倒序</option>
+                <option value="amount_asc">金额正序</option>
+            </select>
+            <select id="recordPageSize" style="padding:.25rem .4rem;border:1px solid #d1d5db;border-radius:.25rem;" onchange="recordsPage=1;loadRecords()">
+                <option value="10" selected>每页 10</option>
+                <option value="20">每页 20</option>
+                <option value="50">每页 50</option>
+                <option value="100">每页 100</option>
+                <option value="200">每页 200</option>
+            </select>
+            <button class="btn btn-sm" onclick="loadRecords()">查询</button>
+            <button class="btn btn-sm btn-secondary" onclick="resetRecordFilters()">重置</button>
+        </div>
+
+        <div class="plans-table-wrapper">
+            <table class="plans-table">
+                <thead>
+                    <tr>
+                        <th>成交编号</th>
+                        <th>股票</th>
+                        <th>方向</th>
+                        <th>成交时间</th>
+                        <th>数量</th>
+                        <th>均价</th>
+                        <th>成交金额</th>
+                        <th>佣金</th>
+                        <th>印花税</th>
+                        <th>过户费</th>
+                        <th>净现金流</th>
+                        <th>账户余额</th>
+                        <th>市场</th>
+                    </tr>
+                </thead>
+                <tbody id="recordsTableBody">
+                    <tr><td colspan="13" class="loading">加载中...</td></tr>
+                </tbody>
+            </table>
+        </div>
+        <div id="recordsPageInfo" style="padding:.5rem;text-align:center;font-size:.85rem;color:#6b7280;display:flex;justify-content:center;align-items:center;gap:.5rem;"></div>
+    </div>
+
+    <!-- 历史交易统计（已完成周期）-->
+    <div class="plans-section" style="margin-top:1.5rem;">
+        <h2>历史交易统计 <span style="font-size:.75rem;color:#6b7280;font-weight:normal;">（按"持仓 0→正→0"周期切分；每个周期 = 一次完整开平仓）</span></h2>
+        <div id="tradeStatsPanel" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:.75rem;padding:.75rem;background:#f9fafb;border-radius:.5rem;">
+            <div class="loading" style="grid-column:1/-1;text-align:center;">加载中…</div>
+        </div>
+        <div id="tradeByYearPanel" style="margin-top:.75rem;font-size:.85rem;"></div>
+        <div id="tradeAllList" style="margin-top:.75rem;font-size:.85rem;"></div>
     </div>
 </div>
 
@@ -566,6 +647,25 @@ a.btn { color: inherit; }
     font-size: 0.82rem;
 }
 
+/* 股票代码可点击：跳转到持仓实时 15m 详情页 */
+.stock-link {
+    color: #2563eb;
+    text-decoration: none;
+    font-weight: 600;
+    cursor: pointer;
+    border-bottom: 1px dashed transparent;
+}
+.stock-link:hover {
+    border-bottom-color: #2563eb;
+    color: #1d4ed8;
+}
+.stock-link::after {
+    content: '↗';
+    margin-left: 2px;
+    font-size: 0.7em;
+    opacity: 0.6;
+}
+
 /* 模态框 */
 .modal {
     display: none;
@@ -792,15 +892,500 @@ a.btn { color: inherit; }
 }
 </style>
 
+<!-- 导入成交记录 modal -->
+<div class="modal" id="importModal" style="display:none;">
+    <div class="modal-content" style="max-width:680px;">
+        <div class="modal-header">
+            <h3>导入交易成交记录</h3>
+            <button class="close-btn" onclick="closeImportModal()">&times;</button>
+        </div>
+        <div style="padding:1rem 1.25rem;">
+            <p style="color:#6b7280;font-size:.85rem;margin-bottom:.75rem;">
+                文件来源：<b>同花顺 → 历史成交 → 导出</b>。支持 .tsv / .csv / .xls / .xlsx 。<br>
+                导入规则：用「成交编号」做唯一识别，重复不会插入；理财类（货币基金申购/赎回/红利/强行）自动跳过。
+            </p>
+            <div style="display:flex;gap:.5rem;align-items:center;margin-bottom:.5rem;">
+                <input type="file" id="importFile" accept=".tsv,.csv,.txt,.xls,.xlsx" style="flex:1;">
+            </div>
+            <div style="display:flex;gap:.5rem;margin-bottom:1rem;">
+                <button class="btn btn-secondary" onclick="submitImport(true)">先预览（不写库）</button>
+                <button class="btn btn-primary" onclick="submitImport(false)">导入到数据库</button>
+            </div>
+            <div id="importResult" style="display:none;padding:.75rem;background:#f9fafb;border-radius:.5rem;font-size:.85rem;"></div>
+        </div>
+    </div>
+</div>
+
 <script>
 let currentMode = '';
 let currentStatus = '';
 let editingPlanId = null;
 
+// ============ 历史交易统计 ============
+let _tradeStatsCache = null;
+let _tradeYearFilter = 'all';   // 'all' | 2025 | 2026 ...
+let _completedPage = 1;
+const _COMPLETED_PAGE_SIZE = 15;
+
+async function loadTradeStatistics() {
+    const panel = document.getElementById('tradeStatsPanel');
+    const yearPanel = document.getElementById('tradeByYearPanel');
+    const allDiv = document.getElementById('tradeAllList');
+    _completedPage = 1;  // 每次重新加载统计回到第 1 页
+    try {
+        const url = '/api/trade/records/statistics'
+                  + (currentMode ? ('?mode=' + currentMode) : '');
+        const r = await fetch(url).then(r => r.json());
+        if (!r.success) {
+            panel.innerHTML = `<div class="loading" style="grid-column:1/-1;color:#dc2626;">加载失败：${r.message||''}</div>`;
+            return;
+        }
+        const s = r.data;
+        _tradeStatsCache = s;
+        if (!s || s.total_trades === 0) {
+            panel.innerHTML = `<div class="loading" style="grid-column:1/-1;">暂无已完成交易（需要至少一个完整的买→卖周期）</div>`;
+            yearPanel.innerHTML = '';
+            allDiv.innerHTML = '';
+            return;
+        }
+        _renderStatsCards(s);
+        _renderByYearTable(s);
+        _renderAllCompletedTable(s);
+    } catch (e) {
+        panel.innerHTML = `<div class="loading" style="grid-column:1/-1;color:#dc2626;">请求失败：${e}</div>`;
+    }
+}
+
+function _renderStatsCards(s) {
+    const panel = document.getElementById('tradeStatsPanel');
+    const pnlColor = s.total_profit_loss >= 0 ? '#059669' : '#dc2626';
+    const winRateColor = s.win_rate >= 50 ? '#059669' : (s.win_rate >= 40 ? '#f59e0b' : '#dc2626');
+    const card = (label, value, color, sub) =>
+        `<div style="padding:.5rem .75rem;background:#fff;border-radius:.4rem;border:1px solid #e5e7eb;">`
+      + `  <div style="font-size:.72rem;color:#6b7280;">${label}</div>`
+      + `  <div style="font-size:1.15rem;font-weight:700;color:${color||'#111827'};">${value}</div>`
+      + (sub ? `  <div style="font-size:.7rem;color:#9ca3af;margin-top:.1rem;">${sub}</div>` : '')
+      + `</div>`;
+    panel.innerHTML =
+        card('总交易笔数（含全部年份）', s.total_trades, '#111827', `胜 ${s.win_count} / 负 ${s.loss_count}${s.break_even_count?(' / 平 '+s.break_even_count):''}`)
+      + card('胜率', s.win_rate.toFixed(2)+'%', winRateColor)
+      + card('总盈亏', (s.total_profit_loss>=0?'+':'')+'¥'+s.total_profit_loss.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}), pnlColor, `投入 ¥${s.total_invested.toLocaleString()}`)
+      + card('收益率 ROI', (s.roi_pct>=0?'+':'')+s.roi_pct.toFixed(2)+'%', pnlColor)
+      + card('平均盈利 / 亏损', `+¥${s.avg_profit.toFixed(0)} / -¥${s.avg_loss.toFixed(0)}`, '#374151', `盈亏比 ${s.profit_factor.toFixed(2)}`)
+      + card('最大盈利 / 亏损', `+¥${s.max_profit.toFixed(0)} / ¥${s.max_loss.toFixed(0)}`, '#374151')
+      + card('平均持仓天数', s.avg_hold_days + ' 天', '#374151');
+}
+
+function _renderByYearTable(s) {
+    const div = document.getElementById('tradeByYearPanel');
+    const years = s.by_year || [];
+    if (!years.length) { div.innerHTML = ''; return; }
+    const rows = years.map(y => {
+        const pnlC = y.total_profit_loss >= 0 ? '#059669' : '#dc2626';
+        const wrC = y.win_rate >= 50 ? '#059669' : '#f59e0b';
+        const sign = y.total_profit_loss >= 0 ? '+' : '';
+        const rsign = y.roi_pct >= 0 ? '+' : '';
+        return `<tr>
+            <td><strong>${y.year} 年</strong></td>
+            <td style="text-align:center;">${y.total_trades}</td>
+            <td style="text-align:center;color:#059669;">${y.win_count}</td>
+            <td style="text-align:center;color:#dc2626;">${y.loss_count}</td>
+            <td style="text-align:right;color:${wrC};font-weight:600;">${y.win_rate.toFixed(2)}%</td>
+            <td style="text-align:right;color:#6b7280;">¥${y.total_invested.toLocaleString()}</td>
+            <td style="text-align:right;color:${pnlC};font-weight:600;">${sign}¥${y.total_profit_loss.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</td>
+            <td style="text-align:right;color:${pnlC};font-weight:600;">${rsign}${y.roi_pct.toFixed(2)}%</td>
+            <td style="text-align:right;color:#9ca3af;">+¥${y.avg_profit.toFixed(0)} / -¥${y.avg_loss.toFixed(0)}</td>
+        </tr>`;
+    }).join('');
+    div.innerHTML =
+        `<div style="font-weight:600;margin:.5rem 0 .25rem;">按年份汇总（含 ${years.length} 年）</div>`
+      + `<table style="width:100%;border-collapse:collapse;font-size:.82rem;">`
+      + `<thead><tr style="background:#f3f4f6;">`
+      + `<th style="padding:.35rem;text-align:left;">年份</th>`
+      + `<th>笔数</th><th>胜</th><th>负</th>`
+      + `<th style="text-align:right;padding-right:.35rem;">胜率</th>`
+      + `<th style="text-align:right;padding-right:.35rem;">投入</th>`
+      + `<th style="text-align:right;padding-right:.35rem;">盈亏</th>`
+      + `<th style="text-align:right;padding-right:.35rem;">ROI</th>`
+      + `<th style="text-align:right;padding-right:.35rem;">平均盈/亏</th>`
+      + `</tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function _renderAllCompletedTable(s) {
+    const div = document.getElementById('tradeAllList');
+    const all = s.all_completed || [];
+    if (!all.length) { div.innerHTML = ''; return; }
+    // 年份筛选选项
+    const yearsSet = new Set();
+    all.forEach(t => { if (t.exit_time) yearsSet.add(t.exit_time.slice(0,4)); });
+    const yearOpts = ['<option value="all">全部年份</option>']
+        .concat([...yearsSet].sort().reverse().map(y => `<option value="${y}" ${_tradeYearFilter==y?'selected':''}>${y} 年</option>`))
+        .join('');
+
+    const filtered = (_tradeYearFilter === 'all')
+        ? all
+        : all.filter(t => (t.exit_time||'').slice(0,4) === String(_tradeYearFilter));
+
+    // 客户端分页
+    const totalPages = Math.max(1, Math.ceil(filtered.length / _COMPLETED_PAGE_SIZE));
+    if (_completedPage > totalPages) _completedPage = totalPages;
+    if (_completedPage < 1) _completedPage = 1;
+    const startIdx = (_completedPage - 1) * _COMPLETED_PAGE_SIZE;
+    const pageItems = filtered.slice(startIdx, startIdx + _COMPLETED_PAGE_SIZE);
+
+    const rows = pageItems.map(t => {
+        const pnlC = t.profit_loss >= 0 ? '#059669' : '#dc2626';
+        const sign = t.profit_loss >= 0 ? '+' : '';
+        const e = (t.entry_time||'').slice(0,10);
+        const x = (t.exit_time||'').slice(0,10);
+        return `<tr>
+            <td><a class="stock-link" href="/trade/holdings/realtime/${t.stock_code}" target="_blank" title="打开实时 15m 详情">${t.stock_code}</a> <span style="color:#6b7280;">${t.stock_name||''}</span></td>
+            <td style="font-size:.78rem;">${e} → ${x}</td>
+            <td style="text-align:right;">${t.hold_days||'-'}天</td>
+            <td style="text-align:right;">${t.avg_entry_price} → ${t.avg_exit_price}</td>
+            <td style="text-align:right;color:#6b7280;">¥${(t.cost_basis||0).toLocaleString()}</td>
+            <td style="text-align:right;color:${pnlC};font-weight:600;">${sign}${t.profit_loss.toFixed(2)} (${sign}${t.profit_loss_pct.toFixed(2)}%)</td>
+        </tr>`;
+    }).join('');
+
+    const pager = (totalPages > 1)
+        ? `<div style="padding:.5rem;text-align:center;font-size:.82rem;color:#6b7280;display:flex;justify-content:center;align-items:center;gap:.5rem;">`
+          + `  <button class="btn btn-sm" ${_completedPage<=1?'disabled':''} onclick="_completedGoPage(${_completedPage-1})">上一页</button>`
+          + `  <span>第 ${_completedPage} / ${totalPages} 页 · 共 ${filtered.length} 笔</span>`
+          + `  <button class="btn btn-sm" ${_completedPage>=totalPages?'disabled':''} onclick="_completedGoPage(${_completedPage+1})">下一页</button>`
+          + `</div>`
+        : '';
+
+    div.innerHTML =
+        `<div style="display:flex;justify-content:space-between;align-items:center;margin:.75rem 0 .25rem;">`
+      + `  <span style="font-weight:600;">已完成交易明细（${filtered.length} 笔）</span>`
+      + `  <select id="tradeYearFilter" onchange="_onTradeYearChange(this.value)" style="padding:.2rem .5rem;border:1px solid #d1d5db;border-radius:.25rem;font-size:.82rem;">${yearOpts}</select>`
+      + `</div>`
+      + `<table style="width:100%;border-collapse:collapse;font-size:.82rem;">`
+      + `<thead><tr style="background:#f3f4f6;">`
+      + `<th style="padding:.35rem;text-align:left;">股票</th>`
+      + `<th>区间</th><th>持仓</th><th>入/出价</th>`
+      + `<th style="text-align:right;padding-right:.35rem;">投入</th>`
+      + `<th style="text-align:right;padding-right:.35rem;">盈亏</th>`
+      + `</tr></thead><tbody>${rows}</tbody></table>`
+      + pager;
+}
+
+function _onTradeYearChange(v) {
+    _tradeYearFilter = v;
+    _completedPage = 1;  // 切换年份重置到第 1 页
+    if (_tradeStatsCache) _renderAllCompletedTable(_tradeStatsCache);
+}
+
+function _completedGoPage(p) {
+    _completedPage = p;
+    if (_tradeStatsCache) _renderAllCompletedTable(_tradeStatsCache);
+}
+
+// ============ 从成交推断持仓 ============
+async function inferPlans() {
+    // 先 dry-run 看看会做什么
+    const dryR = await fetch('/api/trade/plans/infer_from_records', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({dry_run: true})
+    }).then(r => r.json());
+    if (!dryR.success) {
+        alert('推断失败：' + (dryR.message || ''));
+        return;
+    }
+    const d = dryR.data;
+    const msg =
+        `推断结果（预览）：\n\n`
+      + `持仓中：${d.active_count} 只\n`
+      + `已平仓（含盈亏）：${d.completed_count} 只\n`
+      + `异常（卖出多于买入，需补历史数据）：${d.short_anomaly_count} 只\n\n`
+      + (d.active.length ? '【持仓中明细】\n' + d.active.map(a =>
+          `  ${a.stock_code} ${a.stock_name}: ${a.net_position} 股 @ ${a.avg_entry_price}`).join('\n') + '\n\n' : '')
+      + (d.completed.length ? '【已平仓明细】\n' + d.completed.map(c =>
+          `  ${c.stock_code} ${c.stock_name}: 盈亏 ${c.profit_loss.toFixed(2)} (${c.profit_loss_pct}%) ${c.result}`).join('\n') + '\n\n' : '')
+      + (d.short_anomaly.length ? '【异常 - 缺历史买入记录】\n' + d.short_anomaly.map(s =>
+          `  ${s.stock_code} ${s.stock_name}: 买${s.bought} 卖${s.sold}（净 ${s.net_position}），跳过`).join('\n') + '\n\n' : '')
+      + `点确认将写入 ${d.active_count + d.completed_count} 个 trade_plans 计划（plan_id 前缀 INFER-，重复推断会覆盖）。`;
+
+    if (!confirm(msg)) return;
+
+    const realR = await fetch('/api/trade/plans/infer_from_records', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({dry_run: false})
+    }).then(r => r.json());
+
+    if (realR.success) {
+        alert(`推断完成：写入/更新 ${realR.data.inserted_or_updated} 个交易计划，清理 ${realR.data.deleted_old || 0} 个旧的推断计划`);
+        loadPlans();
+        if (typeof loadTradeStatistics === 'function') loadTradeStatistics();
+    } else {
+        alert('写入失败：' + (realR.message || ''));
+    }
+}
+
+// ============ 成交记录列表 ============
+let recordsFilterType = '';
+let recordsPage = 1;
+
+function _fmt(v, n=2) {
+    if (v == null || isNaN(v)) return '0.00';
+    return Number(v).toFixed(n);
+}
+
+async function loadRecords() {
+    const tbody = document.getElementById('recordsTableBody');
+    const pageSize = parseInt(document.getElementById('recordPageSize').value || '10');
+    const params = new URLSearchParams({ page: recordsPage, page_size: pageSize });
+
+    const code = (document.getElementById('recordStockCode').value || '').trim();
+    const name = (document.getElementById('recordStockName').value || '').trim();
+    const startD = (document.getElementById('recordStartDate').value || '').trim();
+    const endD = (document.getElementById('recordEndDate').value || '').trim();
+    const market = (document.getElementById('recordMarket').value || '').trim();
+    const sortBy = (document.getElementById('recordSortBy').value || 'time_desc');
+
+    if (currentMode) params.set('mode', currentMode);
+    if (code) params.set('stock_code', code);
+    if (name) params.set('stock_name', name);
+    if (startD) params.set('start_date', startD);
+    if (endD) params.set('end_date', endD);
+    if (market) params.set('market', market);
+    if (sortBy) params.set('sort_by', sortBy);
+    if (recordsFilterType) params.set('trade_type', recordsFilterType);
+
+    try {
+        const r = await fetch('/api/trade/records?' + params).then(r => r.json());
+        if (!r.success) {
+            tbody.innerHTML = `<tr><td colspan="13" class="loading">加载失败：${r.message || ''}</td></tr>`;
+            return;
+        }
+        const items = r.data.items || [];
+        const s = r.data.summary || {};
+        const p = r.data.pagination || {};
+
+        // 汇总条
+        const netFlowColor = (s.net_cash_flow || 0) >= 0 ? '#059669' : '#dc2626';
+        document.getElementById('recordsSummary').innerHTML =
+            `<span>买入 <b style="color:#dc2626;">${s.buy_count||0}</b> 笔 / ¥${_fmt(s.buy_amount)}</span>`
+          + `<span>卖出 <b style="color:#059669;">${s.sell_count||0}</b> 笔 / ¥${_fmt(s.sell_amount)}</span>`
+          + `<span>净现金流 <b style="color:${netFlowColor};">¥${_fmt(s.net_cash_flow)}</b></span>`;
+
+        if (items.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="13" class="loading">无符合筛选条件的记录。${(p.total||0) === 0 ? '点击右上角"⬇ 导入成交"导入同花顺历史成交。' : ''}</td></tr>`;
+        } else {
+            tbody.innerHTML = items.map(it => {
+                const dir = it.trade_type === 'buy'
+                    ? '<span style="color:#dc2626;font-weight:600;">买入</span>'
+                    : '<span style="color:#059669;font-weight:600;">卖出</span>';
+                const flowColor = (it.net_amount || 0) >= 0 ? '#059669' : '#dc2626';
+                return `<tr>
+                    <td style="font-family:monospace;font-size:.75rem;color:#6b7280;">${it.trade_id || ''}</td>
+                    <td><a class="stock-link" href="/trade/holdings/realtime/${it.stock_code}" target="_blank" title="打开实时 15m 详情">${it.stock_code}</a><br><span style="color:#6b7280;font-size:.78rem;">${it.stock_name || ''}</span></td>
+                    <td>${dir}</td>
+                    <td style="font-size:.78rem;">${it.execute_time || '-'}</td>
+                    <td style="text-align:right;">${it.quantity ?? ''}</td>
+                    <td style="text-align:right;">${it.price ?? ''}</td>
+                    <td style="text-align:right;">${_fmt(it.total_amount)}</td>
+                    <td style="text-align:right;color:#9ca3af;">${_fmt(it.commission)}</td>
+                    <td style="text-align:right;color:#9ca3af;">${_fmt(it.tax)}</td>
+                    <td style="text-align:right;color:#9ca3af;">${_fmt(it.transfer_fee)}</td>
+                    <td style="text-align:right;color:${flowColor};font-weight:600;">${_fmt(it.net_amount)}</td>
+                    <td style="text-align:right;color:#6b7280;">${it.account_balance != null ? _fmt(it.account_balance) : '-'}</td>
+                    <td>${it.market || '-'}</td>
+                </tr>`;
+            }).join('');
+        }
+
+        // 分页
+        const info = document.getElementById('recordsPageInfo');
+        if (p.pages > 1) {
+            info.innerHTML =
+                `<button class="btn btn-sm" ${p.has_prev?'':'disabled'} onclick="recordsGoPage(${p.page-1})">上一页</button>`
+              + `<span>第 ${p.page} / ${p.pages} 页 · 共 ${p.total} 条</span>`
+              + `<button class="btn btn-sm" ${p.has_next?'':'disabled'} onclick="recordsGoPage(${p.page+1})">下一页</button>`;
+        } else {
+            info.innerHTML = `<span>共 ${p.total} 条</span>`;
+        }
+    } catch (e) {
+        tbody.innerHTML = `<tr><td colspan="13" class="loading">请求失败：${e}</td></tr>`;
+    }
+}
+
+function recordsGoPage(p) { recordsPage = p; loadRecords(); }
+
+function resetRecordFilters() {
+    document.getElementById('recordStockCode').value = '';
+    document.getElementById('recordStockName').value = '';
+    document.getElementById('recordStartDate').value = '';
+    document.getElementById('recordEndDate').value = '';
+    document.getElementById('recordMarket').value = '';
+    document.getElementById('recordSortBy').value = 'time_desc';
+    document.getElementById('recordPageSize').value = '10';
+    recordsFilterType = '';
+    recordsPage = 1;
+    document.querySelectorAll('.status-btn[data-record-type]').forEach(b => b.classList.remove('active'));
+    document.querySelector('.status-btn[data-record-type=""]').classList.add('active');
+    loadRecords();
+}
+
+// 绑定方向筛选 tab（初次 loadRecords/loadTradeStatistics 在主 DOMContentLoaded 里调用，
+// 以保证 currentMode 已根据 URL ?mode= 初始化完成）
+document.addEventListener('DOMContentLoaded', () => {
+    document.querySelectorAll('.status-btn[data-record-type]').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.status-btn[data-record-type]').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            recordsFilterType = btn.dataset.recordType;
+            recordsPage = 1;
+            loadRecords();
+        });
+    });
+});
+
+// ============ 导入交易记录 ============
+function openImportModal() {
+    document.getElementById('importFile').value = '';
+    document.getElementById('importResult').style.display = 'none';
+    document.getElementById('importResult').innerHTML = '';
+    document.getElementById('importModal').style.display = 'flex';
+}
+function closeImportModal() {
+    document.getElementById('importModal').style.display = 'none';
+}
+async function submitImport(dryRun) {
+    const file = document.getElementById('importFile').files[0];
+    const result = document.getElementById('importResult');
+    if (!file) {
+        result.style.display = 'block';
+        result.innerHTML = '<span style="color:#dc2626;">请先选择文件</span>';
+        return;
+    }
+    const fd = new FormData();
+    fd.append('file', file);
+    fd.append('dry_run', dryRun ? 'true' : 'false');
+    result.style.display = 'block';
+    result.innerHTML = '处理中…';
+    try {
+        const r = await fetch('/api/trade/records/import', { method: 'POST', body: fd }).then(r => r.json());
+        if (!r.success) {
+            result.innerHTML = `<span style="color:#dc2626;">导入失败：${r.message || ''}</span>`;
+            return;
+        }
+        const d = r.data || {};
+        const samples = (d.samples || []).map(s =>
+            `<tr><td>${s.execute_time||''}</td><td>${s.stock_code}</td><td>${s.stock_name}</td>`
+          + `<td>${s.trade_type}</td><td style="text-align:right;">${s.quantity}</td>`
+          + `<td style="text-align:right;">${s.price}</td><td style="text-align:right;">${s.net_amount}</td></tr>`
+        ).join('');
+        // 醒目的整体结果横幅
+        let banner = '';
+        if (dryRun) {
+            banner = `<div style="padding:.5rem .75rem;background:#dbeafe;color:#1e40af;border-radius:.3rem;margin-bottom:.5rem;"><b>预览模式</b>：未写库。点击"导入到数据库"才会真正写入</div>`;
+        } else if (d.inserted > 0) {
+            banner = `<div style="padding:.5rem .75rem;background:#d1fae5;color:#065f46;border-radius:.3rem;margin-bottom:.5rem;"><b>✓ 导入成功</b>：新增 ${d.inserted} 条成交记录</div>`;
+        } else if (d.skipped_duplicate > 0 && d.parsed > 0) {
+            banner = `<div style="padding:.5rem .75rem;background:#fef3c7;color:#92400e;border-radius:.3rem;margin-bottom:.5rem;"><b>⚠ 全部已存在</b>：这 ${d.skipped_duplicate} 条记录数据库里都有了（按"成交编号"去重）。若要重导请先清空 trade_records 表</div>`;
+        } else if (d.parsed === 0) {
+            banner = `<div style="padding:.5rem .75rem;background:#fee2e2;color:#991b1b;border-radius:.3rem;margin-bottom:.5rem;"><b>✗ 文件未解析到任何记录</b>：检查文件格式（应为同花顺导出的 Tab 分隔或 Excel 文件）</div>`;
+        } else {
+            banner = `<div style="padding:.5rem .75rem;background:#fef3c7;color:#92400e;border-radius:.3rem;margin-bottom:.5rem;"><b>⚠ 未导入任何新记录</b>：所有行都被过滤或去重</div>`;
+        }
+
+        result.innerHTML = banner
+          + `<div style="margin:.5rem 0;display:grid;grid-template-columns:1fr 1fr;gap:.25rem .75rem;">`
+          + `  <div>解析行数：<b>${d.parsed}</b></div>`
+          + `  <div>跳过理财：<b>${d.skipped_fund}</b></div>`
+          + `  <div>跳过无效：<b>${d.skipped_invalid}</b></div>`
+          + `  <div>跳过重复：<b style="color:${d.skipped_duplicate>0?'#dc2626':'inherit'};">${d.skipped_duplicate}</b></div>`
+          + `  <div style="grid-column:span 2;">${dryRun ? '将要导入' : '已导入'}：<b style="color:${d.inserted>0?'#059669':'#9ca3af'};font-size:1.1rem;">${d.inserted}</b> 条</div>`
+          + `</div>`
+          + (samples ? `<div style="margin-top:.5rem;"><b>前 3 条预览</b><table style="width:100%;font-size:.78rem;margin-top:.25rem;border-collapse:collapse;">`
+            + `<thead><tr style="background:#e5e7eb;"><th>时间</th><th>代码</th><th>名称</th><th>方向</th><th>数量</th><th>均价</th><th>净流</th></tr></thead>`
+            + `<tbody>${samples}</tbody></table></div>` : '');
+        if (!dryRun && d.inserted > 0) {
+            if (typeof loadRecords === 'function') loadRecords();
+            if (typeof loadTradeStatistics === 'function') loadTradeStatistics();
+            setTimeout(closeImportModal, 2000);
+        }
+    } catch (e) {
+        result.innerHTML = `<span style="color:#dc2626;">请求失败：${e}</span>`;
+    }
+}
+
+// ============ ?stock_code= 锚定（从 /trade/holdings/realtime 跳转过来用） ============
+function applyStockCodeFilter(code) {
+    if (!code) return;
+
+    // 顶部横幅
+    const old = document.getElementById('stockCodeFilterBanner');
+    if (old) old.remove();
+    const banner = document.createElement('div');
+    banner.id = 'stockCodeFilterBanner';
+    banner.style.cssText = 'padding:.5rem .9rem;background:#dbeafe;color:#1e40af;'
+                         + 'border-radius:.3rem;margin:.5rem 0 .75rem;'
+                         + 'display:flex;justify-content:space-between;align-items:center;'
+                         + 'font-size:.88rem;';
+    banner.innerHTML =
+        `<span>🔍 已筛选股票 <strong>${code}</strong>（来自实时关注列表）</span>`
+      + `<span><a href="/trade/holdings/realtime/${code}" target="_blank" `
+      +   `style="color:#1d4ed8;margin-right:1rem;text-decoration:underline;">查看实时 15m →</a>`
+      + `<button class="btn btn-sm btn-secondary" onclick="clearStockCodeFilter()">清除筛选</button></span>`;
+    const container = document.querySelector('.container') || document.body;
+    container.insertBefore(banner, container.firstChild);
+
+    // 1) 填入成交记录的过滤器并刷新
+    const codeInput = document.getElementById('recordStockCode');
+    if (codeInput) { codeInput.value = code; if (typeof loadRecords === 'function') loadRecords(); }
+
+    // 2) 高亮 plans 表格中匹配的行（loadPlans 是异步的，轮询找）
+    let attempts = 0;
+    const tryHighlight = () => {
+        const rows = document.querySelectorAll('#plansTableBody tr');
+        let firstMatch = null;
+        rows.forEach(row => {
+            const link = row.querySelector('.stock-link');
+            if (link && link.textContent.trim() === code) {
+                row.style.background = '#fef3c7';
+                row.style.outline = '2px solid #f59e0b';
+                row.style.outlineOffset = '-2px';
+                if (!firstMatch) firstMatch = row;
+            }
+        });
+        if (firstMatch) {
+            firstMatch.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            return;
+        }
+        // plans 没匹配，滚到 records 表
+        if (attempts++ < 10) {
+            setTimeout(tryHighlight, 300);
+        } else {
+            const recordsTable = document.getElementById('recordsTableBody');
+            if (recordsTable) recordsTable.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+    };
+    setTimeout(tryHighlight, 500);
+}
+
+function clearStockCodeFilter() {
+    document.getElementById('stockCodeFilterBanner')?.remove();
+    const codeInput = document.getElementById('recordStockCode');
+    if (codeInput) { codeInput.value = ''; if (typeof loadRecords === 'function') loadRecords(); }
+    document.querySelectorAll('#plansTableBody tr').forEach(row => {
+        row.style.background = '';
+        row.style.outline = '';
+    });
+    const url = new URL(location.href);
+    url.searchParams.delete('stock_code');
+    history.replaceState(null, '', url);
+}
+
 // 页面加载
 document.addEventListener('DOMContentLoaded', function() {
     // 优先读 URL ?mode= 参数；其次取路由传入的 trade_mode；都没有则为"全部"
-    const qsMode = new URLSearchParams(location.search).get('mode') || '';
+    const qsAll = new URLSearchParams(location.search);
+    const qsMode = qsAll.get('mode') || '';
     const routeMode = '{{ trade_mode|default("") }}';
     currentMode = qsMode || routeMode;
     if (currentMode) {
@@ -810,19 +1395,57 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     syncStatsCards(currentMode);
 
+    // 读 URL ?status= 参数，初始化状态筛选 tab
+    const qsStatus = qsAll.get('status') || '';
+    if (qsStatus) {
+        currentStatus = qsStatus;
+        document.querySelectorAll('.status-btn[data-status]').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.status === currentStatus);
+        });
+    }
+
     loadStatistics();
     loadPlans();
+    loadRecords();
+    loadTradeStatistics();
     setupEventListeners();
+
+    // ?stock_code=XXX  → 从 /trade/holdings/realtime 跳转过来时自动锚定
+    const qs = new URLSearchParams(location.search);
+    const qsCode = qs.get('stock_code');
+    if (qsCode) applyStockCodeFilter(qsCode.trim());
+
+    // ?action=new  → 自动打开"新建计划"弹窗，并从 URL 预填字段（从 /stock_pool 跳来用）
+    if (qs.get('action') === 'new') {
+        const prefill = {
+            stock_code:        qs.get('stock_code') || '',
+            stock_name:        qs.get('stock_name') || '',
+            entry_price:       qs.get('entry_price') || '',
+            stop_loss_price:   qs.get('stop_loss_price') || '',
+            take_profit_price: qs.get('take_profit_price') || '',
+        };
+        // 延后到自动补全等 init 完成
+        setTimeout(() => showCreateModal(prefill), 200);
+    }
 
     // 浏览器前进/后退时，根据 URL 重新同步 tab + 列表
     window.addEventListener('popstate', () => {
-        const m = new URLSearchParams(location.search).get('mode') || '';
+        const qs = new URLSearchParams(location.search);
+        const m = qs.get('mode') || '';
+        const st = qs.get('status') || '';
         currentMode = m;
+        currentStatus = st;
         document.querySelectorAll('.mode-tab').forEach(btn => {
             btn.classList.toggle('active', btn.dataset.mode === m);
         });
+        document.querySelectorAll('.status-btn[data-status]').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.status === st);
+        });
         syncStatsCards(m);
         loadPlans();
+        recordsPage = 1;
+        if (typeof loadRecords === 'function') loadRecords();
+        if (typeof loadTradeStatistics === 'function') loadTradeStatistics();
     });
 });
 
@@ -832,6 +1455,14 @@ function syncModeToUrl(mode) {
     if (mode) url.searchParams.set('mode', mode);
     else url.searchParams.delete('mode');
     history.pushState({ mode }, '', url);
+}
+
+// 把当前 status 同步到 URL 查询参数
+function syncStatusToUrl(status) {
+    const url = new URL(location.href);
+    if (status) url.searchParams.set('status', status);
+    else url.searchParams.delete('status');
+    history.pushState({ status }, '', url);
 }
 
 // 根据当前 mode 切换统计卡片可见性 + 网格列数：
@@ -857,15 +1488,20 @@ function setupEventListeners() {
             syncModeToUrl(currentMode);
             syncStatsCards(currentMode);
             loadPlans();
+            // 成交记录 & 历史统计也跟随 mode 切换
+            recordsPage = 1;
+            if (typeof loadRecords === 'function') loadRecords();
+            if (typeof loadTradeStatistics === 'function') loadTradeStatistics();
         });
     });
 
-    // 状态筛选
-    document.querySelectorAll('.status-btn').forEach(btn => {
+    // 状态筛选（只针对交易计划的状态 tab，避免与成交记录的买入/卖出 tab 冲突）
+    document.querySelectorAll('.status-btn[data-status]').forEach(btn => {
         btn.addEventListener('click', function() {
-            document.querySelectorAll('.status-btn').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.status-btn[data-status]').forEach(b => b.classList.remove('active'));
             this.classList.add('active');
             currentStatus = this.dataset.status;
+            syncStatusToUrl(currentStatus);
             loadPlans();
         });
     });
@@ -1093,7 +1729,7 @@ function renderPlanRow(plan) {
 
     return `
         <tr>
-            <td class="stock-cell"><strong>${plan.stock_code}</strong><span class="stock-name">${plan.stock_name || ''}</span></td>
+            <td class="stock-cell"><a class="stock-link" href="/trade/holdings/realtime/${plan.stock_code}" target="_blank" title="打开 ${plan.stock_code} 的实时 15m 详情页">${plan.stock_code}</a><span class="stock-name">${plan.stock_name || ''}</span><a href="/stock_pool/?search=${plan.stock_code}" target="_blank" title="在股票池查看 ${plan.stock_code}" style="margin-left:0.4rem;font-size:0.75rem;text-decoration:none;color:#7c3aed;">🎯池</a></td>
             <td><span class="badge badge-${plan.trade_mode}">${plan.trade_mode === 'simulate' ? '模拟' : '实盘'}</span></td>
             <td><span class="badge badge-${plan.direction}">${plan.direction === 'long' ? '做多' : '做空'}</span></td>
             <td>${timeDisplay}</td>
@@ -1122,10 +1758,20 @@ function getStatusText(status) {
 }
 
 // 显示新建模态框
-function showCreateModal() {
+//   prefill 形如 { stock_code, stock_name, entry_price, stop_loss_price, take_profit_price }
+//   传 null/undefined 走默认行为
+function showCreateModal(prefill) {
     editingPlanId = null;
     document.getElementById('modalTitle').textContent = '新建交易计划';
     document.getElementById('planForm').reset();
+    if (prefill && typeof prefill === 'object') {
+        const set = (id, v) => { if (v != null && v !== '') document.getElementById(id).value = v; };
+        set('stockCode',       prefill.stock_code);
+        set('stockName',       prefill.stock_name);
+        set('entryPrice',      prefill.entry_price);
+        set('stopLossPrice',   prefill.stop_loss_price);
+        set('takeProfitPrice', prefill.take_profit_price);
+    }
     document.getElementById('planModal').classList.add('active');
     updateRiskPreview();
 }

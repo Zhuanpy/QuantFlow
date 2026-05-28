@@ -173,7 +173,7 @@ async function loadRecords() {
       return `<tr style="border-top:1px solid #e5e7eb;">
         <td style="padding:.4rem .5rem;color:#9ca3af;">${r.id}</td>
         <td style="padding:.4rem .5rem;font-family:monospace;">
-          ${code ? `<a href="/stock/${code}" target="_blank" style="color:#2563eb;text-decoration:none;">${code}</a>` : '—'}
+          ${code ? `<a href="/stock/?code=${code}" target="_blank" style="color:#2563eb;text-decoration:none;">${code}</a>` : '—'}
         </td>
         <td style="padding:.4rem .5rem;">${r.name || '—'}</td>
         <td style="padding:.4rem .5rem;">${r.parser_month || '—'}</td>
@@ -182,7 +182,7 @@ async function loadRecords() {
         <td style="padding:.4rem .5rem;text-align:center;">${badge(r.model_check)}</td>
         <td style="padding:.4rem .5rem;color:#6b7280;font-size:.78rem;">${ts}</td>
         <td style="padding:.4rem .5rem;">
-          ${code ? `<a href="/stock/${code}" target="_blank" class="btn btn-outline btn-sm" style="padding:.2rem .5rem;font-size:.78rem;">详情</a>` : ''}
+          ${code ? `<a href="/stock/?code=${code}" target="_blank" class="btn btn-outline btn-sm" style="padding:.2rem .5rem;font-size:.78rem;">详情</a>` : ''}
         </td>
       </tr>`;
     }).join('');

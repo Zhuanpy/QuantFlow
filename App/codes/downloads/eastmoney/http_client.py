@@ -12,7 +12,8 @@ import logging
 import time
 import random
 import threading
-from typing import Optional
+from typing import Optional, Tuple
+from urllib.parse import urlparse, urlunparse
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -26,6 +27,53 @@ _selenium_lock = threading.Lock()
 # API 连通性缓存：HTTP 连接失败后短时间内跳过 Selenium 降级
 _api_fail_time = None
 _API_FAIL_COOLDOWN = 60  # 秒：API 失败后 60 秒内不再尝试 Selenium
+
+# 东财子域名前缀轮换：push2his.eastmoney.com / push2.eastmoney.com 支持 1..99 数字前缀
+# 实测每个前缀走不同后端 IP 池，可绕过主域名层面的速率限制
+_PREFIX_TARGET_HOSTS = {'push2his.eastmoney.com', 'push2.eastmoney.com'}
+_PREFIX_RANGE = list(range(1, 100))  # 1..99
+_PREFIX_FAIL_COOLDOWN = 60  # 秒
+_prefix_fail_until = {}  # {prefix:int -> unblock_ts:float}
+_prefix_lock = threading.Lock()
+
+
+def _pick_prefix() -> Optional[int]:
+    """选一个未在失败冷却的随机前缀，全员失败时返回 None（落到原主域名）"""
+    now = time.time()
+    with _prefix_lock:
+        expired = [p for p, ts in _prefix_fail_until.items() if ts <= now]
+        for p in expired:
+            del _prefix_fail_until[p]
+        available = [p for p in _PREFIX_RANGE if p not in _prefix_fail_until]
+        if not available:
+            return None
+        return random.choice(available)
+
+
+def _mark_prefix_failed(prefix: Optional[int]) -> None:
+    if prefix is None:
+        return
+    with _prefix_lock:
+        _prefix_fail_until[prefix] = time.time() + _PREFIX_FAIL_COOLDOWN
+
+
+def _rewrite_host_with_prefix(url: str) -> Tuple[str, Optional[int]]:
+    """若 URL 主机是 push2his/push2.eastmoney.com，随机加 1..99 前缀
+    返回 (新 URL, 使用的前缀整数 或 None 表示未改写)"""
+    try:
+        parsed = urlparse(url)
+        host = (parsed.hostname or '').lower()
+        if host not in _PREFIX_TARGET_HOSTS:
+            return url, None
+        prefix = _pick_prefix()
+        if prefix is None:
+            return url, None
+        new_host = f"{prefix}.{host}"
+        new_netloc = f"{new_host}:{parsed.port}" if parsed.port else new_host
+        return urlunparse(parsed._replace(netloc=new_netloc)), prefix
+    except Exception as e:
+        logger.warning(f"URL 主机改写失败: {e}")
+        return url, None
 
 
 class HeaderRotator:
@@ -103,6 +151,11 @@ class EastMoneyHttpClient:
         Returns:
             str: 页面源代码
         """
+        # 子域名前缀轮换：仅对 push2his / push2.eastmoney.com 生效
+        request_url, prefix_used = _rewrite_host_with_prefix(url)
+        if prefix_used is not None:
+            logger.info(f"使用子域名前缀 {prefix_used}.（绕过主域名限流）")
+
         try:
             urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -141,10 +194,10 @@ class EastMoneyHttpClient:
                 'Pragma': 'no-cache',
             })
 
-            logger.info(f"正在请求: {url[:80]}...")
+            logger.info(f"正在请求: {request_url[:80]}...")
 
             response = session.get(
-                url,
+                request_url,
                 headers=headers_copy,
                 timeout=(10, 20),
                 verify=False,
@@ -175,15 +228,19 @@ class EastMoneyHttpClient:
             return content
 
         except requests.exceptions.ConnectionError as e:
-            logger.error(f"连接错误 {url[:80]}...: {str(e)}")
+            _mark_prefix_failed(prefix_used)
+            logger.error(f"连接错误 {request_url[:80]}...: {str(e)}")
             return ""
         except requests.exceptions.Timeout as e:
-            logger.error(f"请求超时 {url[:80]}...: {str(e)}")
+            _mark_prefix_failed(prefix_used)
+            logger.error(f"请求超时 {request_url[:80]}...: {str(e)}")
             return ""
         except requests.exceptions.RequestException as e:
-            logger.error(f"请求异常 {url[:80]}...: {str(e)}")
+            _mark_prefix_failed(prefix_used)
+            logger.error(f"请求异常 {request_url[:80]}...: {str(e)}")
             return ""
         except Exception as e:
+            _mark_prefix_failed(prefix_used)
             logger.error(f"获取源数据时发生异常: {str(e)}")
             return ""
 
@@ -259,30 +316,73 @@ class EastMoneyHttpClient:
                 '''
             })
 
-            logger.info(f"Selenium 访问 URL: {url}")
-            driver.get(url)
-            logger.info("页面加载完成")
+            # 先打开东财同域页面（拿 cookie / 过反爬），再用页面内 fetch 取 API 原始文本。
+            # 直接 driver.get(api_url) 会被 Chrome 的 JSON 查看器包成 HTML，难以解析；
+            # 同源 fetch 拿到的就是浏览器里看到的那段原始 JSON（用户已验证浏览器可访问）。
+            try:
+                parsed = urlparse(url)
+                warmup = f"{parsed.scheme}://{parsed.netloc}/"
+            except Exception:
+                warmup = "https://quote.eastmoney.com/"
 
-            wait_time = random.uniform(3, 6)
-            logger.info(f"等待 {wait_time:.1f} 秒加载页面...")
-            time.sleep(wait_time)
+            logger.info(f"Selenium 预热访问同域: {warmup}")
+            try:
+                driver.get(warmup)
+                time.sleep(random.uniform(1.5, 3))
+            except Exception as e:
+                logger.warning(f"预热页面加载失败（继续尝试 fetch）: {e}")
 
-            page_source = driver.page_source
+            logger.info(f"Selenium 页面内 fetch API: {url}")
+            fetch_script = """
+                const url = arguments[0];
+                const done = arguments[arguments.length - 1];
+                fetch(url, {credentials: 'include'})
+                    .then(r => r.text())
+                    .then(t => done({ok: true, text: t}))
+                    .catch(e => done({ok: false, text: String(e)}));
+            """
+            content = ""
+            try:
+                result = driver.execute_async_script(fetch_script, url)
+                if isinstance(result, dict) and result.get('ok'):
+                    content = result.get('text') or ""
+                    logger.info(f"Selenium fetch 成功，内容长度: {len(content)}")
+                else:
+                    err = result.get('text') if isinstance(result, dict) else result
+                    logger.warning(f"Selenium fetch 失败: {err}")
+            except Exception as e:
+                logger.warning(f"Selenium execute_async_script 异常: {e}")
 
-            if not page_source or len(page_source) < 100:
-                logger.error("Selenium 获取的页面源码为空或过短")
+            # fetch 不行时，退回直接访问 URL，再从 <pre>/body 抠出 JSON 文本
+            if not content or len(content) < 50:
+                logger.info("fetch 无结果，回退到直接访问 URL 解析页面")
+                try:
+                    driver.get(url)
+                    time.sleep(random.uniform(2, 4))
+                    content = driver.execute_script(
+                        "const p=document.querySelector('pre');"
+                        "return p?p.innerText:(document.body?document.body.innerText:'');"
+                    ) or ""
+                except Exception as e:
+                    logger.warning(f"回退解析页面失败: {e}")
+                    content = ""
+
+            content = (content or "").strip()
+
+            if not content or len(content) < 50:
+                logger.error("Selenium 获取的内容为空或过短")
                 return ""
 
-            if page_source.strip().startswith('<'):
+            if content.startswith('<'):
                 logger.error("Selenium 返回的是 HTML 页面，而不是 JSON 数据")
                 return ""
 
-            if 'jQuery' in page_source or '{' in page_source:
-                logger.info(f"Selenium 成功获取页面源码，长度: {len(page_source)}")
-                return page_source
-            else:
-                logger.error("页面内容格式不正确")
+            if '{' not in content:
+                logger.error("Selenium 内容不含 JSON，格式不正确")
                 return ""
+
+            logger.info(f"Selenium 成功获取数据，长度: {len(content)}")
+            return content
 
         except ImportError as ie:
             logger.error(f"Selenium 模块导入失败: {str(ie)}")
@@ -300,7 +400,8 @@ class EastMoneyHttpClient:
 
     @classmethod
     def get_source_with_rotation(cls, url: str, header_type: str = 'stock_1m_multiple_days',
-                                  use_selenium_fallback: bool = None) -> str:
+                                  use_selenium_fallback: bool = None,
+                                  force_selenium: bool = False) -> str:
         """
         使用请求头轮换获取页面源代码，失败时降级到 Selenium
 
@@ -308,6 +409,8 @@ class EastMoneyHttpClient:
             url: 请求的URL
             header_type: 请求头类型
             use_selenium_fallback: 是否启用 Selenium 降级
+            force_selenium: True 时无视"API 连续失败冷却"，HTTP 失败必尝试一次
+                Selenium（板块用：数量少、浏览器可直连，值得花这点开销）
 
         Returns:
             str: 页面源代码
@@ -344,10 +447,14 @@ class EastMoneyHttpClient:
         if _api_fail_time is None:
             _api_fail_time = time.time()
 
-        # 判断是否应该尝试 Selenium 降级
-        if use_selenium_fallback:
-            # 如果 API 在冷却期内连续失败，跳过 Selenium（避免反复启动 Chrome）
-            if _api_fail_time and (time.time() - _api_fail_time) < _API_FAIL_COOLDOWN:
+        # 判断是否应该尝试 Selenium 降级。
+        # force_selenium=True 时即便配置里 use_selenium_fallback=False 也强制走一次
+        # （板块专用：用户已验证浏览器能直连该 API）。
+        if use_selenium_fallback or force_selenium:
+            # 如果 API 在冷却期内连续失败，跳过 Selenium（避免反复启动 Chrome）。
+            # force_selenium=True 时不跳过——板块数量少且浏览器能直连，值得一试。
+            if (not force_selenium and _api_fail_time
+                    and (time.time() - _api_fail_time) < _API_FAIL_COOLDOWN):
                 elapsed = int(time.time() - _api_fail_time)
                 if elapsed > 5:  # 首次失败仍尝试一次 Selenium
                     logger.warning(f"API 连续失败中（{elapsed}秒），跳过 Selenium 降级以避免资源浪费")

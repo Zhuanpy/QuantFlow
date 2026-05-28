@@ -42,6 +42,8 @@ pipeline_completed_count = 0      # 已完成的股票数（并发用）
 
 # 股票代码缓存
 stock_code_cache = {}
+# 股票名称缓存（按 stock_code_id）
+stock_name_cache = {}
 
 # 最近完成的股票15m数据预览缓存
 last_completed_preview = {
@@ -164,6 +166,22 @@ def get_stock_code_by_id(stock_code_id):
             return None
     except Exception as e:
         logging.error(f"获取股票代码时发生错误: {e}")
+        return None
+
+
+def get_stock_name_by_id(stock_code_id):
+    """根据股票代码ID获取股票/板块名称（带缓存），未找到返回 None。"""
+    if stock_code_id in stock_name_cache:
+        return stock_name_cache[stock_code_id]
+
+    try:
+        stock = StockCodes.query.get(stock_code_id)
+        if stock:
+            stock_name_cache[stock_code_id] = stock.name
+            return stock.name
+        return None
+    except Exception as e:
+        logging.error(f"获取股票名称时发生错误: {e}")
         return None
 
 
@@ -448,10 +466,11 @@ def download_file():
                         lmt = min(days * 240, 2000)
                         if is_board:
                             url_template = 'board_1m_multiple_days'
-                            debug_url = Config.get_eastmoney_urls(url_template).format(lmt, stock_code)
+                            # 模板顺序是 secid=90.{code} ... lmt={lmt}，别写反了
+                            debug_url = Config.get_eastmoney_urls(url_template).format(stock_code, lmt)
                         else:
                             url_template = 'stock_1m_multiple_days'
-                            debug_url = Config.get_eastmoney_urls(url_template).format(lmt, UrlCode(stock_code))
+                            debug_url = Config.get_eastmoney_urls(url_template).format(UrlCode(stock_code), lmt)
                     except Exception as url_error:
                         debug_url = f"构建URL失败: {url_error}"
 
@@ -468,17 +487,10 @@ def download_file():
                         data, ending = download_1m_by_type(stock_code, days, stock_type)
 
                         if data.empty:
-                            if is_board:
-                                logging.warning(f'板块 {stock_code} 数据不可用（可能是非交易时间或板块代码无效）')
-                                first_record.update_download_status(
-                                    status='failed',
-                                    error_msg=f'板块数据不可用（API返回rc=100，可能是非交易时间或板块代码无效）\nURL: {debug_url}'
-                                )
-                                db.session.commit()
-                                _mark_recent_attempts_failed(stock_code, days,
-                                                             '[STEP2] 板块数据不可用（rc=100）')
-                                break
-
+                            # 板块和个股一视同仁地重试：board_1m_multiple 内部已做
+                            # East Money→AKShare 双兜底，单次返回空绝大多数是瞬时限流
+                            # （rc=100 在限流时也会出现），而非真无数据。早先板块直接
+                            # break、零重试，是它"经常失败"的根因。
                             retry_count += 1
                             logging.error(f"下载失败 - {code_type_name}: {stock_code}, URL: {debug_url}")
 
@@ -487,13 +499,20 @@ def download_file():
                                 continue
                             else:
                                 logging.error(f'{code_type_name} {stock_code} 下载失败，已达到最大重试次数 {max_retries}')
+                                if is_board:
+                                    err_msg = (f'板块数据不可用，已重试{max_retries}次'
+                                               f'（限流/非交易时间/板块代码无效）\nURL: {debug_url}')
+                                    fail_note = f'[STEP2] 板块下载空数据已重试 {max_retries} 次'
+                                else:
+                                    err_msg = (f'下载失败，已重试{max_retries}次'
+                                               f'（网络连接问题或数据源限制）\nURL: {debug_url}')
+                                    fail_note = f'[STEP2] 下载空数据已重试 {max_retries} 次'
                                 first_record.update_download_status(
                                     status='failed',
-                                    error_msg=f'下载失败，已重试{max_retries}次（网络连接问题或数据源限制）\nURL: {debug_url}'
+                                    error_msg=err_msg
                                 )
                                 db.session.commit()
-                                _mark_recent_attempts_failed(stock_code, days,
-                                                             f'[STEP2] 下载空数据已重试 {max_retries} 次')
+                                _mark_recent_attempts_failed(stock_code, days, fail_note)
                                 break
                         else:
                             download_success = True
@@ -2023,6 +2042,8 @@ def api_get_download_records():
         per_page = request.args.get('per_page', 20, type=int)
         search = request.args.get('search', '', type=str)
         status_filter = request.args.get('status', '', type=str)
+        # code_type: 'stock'=个股 / 'board'=板块（代码以 BK 开头）/ ''=全部
+        code_type = request.args.get('code_type', '', type=str)
 
         per_page = min(per_page, 100)
 
@@ -2033,13 +2054,16 @@ def api_get_download_records():
         if status_filter:
             query = query.filter(dlr.download_status == status_filter)
 
-        # 搜索（需要通过 stock_code_id 关联查找）
-        if search:
-            # 先查找匹配的股票ID
-            matching_stock_ids = db.session.query(StockCodes.id).filter(
-                StockCodes.code.like(f'%{search}%')
-            ).all()
-            matching_ids = [s[0] for s in matching_stock_ids]
+        # 代码搜索 + 个股/板块类型，都要通过 stock_code_id 关联 StockCodes 解析
+        if search or code_type in ('stock', 'board'):
+            id_query = db.session.query(StockCodes.id)
+            if search:
+                id_query = id_query.filter(StockCodes.code.like(f'%{search}%'))
+            if code_type == 'board':
+                id_query = id_query.filter(StockCodes.code.like('BK%'))
+            elif code_type == 'stock':
+                id_query = id_query.filter(~StockCodes.code.like('BK%'))
+            matching_ids = [s[0] for s in id_query.all()]
             if matching_ids:
                 query = query.filter(dlr.stock_code_id.in_(matching_ids))
             else:
@@ -2073,6 +2097,7 @@ def api_get_download_records():
                 'id': record.id,
                 'stock_code_id': record.stock_code_id,
                 'stock_code': stock_code or f'ID:{record.stock_code_id}',
+                'stock_name': get_stock_name_by_id(record.stock_code_id) or '-',
                 'download_status': record.download_status,
                 'download_progress': record.download_progress,
                 'error_message': record.error_message,

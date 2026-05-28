@@ -1,0 +1,307 @@
+{% extends "base.html" %}
+
+{% block content %}
+<style>
+.rd-container { padding: 1rem 1.5rem; }
+.rd-header { display: flex; justify-content: space-between; align-items: flex-end;
+             margin-bottom: 1rem; gap: 1rem; }
+.rd-header h1 { font-size: 1.5rem; margin: 0.25rem 0 0; }
+.rd-header .back-link { color: #2563eb; text-decoration: none; font-size: 0.9rem; }
+.rd-header .back-link:hover { text-decoration: underline; }
+.rd-meta { color: #64748b; font-size: 0.875rem; margin-top: 0.25rem; }
+.rd-actions { display: flex; align-items: center; gap: 0.6rem; }
+.rd-actions select, .rd-actions button { padding: 0.4rem 0.8rem; font-size: 0.875rem;
+                                          border: 1px solid #cbd5e1; border-radius: 4px; background: #fff; cursor: pointer; }
+.rd-actions button.primary { background: #2563eb; color: #fff; border-color: #2563eb; }
+.rd-actions button.primary:hover { background: #1d4ed8; }
+.rd-actions button:disabled { opacity: 0.5; cursor: not-allowed; }
+.rd-status-bar { display: flex; gap: 1rem; padding: 0.6rem 0.9rem; background: #f8fafc;
+                 border-radius: 6px; margin-bottom: 1rem; font-size: 0.875rem; }
+.rd-status-bar .item { color: #475569; }
+.rd-status-bar .item .lbl { color: #94a3b8; margin-right: 0.3rem; }
+.rd-status-bar .item .val { font-weight: 600; color: #1e293b; }
+.rd-status-bar .badge-live { padding: 0.1rem 0.5rem; background: #dcfce7;
+                              color: #166534; border-radius: 4px; font-weight: 600; font-size: 0.75rem; }
+.rd-status-bar .badge-stale { padding: 0.1rem 0.5rem; background: #fef3c7;
+                               color: #92400e; border-radius: 4px; font-weight: 600; font-size: 0.75rem; }
+.rd-status-bar .badge-holding  { padding: 0.1rem 0.5rem; background: #fee2e2;
+                                  color: #991b1b; border-radius: 4px; font-weight: 600; font-size: 0.75rem; }
+.rd-status-bar .badge-watching { padding: 0.1rem 0.5rem; background: #dbeafe;
+                                  color: #1e40af; border-radius: 4px; font-weight: 600; font-size: 0.75rem; }
+.rd-chart-title { font-weight: 600; margin: 1rem 0 0.4rem; color: #1e293b; }
+.rd-chart-status { color: #94a3b8; font-size: 0.85rem; margin-left: 0.5rem; font-weight: 400; }
+.rd-chart-box { width: 100%; height: 600px; background: #fff;
+                box-shadow: 0 1px 3px rgba(0,0,0,0.08); border-radius: 6px; }
+.rd-error { padding: 2rem; text-align: center; color: #dc2626; }
+</style>
+
+<div class="rd-container">
+    <div class="rd-header">
+        <div>
+            <a href="/trade/holdings/realtime" class="back-link">← 返回持仓列表</a>
+            <h1 id="rdTitle">{{ stock_code }}</h1>
+            <div class="rd-meta" id="rdMeta">加载中...</div>
+        </div>
+        <div class="rd-actions">
+            <label>显示 K 数
+                <select id="barsSel" onchange="loadChart15m()">
+                    <option value="96">96 根（~5 日）</option>
+                    <option value="192" selected>192 根（~10 日）</option>
+                    <option value="384">384 根（~20 日）</option>
+                    <option value="960">960 根（~50 日）</option>
+                </select>
+            </label>
+            <button onclick="manualRefresh()" id="refreshBtn" class="primary">↻ 立即刷新</button>
+            <label><input type="checkbox" id="autoRefreshCb" checked onchange="toggleAuto()"> 自动刷新（15min）</label>
+        </div>
+    </div>
+
+    <div class="rd-status-bar">
+        <span class="item"><span class="lbl">代码</span><span class="val" id="sbCode">{{ stock_code }}</span></span>
+        <span class="item"><span class="lbl">名称</span><span class="val" id="sbName">-</span></span>
+        <span id="sbKind"></span>
+        <!-- 持仓字段 -->
+        <span class="item" id="sbQtyWrap" style="display:none;"><span class="lbl">净持仓</span><span class="val" id="sbQty">-</span></span>
+        <span class="item" id="sbCostWrap" style="display:none;"><span class="lbl">平均成本</span><span class="val" id="sbCost">-</span></span>
+        <!-- 等待入场字段 -->
+        <span class="item" id="sbTargetWrap" style="display:none;"><span class="lbl">心里价位</span><span class="val" id="sbTarget">-</span></span>
+        <span class="item" id="sbSlWrap" style="display:none;"><span class="lbl">止损</span><span class="val" id="sbSl">-</span></span>
+        <span class="item" id="sbTpWrap" style="display:none;"><span class="lbl">止盈</span><span class="val" id="sbTp">-</span></span>
+        <span class="item"><span class="lbl">数据时间</span><span class="val" id="sbFetch">-</span></span>
+        <span id="sbBadge"></span>
+        <span class="item" style="margin-left:auto;"><span class="lbl">下次自动刷新</span><span class="val" id="sbCountdown">-</span></span>
+    </div>
+
+    <div class="rd-chart-title">15m K 线（历史 + 当日实时聚合） <span class="rd-chart-status" id="k15ChartStatus"></span></div>
+    <div id="kChart15m" class="rd-chart-box"></div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<script>
+const STOCK_CODE = "{{ stock_code }}";
+const AUTO_INTERVAL_MS = 15 * 60 * 1000;   // 15 分钟
+let chart15m = null;
+let autoTimer = null;
+let countdownTimer = null;
+let nextRefreshTs = 0;
+// 用于在 15m 图上绘制 markLine 的参考价（来自持仓/计划）
+let refPrices = { avg_cost: null, target_entry: null, stop_loss: null, take_profit: null };
+
+// ---------------- echarts 占位辅助 ----------------
+function _padCount(len, percent = 0.08, min = 3) { return Math.max(min, Math.ceil(len * percent)); }
+function _padDates(dates, n)   { const o = dates.slice(); for (let i = 0; i < n; i++) o.push(''); return o; }
+function _padNulls(arr, n)     { const o = arr.slice(); for (let i = 0; i < n; i++) o.push(null); return o; }
+function _padCandles(arr, n)   { const o = arr.slice(); for (let i = 0; i < n; i++) o.push([null, null, null, null]); return o; }
+function _padValueObjects(arr, n) { const o = arr.slice(); for (let i = 0; i < n; i++) o.push({ value: null }); return o; }
+
+function setChartStatus(elId, rows) {
+    const el = document.getElementById(elId);
+    if (!el || !rows || rows.length === 0) { if (el) el.textContent = ''; return; }
+    el.textContent = `数据：${rows[0].date} ~ ${rows[rows.length - 1].date}（${rows.length} 根 15m）`;
+}
+
+// ---------------- 顶部持仓/关注信息 ----------------
+function _show(id) { document.getElementById(id).style.display = ''; }
+function _setText(id, t) { const el = document.getElementById(id); if (el) el.textContent = t; }
+
+async function loadPositionInfo() {
+    try {
+        const r = await fetch('/api/trade/holdings/realtime/list').then(r => r.json());
+        if (!r.success) return;
+        const me = (r.data || []).find(x => x.stock_code === STOCK_CODE);
+        if (!me) {
+            document.getElementById('rdMeta').textContent = '⚠️ 该股票既不在当前持仓中，也无 planning/pending 计划';
+            return;
+        }
+        document.getElementById('rdTitle').textContent = `${me.stock_code} ${me.stock_name || ''}`;
+        _setText('sbName', me.stock_name || '-');
+
+        const kindEl = document.getElementById('sbKind');
+        if (me.kind === 'holding') {
+            kindEl.innerHTML = '<span class="badge-holding">● 持仓中</span>';
+            _show('sbQtyWrap'); _show('sbCostWrap');
+            _setText('sbQty',  (me.net_quantity || 0).toLocaleString());
+            _setText('sbCost', me.avg_cost != null ? me.avg_cost.toFixed(4) : '-');
+            refPrices.avg_cost = me.avg_cost;
+        } else if (me.kind === 'watching') {
+            kindEl.innerHTML = '<span class="badge-watching">◇ 等待入场</span>';
+            _show('sbTargetWrap'); _show('sbSlWrap'); _show('sbTpWrap');
+            _setText('sbTarget', me.target_entry_price != null ? me.target_entry_price.toFixed(4) : '-');
+            _setText('sbSl',     me.stop_loss_price    != null ? me.stop_loss_price.toFixed(4)    : '-');
+            _setText('sbTp',     me.take_profit_price  != null ? me.take_profit_price.toFixed(4)  : '-');
+            refPrices.target_entry = me.target_entry_price;
+            refPrices.stop_loss    = me.stop_loss_price;
+            refPrices.take_profit  = me.take_profit_price;
+        }
+
+        // 已经加载过图，重新刷一次让 markLine 生效
+        if (chart15m) loadChart15m(false);
+    } catch (e) { console.warn('持仓信息加载失败', e); }
+}
+
+function _buildMarkLines() {
+    const lines = [];
+    const add = (label, val, color) => {
+        if (val == null) return;
+        lines.push({
+            yAxis: val,
+            lineStyle: { color, type: 'dashed', width: 1.2 },
+            label: { formatter: `${label} ${val.toFixed(4)}`, color, position: 'insideEndTop' },
+        });
+    };
+    add('成本', refPrices.avg_cost,     '#7c3aed');
+    add('心里价位', refPrices.target_entry, '#2563eb');
+    add('止损', refPrices.stop_loss,    '#dc2626');
+    add('止盈', refPrices.take_profit,  '#16a34a');
+    return lines;
+}
+
+// ---------------- 15m K 线 ----------------
+async function loadChart15m(live = true) {
+    const bars = document.getElementById('barsSel').value;
+    const url = `/api/trade/holdings/realtime/${STOCK_CODE}/chart_15m?bars=${bars}&live=${live ? 1 : 0}`;
+    document.getElementById('refreshBtn').disabled = true;
+
+    let r;
+    try {
+        r = await fetch(url).then(r => r.json());
+    } catch (e) {
+        document.getElementById('kChart15m').innerHTML =
+            `<div class="rd-error">加载失败：${e}</div>`;
+        document.getElementById('refreshBtn').disabled = false;
+        return;
+    }
+    document.getElementById('refreshBtn').disabled = false;
+
+    if (!r.success) {
+        document.getElementById('kChart15m').innerHTML =
+            `<div class="rd-error">加载失败：${r.message}</div>`;
+        return;
+    }
+
+    const rows = r.data.rows;
+    setChartStatus('k15ChartStatus', rows);
+
+    // 状态栏
+    document.getElementById('sbFetch').textContent = r.data.fetched_at || '-';
+    const badge = document.getElementById('sbBadge');
+    if (r.data.has_intraday) {
+        badge.innerHTML = `<span class="badge-live">● 当日已合成 ${r.data.intraday_rows} 根</span>`;
+    } else {
+        badge.innerHTML = `<span class="badge-stale">⚠ 当日数据未生成（非交易时段或拉取失败）</span>`;
+    }
+
+    // 绘图
+    const dates = rows.map(x => x.date);
+    const kdata = rows.map(x => [x.open, x.close, x.low, x.high]);
+    const ma20  = rows.map(x => x.ma20);
+    const ma60  = rows.map(x => x.ma60);
+    const dif   = rows.map(x => x.dif);
+    const dea   = rows.map(x => x.dea);
+    const bar   = rows.map(x => x.bar);
+    const vol   = rows.map(x => ({
+        value: x.volume,
+        itemStyle: { color: x.close >= x.open ? '#dc2626' : '#16a34a' }
+    }));
+
+    const n = _padCount(dates.length);
+    const datesP = _padDates(dates, n);
+    const kdataP = _padCandles(kdata, n);
+    const ma20P  = _padNulls(ma20, n);
+    const ma60P  = _padNulls(ma60, n);
+    const difP   = _padNulls(dif, n);
+    const deaP   = _padNulls(dea, n);
+    const barP   = _padNulls(bar, n);
+    const volP   = _padValueObjects(vol, n);
+
+    if (!chart15m) chart15m = echarts.init(document.getElementById('kChart15m'));
+    chart15m.setOption({
+        animation: false,
+        tooltip: { trigger: 'axis', axisPointer: { type: 'cross' } },
+        legend: { data: ['15mK', 'MA20', 'MA60', 'DIF', 'DEA', 'MACD'], top: 0 },
+        axisPointer: { link: [{ xAxisIndex: 'all' }] },
+        grid: [
+            { left: 60, right: 30, top: 30, height: '50%' },
+            { left: 60, right: 30, top: '62%', height: '15%' },
+            { left: 60, right: 30, top: '80%', height: '17%' },
+        ],
+        xAxis: [
+            { type: 'category', data: datesP, scale: true, boundaryGap: false, axisLine: { onZero: false }, splitLine: { show: false } },
+            { type: 'category', gridIndex: 1, data: datesP, axisLabel: { show: false }, axisLine: { onZero: false }, splitLine: { show: false } },
+            { type: 'category', gridIndex: 2, data: datesP, axisLabel: { show: false }, axisLine: { onZero: false }, splitLine: { show: false } },
+        ],
+        yAxis: [
+            { scale: true, splitArea: { show: true } },
+            { scale: true, gridIndex: 1, splitNumber: 2, axisLabel: { show: true } },
+            { scale: true, gridIndex: 2, splitNumber: 2, axisLabel: { show: true } },
+        ],
+        dataZoom: [
+            { type: 'inside', xAxisIndex: [0, 1, 2], start: 60, end: 100 },
+            { show: true, xAxisIndex: [0, 1, 2], type: 'slider', bottom: 0, start: 60, end: 100 },
+        ],
+        series: [
+            { name: '15mK', type: 'candlestick', data: kdataP,
+              itemStyle: { color: '#dc2626', color0: '#16a34a', borderColor: '#dc2626', borderColor0: '#16a34a' },
+              markLine: { symbol: 'none', silent: true, data: _buildMarkLines() } },
+            { name: 'MA20', type: 'line', data: ma20P, smooth: true, showSymbol: false, lineStyle: { width: 1.2, color: '#f59e0b' } },
+            { name: 'MA60', type: 'line', data: ma60P, smooth: true, showSymbol: false, lineStyle: { width: 1.2, color: '#8b5cf6' } },
+            { name: '量', type: 'bar', xAxisIndex: 1, yAxisIndex: 1, data: volP },
+            { name: 'DIF', type: 'line', xAxisIndex: 2, yAxisIndex: 2, data: difP, smooth: true, showSymbol: false, lineStyle: { color: '#2563eb' } },
+            { name: 'DEA', type: 'line', xAxisIndex: 2, yAxisIndex: 2, data: deaP, smooth: true, showSymbol: false, lineStyle: { color: '#f59e0b' } },
+            { name: 'MACD', type: 'bar', xAxisIndex: 2, yAxisIndex: 2, data: barP.map(v => (v == null ? { value: null } : {
+                value: v, itemStyle: { color: v >= 0 ? '#dc2626' : '#16a34a' }
+            })) },
+        ]
+    });
+}
+
+// ---------------- 刷新机制 ----------------
+function manualRefresh() {
+    loadChart15m(true);
+    scheduleNext();
+}
+
+function scheduleNext() {
+    clearTimeout(autoTimer);
+    nextRefreshTs = Date.now() + AUTO_INTERVAL_MS;
+    const enabled = document.getElementById('autoRefreshCb').checked;
+    if (enabled) {
+        autoTimer = setTimeout(() => loadChart15m(true).then(scheduleNext), AUTO_INTERVAL_MS);
+    }
+    updateCountdown();
+}
+
+function updateCountdown() {
+    clearInterval(countdownTimer);
+    const el = document.getElementById('sbCountdown');
+    const enabled = document.getElementById('autoRefreshCb').checked;
+    if (!enabled) { el.textContent = '已暂停'; return; }
+    const tick = () => {
+        const remain = Math.max(0, nextRefreshTs - Date.now());
+        const m = Math.floor(remain / 60000);
+        const s = Math.floor((remain % 60000) / 1000);
+        el.textContent = `${m}m ${String(s).padStart(2, '0')}s`;
+    };
+    tick();
+    countdownTimer = setInterval(tick, 1000);
+}
+
+function toggleAuto() {
+    const enabled = document.getElementById('autoRefreshCb').checked;
+    if (enabled) {
+        scheduleNext();
+    } else {
+        clearTimeout(autoTimer);
+        updateCountdown();
+    }
+}
+
+window.addEventListener('resize', () => { if (chart15m) chart15m.resize(); });
+
+// ---------------- init ----------------
+loadPositionInfo();
+loadChart15m(true).then(scheduleNext);
+document.getElementById('rdMeta').textContent =
+    '当日 1m 由 pytdx 实时拉取并聚合为 15m，与历史 15m 拼接；持仓/计划价位以横线标注。';
+</script>
+{% endblock %}

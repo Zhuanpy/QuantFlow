@@ -1,0 +1,426 @@
+{% extends "base.html" %}
+{% block content %}
+<div style="padding:1.25rem;max-width:1400px;margin:0 auto;">
+
+  <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem;margin-bottom:.5rem;">
+    <h1 style="margin:0;font-size:1.4rem;">分布快照筛选</h1>
+    <div style="display:flex;align-items:center;gap:.6rem;flex-wrap:wrap;">
+      <span style="color:#6b7280;font-size:.85rem;">快照日期:</span>
+      <select id="dateSel" style="padding:.35rem .55rem;border:1px solid #d1d5db;border-radius:6px;font-size:.85rem;"><option>加载中…</option></select>
+      <a href="/stock_pool/" style="color:#2563eb;text-decoration:none;font-size:.85rem;">→ 股票池管理</a>
+    </div>
+  </div>
+  <div style="color:#6b7280;font-size:.82rem;margin-bottom:1rem;">
+    每天收盘后跑 <code style="background:#f3f4f6;padding:.05rem .35rem;border-radius:4px;">python scripts/compute_dist_snapshots.py</code>
+    会对 <code>data/15m/</code> 下"我收集的"全部个股算分布；这里可在 ~290 只里按指标筛出心仪的标的。
+  </div>
+
+  <!-- ========== 筛选条件 ========== -->
+  <div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:1rem;margin-bottom:1rem;">
+    <div style="display:flex;gap:1rem;align-items:flex-end;flex-wrap:wrap;">
+
+      <div>
+        <div style="color:#6b7280;font-size:.78rem;margin-bottom:.2rem;">当前周期方向</div>
+        <select id="dirSel" style="padding:.35rem .55rem;border:1px solid #d1d5db;border-radius:6px;font-size:.85rem;">
+          <option value="">不限</option>
+          <option value="up">↑ 上涨</option>
+          <option value="down">↓ 下跌</option>
+        </select>
+      </div>
+
+      <div>
+        <div style="color:#6b7280;font-size:.78rem;margin-bottom:.2rem;">代码 / 名称搜索</div>
+        <input id="qInput" type="search" placeholder="如 600519 或 茅台" autocomplete="off"
+               style="padding:.35rem .55rem;border:1px solid #d1d5db;border-radius:6px;font-size:.85rem;width:180px;">
+      </div>
+
+      <div>
+        <div style="color:#6b7280;font-size:.78rem;margin-bottom:.2rem;">股票池范围</div>
+        <select id="poolSel" style="padding:.35rem .55rem;border:1px solid #d1d5db;border-radius:6px;font-size:.85rem;">
+          <option value="">全部（默认，~290 只全市场）</option>
+          <option value="not_in_pool">⭐ 未在池中（新发现候选）</option>
+          <option value="in_any_pool">在任意我的池子里</option>
+          <option value="trading">仅交易中</option>
+          <option value="watching">仅观察中</option>
+          <option value="candidate">仅候选</option>
+        </select>
+      </div>
+
+      <div style="flex:1 1 100%;border-top:1px dashed #e5e7eb;margin-top:.4rem;padding-top:.5rem;">
+        <div style="color:#374151;font-size:.85rem;font-weight:600;margin-bottom:.4rem;">数值条件（可加多组 AND）</div>
+        <div id="condList" style="display:flex;flex-direction:column;gap:.4rem;"></div>
+        <button onclick="addCond()" style="margin-top:.4rem;padding:.25rem .65rem;border:1px dashed #9ca3af;background:#fff;color:#374151;border-radius:6px;font-size:.8rem;cursor:pointer;">+ 加一组条件</button>
+      </div>
+
+      <div style="flex:1 1 100%;display:flex;gap:.5rem;align-items:center;margin-top:.3rem;">
+        <button onclick="runFilter()" style="padding:.4rem 1rem;background:#2563eb;color:#fff;border:none;border-radius:6px;font-size:.88rem;cursor:pointer;">筛选</button>
+        <button onclick="loadPreset('down_long')" style="padding:.4rem .8rem;background:#fff;border:1px solid #d1d5db;border-radius:6px;font-size:.8rem;cursor:pointer;color:#374151;">预设：下跌已走够长 (pct≥0.7)</button>
+        <button onclick="loadPreset('up_continue')" style="padding:.4rem .8rem;background:#fff;border:1px solid #d1d5db;border-radius:6px;font-size:.8rem;cursor:pointer;color:#374151;">预设：上涨仍有空间 (z≤0)</button>
+        <button onclick="loadPreset('vol_breakout')" style="padding:.4rem .8rem;background:#fff;border:1px solid #d1d5db;border-radius:6px;font-size:.8rem;cursor:pointer;color:#374151;">预设：量能放大 (v5_z≥1)</button>
+        <button onclick="clearConds()" style="padding:.4rem .8rem;background:#f3f4f6;border:1px solid #d1d5db;border-radius:6px;font-size:.8rem;cursor:pointer;color:#6b7280;">清空</button>
+        <span id="resultMeta" style="margin-left:auto;color:#6b7280;font-size:.85rem;"></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 字段说明已移动到结果右侧 sticky 侧栏 -->
+  <template id="_legacy_details_placeholder_">
+    <span></span>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:1rem;margin-top:.6rem;">
+
+      <!-- 3 个原始指标 -->
+      <div>
+        <div style="font-weight:600;color:#0369a1;margin-bottom:.3rem;">3 个原始指标（用当前周期跟历史比）</div>
+        <ul style="margin:0;padding-left:1.1rem;line-height:1.6;">
+          <li><b>len</b>（长度）= 当前未完成周期已走了几根 15m K 线<br>
+              <span style="color:#6b7280;font-size:.78rem;">上涨周期走得越久 → len 越大；典型 30-150 根</span></li>
+          <li><b>amp</b>（振幅）= 当前周期已经涨/跌了多少（绝对值小数）<br>
+              <span style="color:#6b7280;font-size:.78rem;">上涨：(最高价−起点价)/起点价；下跌：(起点价−最低价)/起点价</span></li>
+          <li><b>v5</b>（量能）= 周期内任意 1m K 线成交量 top5 的最大值<br>
+              <span style="color:#6b7280;font-size:.78rem;">衡量周期内的"放量峰值"，常和资金介入相关</span></li>
+        </ul>
+      </div>
+
+      <!-- 2 种统计口径 -->
+      <div>
+        <div style="font-weight:600;color:#0369a1;margin-bottom:.3rem;">2 种统计口径（拿当前值跟历史 60 个已完成同向周期比）</div>
+        <ul style="margin:0;padding-left:1.1rem;line-height:1.6;">
+          <li><b>z 分数</b> = (当前值 − 历史均值) / 历史标准差<br>
+              <span style="color:#6b7280;font-size:.78rem;">
+                z=0 跟历史一样；<b>z=+1</b> 比 ~84% 历史值大；<b>z=+2</b> 极端偏离（仅 ~2.5%）；负数同理。
+                <span style="color:#b91c1c;">正</span>偏离 = 当前"偏大"，<span style="color:#15803d;">负</span>偏离 = "偏小"
+              </span></li>
+          <li><b>分位</b>（pct）= 历史中 <i>≤ 当前值</i> 的占比<br>
+              <span style="color:#6b7280;font-size:.78rem;">
+                70% = 历史上 70% 的同向周期 ≤ 当前值（即当前排前 30%）；<b>100% = 历史最大</b>。
+                <br>分位 vs z：z 假设正态分布；分位是经验值，对异常分布更稳健
+              </span></li>
+        </ul>
+      </div>
+
+      <!-- 典型用法 -->
+      <div style="grid-column:1 / -1;background:#f9fafb;padding:.5rem .75rem;border-radius:6px;font-size:.82rem;">
+        <b style="color:#374151;">📌 典型解读：</b>
+        <span style="color:#374151;">
+          下跌方向 <b style="font-family:monospace;">len_pct=100%</b> & <b style="font-family:monospace;">amp_pct&gt;80%</b>
+          → 下跌时间和幅度都已突破历史最差，<span style="color:#dc2626;">反弹概率较高</span>；
+          上涨方向 <b style="font-family:monospace;">len_z&lt;0</b> & <b style="font-family:monospace;">amp_z&lt;0</b>
+          → 上涨刚起步未爆，<span style="color:#dc2626;">可能仍有空间</span>；
+          <b style="font-family:monospace;">v5_z≥1</b> 配合方向 → 放量信号。
+        </span>
+      </div>
+    </div>
+  </template>
+
+  <!-- ========== 结果区：左表 + 右侧 sticky 字段说明卡 ========== -->
+  <div style="display:flex;gap:1rem;align-items:flex-start;" id="resultFlex">
+
+    <!-- 左：结果表 -->
+    <div style="flex:1 1 auto;min-width:0;background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:.5rem;overflow-x:auto;">
+    <table style="width:100%;border-collapse:collapse;font-size:.85rem;">
+      <thead style="background:#f9fafb;position:sticky;top:0;">
+        <tr>
+          <th style="padding:.5rem;text-align:left;">代码</th>
+          <th style="padding:.5rem;text-align:left;">名称</th>
+          <th style="padding:.5rem;text-align:center;">方向</th>
+          <th style="padding:.5rem;text-align:right;" title="长度：当前已走根数 / 历史均值（同方向已完成周期）">长度 当前/均值</th>
+          <th style="padding:.5rem;text-align:right;" title="长度 z 分数：(当前−均值)/标准差。正=比平均长，负=比平均短">长度 z</th>
+          <th style="padding:.5rem;text-align:right;" title="长度经验分位：历史中 ≤ 当前 的占比。100% = 历史最长">长度 分位</th>
+          <th style="padding:.5rem;text-align:right;" title="振幅 z 分数：(当前涨跌幅−历史均值)/标准差">振幅 z</th>
+          <th style="padding:.5rem;text-align:right;" title="振幅经验分位：100% = 历史最大涨跌幅">振幅 分位</th>
+          <th style="padding:.5rem;text-align:right;" title="量能 z 分数：周期内 1m 成交量峰值，偏离历史均值的标准差倍数">量能 z</th>
+          <th style="padding:.5rem;text-align:right;" title="量能经验分位：100% = 历史最大放量">量能 分位</th>
+          <th style="padding:.5rem;text-align:right;" title="参与拟合的历史已完成同向周期样本数；&lt;8 不算 z/分位">样本 n</th>
+        </tr>
+      </thead>
+      <tbody id="resultBody"><tr><td colspan="11" style="text-align:center;color:#9ca3af;padding:1rem;">点击"筛选"开始</td></tr></tbody>
+    </table>
+    </div><!-- /左：结果表 -->
+
+    <!-- 右：字段说明侧栏（sticky 跟随滚动；窄屏自动堆到下方） -->
+    <aside id="fieldsHelp" style="flex:0 0 300px;background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:.85rem 1rem;font-size:.82rem;color:#374151;line-height:1.55;position:sticky;top:.5rem;max-height:calc(100vh - 1rem);overflow-y:auto;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.5rem;">
+        <span style="font-weight:600;color:#374151;">📖 字段说明</span>
+        <span onclick="document.getElementById('fieldsHelpBody').classList.toggle('hidden');this.innerText=this.innerText.startsWith('收起')?'展开 ▾':'收起 ▴'"
+              style="cursor:pointer;color:#9ca3af;font-size:.78rem;user-select:none;">收起 ▴</span>
+      </div>
+      <div id="fieldsHelpBody">
+        <div style="font-weight:600;color:#0369a1;margin:.4rem 0 .2rem;">3 个原始指标</div>
+        <div style="background:#f9fafb;padding:.45rem .55rem;border-radius:6px;margin-bottom:.45rem;">
+          <div style="margin-bottom:.35rem;"><b>len</b>（长度）<br>
+            <span style="color:#6b7280;font-size:.76rem;">当前未完成周期已走几根 15m K 线；典型 30-150 根</span></div>
+          <div style="margin-bottom:.35rem;"><b>amp</b>（振幅）<br>
+            <span style="color:#6b7280;font-size:.76rem;">当前周期已涨/跌幅度（绝对值小数）</span></div>
+          <div><b>v5</b>（量能）<br>
+            <span style="color:#6b7280;font-size:.76rem;">周期内 1m 成交量 top5 最大值，反映放量峰值</span></div>
+        </div>
+
+        <div style="font-weight:600;color:#0369a1;margin:.4rem 0 .2rem;">2 种统计口径</div>
+        <div style="background:#f9fafb;padding:.45rem .55rem;border-radius:6px;margin-bottom:.45rem;">
+          <div style="margin-bottom:.4rem;"><b>z 分数</b> = (当前 − 均值) / 标准差<br>
+            <span style="color:#6b7280;font-size:.76rem;">
+              z=0 跟历史一样；<b>+1</b> 比 ~84% 历史大；<b>+2</b> 极端偏离（~2.5%）。
+              <span style="color:#b91c1c;">正</span>=偏大；<span style="color:#15803d;">负</span>=偏小
+            </span></div>
+          <div><b>分位</b>（pct）= 历史中 ≤ 当前的占比<br>
+            <span style="color:#6b7280;font-size:.76rem;">
+              70%=历史 70% 同向周期 ≤ 当前（即排前 30%）；<b>100%=历史最大</b>。
+              分位对异常分布更稳健
+            </span></div>
+        </div>
+
+        <div style="font-weight:600;color:#0369a1;margin:.4rem 0 .2rem;">📌 典型解读</div>
+        <div style="background:#fffbeb;border:1px solid #fde68a;padding:.45rem .55rem;border-radius:6px;font-size:.78rem;line-height:1.5;">
+          <div style="margin-bottom:.3rem;"><b style="color:#15803d;">↓</b>
+            <code style="background:#fff;padding:.05rem .3rem;border-radius:3px;font-size:.74rem;">len_dn_pct=100%</code>
+            &amp;
+            <code style="background:#fff;padding:.05rem .3rem;border-radius:3px;font-size:.74rem;">amp_dn_pct&gt;80%</code><br>
+            → 下跌时间/幅度突破历史最差，<span style="color:#dc2626;font-weight:600;">反弹概率较高</span></div>
+          <div style="margin-bottom:.3rem;"><b style="color:#b91c1c;">↑</b>
+            <code style="background:#fff;padding:.05rem .3rem;border-radius:3px;font-size:.74rem;">len_up_z&lt;0</code>
+            &amp;
+            <code style="background:#fff;padding:.05rem .3rem;border-radius:3px;font-size:.74rem;">amp_up_z&lt;0</code><br>
+            → 上涨刚起步未爆，<span style="color:#dc2626;font-weight:600;">仍有空间</span></div>
+          <div>
+            <code style="background:#fff;padding:.05rem .3rem;border-radius:3px;font-size:.74rem;">v5_z≥1</code>
+            配合方向 → 放量信号</div>
+        </div>
+      </div>
+    </aside>
+
+  </div><!-- /resultFlex -->
+
+  <style>
+    #fieldsHelpBody.hidden { display: none; }
+    @media (max-width: 1100px) {
+      #resultFlex { flex-wrap: wrap; }
+      aside#fieldsHelp { flex: 1 1 100%; position: static; max-height: none; }
+    }
+  </style>
+</div>
+
+<script>
+// 后端白名单字段（由模板注入）
+const FIELDS = {{ filterable_fields | tojson }};
+// 字段中文释义（仅展示常用的，其它字段直接用原名）
+const FIELD_LABELS = {
+  len_up_pct: '上涨周期长度 经验分位', len_dn_pct: '下跌周期长度 经验分位',
+  len_up_z:   '上涨周期长度 z 分数',  len_dn_z:   '下跌周期长度 z 分数',
+  amp_up_pct: '上涨振幅 经验分位',     amp_dn_pct: '下跌振幅 经验分位',
+  amp_up_z:   '上涨振幅 z 分数',       amp_dn_z:   '下跌振幅 z 分数',
+  v5_up_pct:  '上涨量能 v5 经验分位',  v5_dn_pct:  '下跌量能 v5 经验分位',
+  v5_up_z:    '上涨量能 v5 z 分数',    v5_dn_z:    '下跌量能 v5 z 分数',
+  len_up_n:   '上涨样本数',            len_dn_n:   '下跌样本数',
+};
+
+async function fetchJson(url) {
+  try { const r = await fetch(url); return await r.json(); }
+  catch (e) { return { success:false, message:e.message }; }
+}
+
+// ---------------- 加载日期下拉 ----------------
+// preselect 可指定要选中的日期（来自 URL 参数）
+async function loadDates(preselect) {
+  const j = await fetchJson('/screener/api/snapshots/dates');
+  const sel = document.getElementById('dateSel');
+  if (!j.success || !j.dates.length) {
+    sel.innerHTML = '<option value="">无快照</option>';
+    document.getElementById('resultMeta').innerText = '尚未跑过快照，先执行 python scripts/compute_dist_snapshots.py';
+    return false;
+  }
+  // 默认选样本数最多的那天（同 count 取最新——dates 已按日期降序，所以遇到 > 才换）
+  // Why: 偶尔单独 --code 跑会让最新一天只有 1 只，直接选最新会让列表"看起来空"
+  let defaultIdx = 0;
+  for (let i = 1; i < j.dates.length; i++) {
+    if (j.dates[i].count > j.dates[defaultIdx].count) defaultIdx = i;
+  }
+  sel.innerHTML = j.dates.map((d, i) =>
+    `<option value="${d.date}"${(preselect ? d.date===preselect : i===defaultIdx) ? ' selected' : ''}>${d.date}（${d.count} 只）</option>`
+  ).join('');
+  return true;
+}
+
+// ---------------- 条件行 ----------------
+function condRowHtml(field='len_dn_pct', op='_min', value='0.7') {
+  const opts = FIELDS.map(f => {
+    const label = FIELD_LABELS[f] ? `${f} — ${FIELD_LABELS[f]}` : f;
+    return `<option value="${f}"${f===field?' selected':''}>${label}</option>`;
+  }).join('');
+  return `
+    <div class="cond-row" style="display:flex;gap:.4rem;align-items:center;">
+      <select class="cond-field" style="padding:.3rem .5rem;border:1px solid #d1d5db;border-radius:6px;font-size:.82rem;min-width:280px;">${opts}</select>
+      <select class="cond-op" style="padding:.3rem .5rem;border:1px solid #d1d5db;border-radius:6px;font-size:.82rem;">
+        <option value="_min"${op==='_min'?' selected':''}>≥</option>
+        <option value="_max"${op==='_max'?' selected':''}>≤</option>
+      </select>
+      <input class="cond-value" type="number" step="any" value="${value}" style="padding:.3rem .5rem;border:1px solid #d1d5db;border-radius:6px;font-size:.82rem;width:100px;">
+      <span style="cursor:pointer;color:#9ca3af;padding:.2rem .4rem;" onclick="this.parentNode.remove()" title="移除">×</span>
+    </div>`;
+}
+function addCond(field, op, value) {
+  const list = document.getElementById('condList');
+  list.insertAdjacentHTML('beforeend', condRowHtml(field, op, value));
+}
+function clearConds() { document.getElementById('condList').innerHTML = ''; }
+function readConds() {
+  const params = [];
+  document.querySelectorAll('#condList .cond-row').forEach(r => {
+    const f = r.querySelector('.cond-field').value;
+    const o = r.querySelector('.cond-op').value;
+    const v = r.querySelector('.cond-value').value;
+    if (f && o && v !== '') params.push(`${f}${o}=${encodeURIComponent(v)}`);
+  });
+  return params;
+}
+
+// ---------------- 预设 ----------------
+function loadPreset(name) {
+  clearConds();
+  document.getElementById('dirSel').value = '';
+  if (name === 'down_long') {
+    document.getElementById('dirSel').value = 'down';
+    addCond('len_dn_pct', '_min', 0.7);
+    addCond('len_dn_n', '_min', 8);
+  } else if (name === 'up_continue') {
+    document.getElementById('dirSel').value = 'up';
+    addCond('len_up_z', '_max', 0);
+    addCond('amp_up_z', '_max', 0);
+    addCond('len_up_n', '_min', 8);
+  } else if (name === 'vol_breakout') {
+    addCond('v5_up_z', '_min', 1);
+    addCond('v5_up_n', '_min', 8);
+  }
+  runFilter();
+}
+
+// ---------------- 执行筛选（同时把 UI 状态写回 URL，方便分享/刷新） ----------------
+// silent=true 时不把 UI 状态推回 URL（用于初次从 URL 加载页面那一刷）
+async function runFilter(silent) {
+  const date = document.getElementById('dateSel').value;
+  const dir = document.getElementById('dirSel').value;
+  const pool = document.getElementById('poolSel').value;
+  const kw = (document.getElementById('qInput').value || '').trim();
+  if (!date) { alert('选择快照日期'); return; }
+  const parts = [`date=${date}`, 'limit=300'];
+  if (dir) parts.push(`direction=${dir}`);
+  if (pool) parts.push(`pool_type=${pool}`);
+  if (kw) parts.push(`q=${encodeURIComponent(kw)}`);
+  parts.push(...readConds());
+
+  // 同步 URL（不创建新历史条目，方便后退一次回到上一页）
+  // URL 里只放可读的筛选条件 —— date 默认最新一天，不写进 URL 避免分享后日期"卡死"
+  if (!silent) {
+    const urlParts = [];
+    if (dir) urlParts.push(`direction=${dir}`);
+    if (pool) urlParts.push(`pool_type=${pool}`);
+    if (kw) urlParts.push(`q=${encodeURIComponent(kw)}`);
+    urlParts.push(...readConds());
+    const newUrl = urlParts.length ? '?' + urlParts.join('&') : window.location.pathname;
+    history.replaceState(null, '', newUrl);
+  }
+
+  const url = '/screener/api/snapshots/filter?' + parts.join('&');
+
+  document.getElementById('resultMeta').innerText = '查询中…';
+  const j = await fetchJson(url);
+  const body = document.getElementById('resultBody');
+  if (!j.success) {
+    body.innerHTML = `<tr><td colspan="11" style="text-align:center;color:#dc2626;padding:1rem;">${j.message || '查询失败'}</td></tr>`;
+    document.getElementById('resultMeta').innerText = '';
+    return;
+  }
+  document.getElementById('resultMeta').innerHTML =
+    `快照 <b>${j.date}</b>　|　命中 <b>${j.count}</b> / <b>${j.total}</b>${j.conditions.length ? '　|　条件：' + j.conditions.map(c => `${c.field}${c.op==='>='?'≥':'≤'}${c.value}`).join('，') : ''}`;
+  if (!j.data.length) {
+    body.innerHTML = '<tr><td colspan="11" style="text-align:center;color:#9ca3af;padding:1rem;">无符合条件的股票</td></tr>';
+    return;
+  }
+  body.innerHTML = j.data.map(r => {
+    const dirChip = r.current_direction === 1
+      ? '<span style="color:#b91c1c;font-weight:600;">↑ 上涨</span>'
+      : r.current_direction === -1
+      ? '<span style="color:#15803d;font-weight:600;">↓ 下跌</span>'
+      : '<span style="color:#9ca3af;">·</span>';
+    // 根据方向取对应那组字段展示（默认取下跌组，因为大部分场景看下跌）
+    const isUp = r.current_direction === 1;
+    const lenCur = isUp ? r.len_up_current : r.len_dn_current;
+    const lenMean = isUp ? r.len_up_mean : r.len_dn_mean;
+    const lenZ = isUp ? r.len_up_z : r.len_dn_z;
+    const lenPct = isUp ? r.len_up_pct : r.len_dn_pct;
+    const ampZ = isUp ? r.amp_up_z : r.amp_dn_z;
+    const ampPct = isUp ? r.amp_up_pct : r.amp_dn_pct;
+    const v5Z = isUp ? r.v5_up_z : r.v5_dn_z;
+    const v5Pct = isUp ? r.v5_up_pct : r.v5_dn_pct;
+    const n = isUp ? r.len_up_n : r.len_dn_n;
+    const fmtZ = v => v == null ? '—' : `<span style="font-family:monospace;color:${v>0?'#b91c1c':'#15803d'};">${v>0?'+':''}${v.toFixed(2)}</span>`;
+    const fmtPct = v => v == null ? '—' : `<span style="font-family:monospace;">${(v*100).toFixed(0)}%</span>`;
+    const fmtCM = (c, m) => (c==null && m==null) ? '—'
+        : `<span style="font-family:monospace;">${c==null?'—':c.toFixed(c<1?3:0)} / ${m==null?'—':m.toFixed(m<1?3:0)}</span>`;
+    return `<tr style="border-top:1px solid #f3f4f6;">
+      <td style="padding:.4rem .5rem;font-family:monospace;font-weight:600;">
+        <a href="/stock/?code=${r.stock_code}" target="_blank" style="color:#2563eb;text-decoration:none;">${r.stock_code}</a></td>
+      <td style="padding:.4rem .5rem;">${r.stock_name || '—'}</td>
+      <td style="padding:.4rem .5rem;text-align:center;">${dirChip}</td>
+      <td style="padding:.4rem .5rem;text-align:right;">${fmtCM(lenCur, lenMean)}</td>
+      <td style="padding:.4rem .5rem;text-align:right;">${fmtZ(lenZ)}</td>
+      <td style="padding:.4rem .5rem;text-align:right;">${fmtPct(lenPct)}</td>
+      <td style="padding:.4rem .5rem;text-align:right;">${fmtZ(ampZ)}</td>
+      <td style="padding:.4rem .5rem;text-align:right;">${fmtPct(ampPct)}</td>
+      <td style="padding:.4rem .5rem;text-align:right;">${fmtZ(v5Z)}</td>
+      <td style="padding:.4rem .5rem;text-align:right;">${fmtPct(v5Pct)}</td>
+      <td style="padding:.4rem .5rem;text-align:right;color:#6b7280;">${n || '—'}</td>
+    </tr>`;
+  }).join('');
+}
+
+// ---------------- 从 URL 参数恢复 UI 状态 ----------------
+// 支持的参数：
+//   date=YYYY-MM-DD
+//   direction=up|down
+//   pool_type=...
+//   <field>_min=X 或 <field>_max=X （多组 AND）
+function applyUrlState() {
+  const p = new URLSearchParams(window.location.search);
+  let hasAny = false;
+
+  if (p.has('direction')) {
+    document.getElementById('dirSel').value = p.get('direction'); hasAny = true;
+  }
+  if (p.has('pool_type')) {
+    document.getElementById('poolSel').value = p.get('pool_type'); hasAny = true;
+  }
+  if (p.has('q')) {
+    document.getElementById('qInput').value = p.get('q'); hasAny = true;
+  }
+  // 数值条件：所有 <field>_min/_max= 参数都加成条件行
+  let condAdded = 0;
+  for (const [k, v] of p.entries()) {
+    if (k === 'direction' || k === 'pool_type' || k === 'date' || k === 'limit') continue;
+    const m = k.match(/^(.+)_(min|max)$/);
+    if (!m) continue;
+    const field = m[1];
+    if (!FIELDS.includes(field)) continue;   // 白名单校验
+    addCond(field, '_' + m[2], v);
+    condAdded++; hasAny = true;
+  }
+  return { hasAny, hasConditions: condAdded > 0, date: p.get('date') };
+}
+
+// ---------------- 入口 ----------------
+(async function init() {
+  const urlState = applyUrlState();
+  const ok = await loadDates(urlState.date);
+  if (!ok) return;
+  // 如果用户没指定任何条件，给一个空条件占位，方便他添加
+  if (!urlState.hasConditions) {
+    addCond('len_dn_pct', '_min', '');   // 默认空值，不强制 0.7
+  }
+  // 搜索框回车即筛选，免得每次都要去点按钮
+  document.getElementById('qInput').addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); runFilter(); }
+  });
+  // 一律自动跑一次：有参数时回放筛选结果；没参数时显示全部 ~290 只
+  await runFilter(true);
+})();
+</script>
+{% endblock %}

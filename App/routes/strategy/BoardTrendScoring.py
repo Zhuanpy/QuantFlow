@@ -764,6 +764,9 @@ def api_list():
         board_code = request.args.get('board_code', '').strip()
         board_name = request.args.get('board_name', '').strip()
         trend_stage = request.args.get('trend_stage', '').strip()
+        # 方向快捷：up = up_early + up_late, down = down_early + down_late
+        # 比 trend_stage 单选更粗，方便一眼锁定方向
+        trend_direction = request.args.get('trend_direction', '').strip().lower()
         signal = request.args.get('signal', '').strip()
         sort_by = request.args.get('sort_by', 'total_score_desc')
 
@@ -783,6 +786,10 @@ def api_list():
             q = q.filter(BoardTrendScore.board_name.like(f'%{board_name}%'))
         if trend_stage and trend_stage in TREND_STAGES:
             q = q.filter(BoardTrendScore.trend_stage == trend_stage)
+        elif trend_direction in ('up', 'down'):
+            stages = ('up_early', 'up_late') if trend_direction == 'up' \
+                     else ('down_early', 'down_late')
+            q = q.filter(BoardTrendScore.trend_stage.in_(stages))
         if signal and signal in SIGNALS:
             q = q.filter(BoardTrendScore.signal == signal)
 
