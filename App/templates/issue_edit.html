@@ -3,9 +3,8 @@
 {% block content %}
 <div class="edit-wrap">
 
-  <!-- 顶栏：返回 / 标题 / 状态 / 保存 -->
+  <!-- 顶栏：标题 / 类型 / 状态（保存、返回按钮见底部操作条） -->
   <div class="edit-top">
-    <a href="{{ url_for('issue_bp.issues') }}" class="back-link" title="返回列表">← 列表</a>
     <input id="titleInput" type="text" maxlength="200"
            value="{{ issue.question|e }}"
            placeholder="标题（必填）" />
@@ -19,8 +18,6 @@
       <option value="{{ s }}" {% if s == issue.status %}selected{% endif %}>{{ s }}</option>
       {% endfor %}
     </select>
-    <button id="saveBtn" class="btn-primary" onclick="saveAll()">保存</button>
-    <span id="saveMeta" class="save-meta"></span>
   </div>
 
   <div class="edit-sub">
@@ -33,17 +30,31 @@
   <!-- Quill 容器 -->
   <div id="editor"></div>
 
+  <!-- 底部操作条：保存 / 返回列表（吸底常驻） -->
+  <div class="edit-bottom">
+    <span id="saveMeta" class="save-meta"></span>
+    <a href="{{ url_for('issue_bp.issues') }}" class="back-link" title="返回列表">← 返回列表</a>
+    <button id="saveBtn" class="btn-primary" onclick="saveAll()">保存</button>
+  </div>
+
   <!-- 原始 solution 用 JSON 传，避开 Jinja autoescape 把 HTML 标签转成实体的坑 -->
   <script id="originalSolution" type="application/json">{{ (issue.solution or '')|tojson }}</script>
 </div>
 
-<link href="https://cdn.jsdelivr.net/npm/quill@1.3.7/dist/quill.snow.css" rel="stylesheet">
-<script src="https://cdn.jsdelivr.net/npm/quill@1.3.7/dist/quill.min.js"></script>
+<!-- Quill 2.x：内置 table 模块（插入表格、增删行列），无需第三方表格插件 -->
+<link href="https://cdn.jsdelivr.net/npm/quill@2.0.3/dist/quill.snow.css" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/quill@2.0.3/dist/quill.js"></script>
 
 <style>
   .edit-wrap { max-width: 1100px; margin: 0 auto; }
   .edit-top { display:flex; align-items:center; gap:.5rem; margin-bottom:.4rem; flex-wrap:wrap; }
-  .back-link { color: var(--primary-color); text-decoration:none; font-size:.9rem; padding:.4rem .6rem; border-radius:.3rem; }
+  /* 底部吸底操作条 */
+  .edit-bottom { position:sticky; bottom:0; z-index:5; display:flex; align-items:center; gap:.5rem;
+    margin-top:.6rem; padding:.7rem 1rem; background:#fff; border:1px solid #e5e7eb; border-radius:.5rem;
+    box-shadow:0 -2px 10px rgba(0,0,0,.05); }
+  .edit-bottom .save-meta { margin-right:auto; }
+  .back-link { color: var(--primary-color); text-decoration:none; font-size:.88rem; line-height:1;
+    padding:.5rem .9rem; border:1px solid var(--primary-color); border-radius:.4rem; background:#fff; white-space:nowrap; }
   .back-link:hover { background:#eff6ff; }
   #titleInput { flex:1; min-width:280px; padding:.55rem .75rem; border:1px solid #d1d5db; border-radius:.4rem; font-size:1.05rem; font-weight:600; }
   #statusSel { padding:.5rem .6rem; border:1px solid #d1d5db; border-radius:.4rem; font-size:.85rem; background:#fff; }
@@ -61,6 +72,16 @@
   .ql-container.ql-snow { border-color:#e5e7eb; font-family: inherit; font-size: .95rem; }
   .ql-editor { min-height: calc(60vh - 2rem); padding: 1rem 1.25rem; }
   .ql-editor img { max-width: 100%; height: auto; }
+
+  /* 自定义表格按钮：用文字标签而非 Quill 默认 SVG 图标 */
+  .ql-toolbar button.ql-table-btn { width: auto; min-width: 30px; padding: 0 4px;
+    font-size: .8rem; line-height: 1.4; color: #444; }
+  .ql-toolbar button.ql-table-btn:hover { color: var(--primary-color); }
+  .ql-toolbar button.ql-insert-table { font-size: 1.05rem; }
+
+  /* 表格基础边框（兜底，保证保存后在列表/详情里再看也有框线） */
+  .ql-editor table { border-collapse: collapse; table-layout: fixed; }
+  .ql-editor td { border: 1px solid #cbd5e1; padding: .35rem .55rem; min-width: 2.5rem; }
 </style>
 
 <script>
@@ -81,14 +102,128 @@ const toolbarOptions = [
   [{ align: [] }],
   ['blockquote', 'code-block'],
   ['link', 'image'],
+  // 表格：插入 / 文本转表格 + 在光标所在表格内增删行列
+  ['insert-table', 'text-to-table', 'table-insert-row', 'table-insert-col',
+   'table-delete-row', 'table-delete-col', 'table-delete'],
   ['clean'],
 ];
 
 const quill = new Quill('#editor', {
   theme: 'snow',
   placeholder: '在这里写详细描述、贴截图（Ctrl+V 粘贴）、列实现思路…',
-  modules: { toolbar: toolbarOptions },
+  modules: {
+    table: true,   // Quill 2 内置表格模块
+    toolbar: {
+      container: toolbarOptions,
+      handlers: {
+        'insert-table':     insertTablePrompt,
+        'text-to-table':    textToTable,
+        'table-insert-row': () => tableOp('insertRowBelow'),
+        'table-insert-col': () => tableOp('insertColumnRight'),
+        'table-delete-row': () => tableOp('deleteRow'),
+        'table-delete-col': () => tableOp('deleteColumn'),
+        'table-delete':     () => tableOp('deleteTable'),
+      },
+    },
+  },
 });
+
+const tableModule = quill.getModule('table');
+
+// 给自定义表格按钮加上文字标签 + 提示
+(function decorateTableBtns() {
+  const labels = {
+    'ql-insert-table':     ['▦',  '插入表格（行x列）'],
+    'ql-text-to-table':    ['文→表', '把选中的文本转成表格（支持 │ | 制表符 逗号）'],
+    'ql-table-insert-row': ['+行', '在下方插入一行'],
+    'ql-table-insert-col': ['+列', '在右侧插入一列'],
+    'ql-table-delete-row': ['−行', '删除当前行'],
+    'ql-table-delete-col': ['−列', '删除当前列'],
+    'ql-table-delete':     ['✕表', '删除整个表格'],
+  };
+  for (const cls in labels) {
+    const btn = document.querySelector('.' + cls);
+    if (btn) { btn.innerHTML = labels[cls][0]; btn.title = labels[cls][1]; btn.classList.add('ql-table-btn'); }
+  }
+})();
+
+// ----- 插入表格：输入“行x列”，如 3x4 -----
+function insertTablePrompt() {
+  const ans = prompt('插入表格，输入“行x列”（例如 3x4）', '3x3');
+  if (!ans) return;
+  const m = ans.toLowerCase().match(/(\d+)\s*[x×*]\s*(\d+)/);
+  if (!m) { alert('格式不对，应为 行x列，例如 3x4'); return; }
+  const rows = Math.min(50, Math.max(1, parseInt(m[1], 10)));
+  const cols = Math.min(20, Math.max(1, parseInt(m[2], 10)));
+  quill.focus();
+  tableModule.insertTable(rows, cols);
+}
+
+// ----- 行列增删：仅当光标在表格内才有效 -----
+function tableOp(method) {
+  quill.focus();
+  try {
+    tableModule[method]();
+  } catch (e) {
+    alert('请先把光标点进表格的某个单元格里，再执行该操作。');
+  }
+}
+
+// ----- 文本转表格：选中一段带分隔符的文本，转成真正的表格 -----
+// 支持：盒线表（│ 作列分隔，┌┬┐├┼┤└┴┘─ 边框行自动忽略）、Markdown（| 分隔，--- 分隔行忽略）、制表符 / 逗号
+function textToTable() {
+  const range = quill.getSelection();
+  if (!range || range.length === 0) {
+    alert('请先选中要转换成表格的那几行文本，再点“文→表”。');
+    return;
+  }
+  const text = quill.getText(range.index, range.length);
+  const rows = parseTextTable(text);
+  if (rows.length < 1 || rows[0].length < 1) {
+    alert('没识别出表格行，请确认每行用 │ / | / 制表符 / 逗号 分隔。');
+    return;
+  }
+  const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const rid = () => 'row-' + Math.random().toString(36).slice(2, 6);
+  let html = '<table><tbody>';
+  rows.forEach((cells, ri) => {
+    const id = rid();
+    html += '<tr>';
+    cells.forEach(c => {
+      let inner = esc(c) || '<br>';
+      if (ri === 0 && c) inner = '<strong>' + esc(c) + '</strong>';  // 首行加粗当表头
+      html += `<td data-row="${id}">${inner}</td>`;
+    });
+    html += '</tr>';
+  });
+  html += '</tbody></table>';
+  quill.deleteText(range.index, range.length, 'user');
+  quill.clipboard.dangerouslyPasteHTML(range.index, html, 'user');
+}
+
+function parseTextTable(text) {
+  const lines = text.split(/\r?\n/);
+  let rows = [];
+  const pipeLines = lines.filter(l => /[│|]/.test(l));   // 含竖线的才是数据行；盒线边框行（┼├┤等）天然被排除
+  if (pipeLines.length) {
+    for (const line of pipeLines) {
+      let cells = line.split(/[│|]/).map(c => c.trim());
+      if (cells.length && cells[0] === '') cells.shift();              // 去掉首尾竖线产生的空格
+      if (cells.length && cells[cells.length - 1] === '') cells.pop();
+      if (!cells.length) continue;
+      if (cells.every(c => c === '' || /^:?-{2,}:?$/.test(c))) continue;  // Markdown 的 |---|--- 分隔行
+      rows.push(cells);
+    }
+  } else {
+    for (const line of lines) {                            // 无竖线：按制表符或逗号分列
+      if (!line.trim()) continue;
+      const cells = line.includes('\t') ? line.split('\t') : line.split(',');
+      rows.push(cells.map(c => c.trim()));
+    }
+  }
+  const maxc = rows.reduce((m, r) => Math.max(m, r.length), 0);   // 补齐列数，避免行宽不一
+  return rows.map(r => { while (r.length < maxc) r.push(''); return r; });
+}
 
 // ----- 把已有 solution 灌进去：HTML 走 dangerouslyPasteHTML；纯文本走 setText -----
 (function loadInitial() {

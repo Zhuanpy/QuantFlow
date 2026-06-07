@@ -732,7 +732,7 @@ function renderTable(stocks) {
 
         // 板块单元格：有数据时给名字+代码做链接
         const boardCell = s.board_code
-            ? `<a href="/board_trend/board/${s.board_code}" target="_blank" title="查看 ${s.board_code} 板块趋势" style="color:#2563eb;text-decoration:none;">${s.board_name || s.board_code}<br><span style="color:#9ca3af;font-size:.7rem;">${s.board_code}</span></a>`
+            ? `<a href="/board_data/board?code=${s.board_code}" target="_blank" title="查看 ${s.board_code} 板块趋势" style="color:#2563eb;text-decoration:none;">${s.board_name || s.board_code}<br><span style="color:#9ca3af;font-size:.7rem;">${s.board_code}</span></a>`
             : (s.industry || '-');
 
         html += `<tr>

@@ -362,7 +362,9 @@ class ModelData(RnnBase):
 
         fills = list(pre_dic.keys()) + list(next_dic.keys())
         self.data_15m[fills] = self.data_15m[fills].ffill()
-        self.data_15m[Signal] = self.data_15m[Signal].astype(float)
+        # Signal 上游以 pd.NA 初始化，首个 flip 之前的行可能残留 pd.NA（object dtype），
+        # .astype(float) 会 float(pd.NA) 报 "NAType"。to_numeric coerce 成 NaN 更稳健。
+        self.data_15m[Signal] = pd.to_numeric(self.data_15m[Signal], errors='coerce')
 
         dic = {
             'volume': 'volume',

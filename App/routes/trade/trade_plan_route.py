@@ -38,24 +38,33 @@ def real_trade_page():
 
 @trade_plan_bp.route('/api/trade/records/import', methods=['POST'])
 def import_trade_records():
-    """从同花顺导出的交易记录文件导入到 trade_records 表。
+    """导入成交记录到 trade_records 表，支持两种来源：
 
-    Multipart form:
-        file: 要导入的文件（.csv/.tsv/.txt/.xls/.xlsx）
-        dry_run: 'true' 则只解析不写库
+    1) 文件（同花顺历史导出，含「成交日期」列）
+       Multipart form: file=<.csv/.tsv/.txt/.xls/.xlsx>, dry_run=true|false
+       可选 default_date=YYYY-MM-DD（文件无日期列时补）
+
+    2) 粘贴文本（当日成交，只有「成交时间」无日期）
+       form: text=<粘贴的表格文本>, default_date=YYYY-MM-DD（默认今天）, dry_run
     """
     try:
-        from App.services.trade_import_service import import_from_ths
-
-        if 'file' not in request.files:
-            return jsonify({'success': False, 'message': '未上传文件'}), 400
-        f = request.files['file']
-        if not f or not f.filename:
-            return jsonify({'success': False, 'message': '文件为空'}), 400
+        from App.services.trade_import_service import import_from_ths, import_from_text
 
         dry_run = (request.form.get('dry_run', 'false').lower() == 'true')
-        stats = import_from_ths(f, dry_run=dry_run)
-        return jsonify({'success': True, 'data': stats, 'dry_run': dry_run})
+        default_date = (request.form.get('default_date') or '').strip() or None
+
+        # 优先文件；没有文件再看粘贴文本
+        f = request.files.get('file')
+        if f and f.filename:
+            stats = import_from_ths(f, dry_run=dry_run, default_date=default_date)
+            return jsonify({'success': True, 'data': stats, 'dry_run': dry_run})
+
+        text = (request.form.get('text') or '').strip()
+        if text:
+            stats = import_from_text(text, dry_run=dry_run, default_date=default_date)
+            return jsonify({'success': True, 'data': stats, 'dry_run': dry_run})
+
+        return jsonify({'success': False, 'message': '请上传文件或粘贴成交文本'}), 400
     except Exception as e:
         logger.exception('交易记录导入失败')
         return jsonify({'success': False, 'message': str(e)}), 500

@@ -547,8 +547,9 @@ class Data15MOriginalCalculate(ModelData):
         """
         logger.info(f"开始第三阶段数据处理: {self.stock_code}")
         
-        # 转换信号类型
-        self.data_15m[Signal] = self.data_15m[Signal].astype(float)
+        # 转换信号类型（上游以 pd.NA 初始化，残留的 pd.NA 用 to_numeric coerce 成 NaN，
+        # 避免 .astype(float) 逐元素 float(pd.NA) 报 "NAType"）
+        self.data_15m[Signal] = pd.to_numeric(self.data_15m[Signal], errors='coerce')
         
         # 处理成交量相关参数
         for col in self.config.VOLUME_COLUMNS:

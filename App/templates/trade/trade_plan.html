@@ -901,12 +901,29 @@ a.btn { color: inherit; }
         </div>
         <div style="padding:1rem 1.25rem;">
             <p style="color:#6b7280;font-size:.85rem;margin-bottom:.75rem;">
-                文件来源：<b>同花顺 → 历史成交 → 导出</b>。支持 .tsv / .csv / .xls / .xlsx 。<br>
-                导入规则：用「成交编号」做唯一识别，重复不会插入；理财类（货币基金申购/赎回/红利/强行）自动跳过。
+                用「成交编号」做唯一识别，重复不会插入；理财类自动跳过。两种来源任选其一：
             </p>
-            <div style="display:flex;gap:.5rem;align-items:center;margin-bottom:.5rem;">
-                <input type="file" id="importFile" accept=".tsv,.csv,.txt,.xls,.xlsx" style="flex:1;">
+
+            <!-- 成交日期（当日成交无日期列时用；历史导出文件有日期则忽略此项） -->
+            <div style="display:flex;gap:.5rem;align-items:center;margin-bottom:.75rem;">
+                <label style="font-size:.85rem;color:#374151;white-space:nowrap;">成交日期</label>
+                <input type="date" id="importDate" style="padding:.3rem .5rem;border:1px solid #d1d5db;border-radius:.3rem;">
+                <span style="font-size:.75rem;color:#9ca3af;">当日成交无日期列时用此日期；历史导出文件自带日期会优先用文件里的</span>
             </div>
+
+            <!-- 方式一：文件 -->
+            <div style="border:1px solid #e5e7eb;border-radius:.5rem;padding:.75rem;margin-bottom:.6rem;">
+                <div style="font-size:.82rem;font-weight:600;color:#374151;margin-bottom:.4rem;">方式一 · 文件（同花顺历史成交导出）</div>
+                <input type="file" id="importFile" accept=".tsv,.csv,.txt,.xls,.xlsx" style="width:100%;">
+            </div>
+
+            <!-- 方式二：粘贴文本 -->
+            <div style="border:1px solid #e5e7eb;border-radius:.5rem;padding:.75rem;margin-bottom:.75rem;">
+                <div style="font-size:.82rem;font-weight:600;color:#374151;margin-bottom:.4rem;">方式二 · 粘贴当日成交（从交易软件复制表格，含表头行）</div>
+                <textarea id="importText" rows="6" placeholder="成交时间&#9;证券代码&#9;证券名称&#9;操作&#9;成交数量&#9;成交均价&#9;成交金额&#9;合同编号&#9;成交编号&#9;委托时间&#10;13:04:59&#9;002850&#9;科达利&#9;证券买入&#9;200&#9;184.15&#9;36830&#9;9737&#9;0104000056787497&#9;13:05:00"
+                          style="width:100%;box-sizing:border-box;font-family:monospace;font-size:.78rem;border:1px solid #d1d5db;border-radius:.3rem;padding:.5rem;"></textarea>
+            </div>
+
             <div style="display:flex;gap:.5rem;margin-bottom:1rem;">
                 <button class="btn btn-secondary" onclick="submitImport(true)">先预览（不写库）</button>
                 <button class="btn btn-primary" onclick="submitImport(false)">导入到数据库</button>
@@ -1247,6 +1264,11 @@ document.addEventListener('DOMContentLoaded', () => {
 // ============ 导入交易记录 ============
 function openImportModal() {
     document.getElementById('importFile').value = '';
+    document.getElementById('importText').value = '';
+    // 成交日期默认今天
+    const d = new Date();
+    const today = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    document.getElementById('importDate').value = today;
     document.getElementById('importResult').style.display = 'none';
     document.getElementById('importResult').innerHTML = '';
     document.getElementById('importModal').style.display = 'flex';
@@ -1256,14 +1278,18 @@ function closeImportModal() {
 }
 async function submitImport(dryRun) {
     const file = document.getElementById('importFile').files[0];
+    const text = (document.getElementById('importText').value || '').trim();
+    const defaultDate = document.getElementById('importDate').value || '';
     const result = document.getElementById('importResult');
-    if (!file) {
+    if (!file && !text) {
         result.style.display = 'block';
-        result.innerHTML = '<span style="color:#dc2626;">请先选择文件</span>';
+        result.innerHTML = '<span style="color:#dc2626;">请选择文件或粘贴成交文本</span>';
         return;
     }
     const fd = new FormData();
-    fd.append('file', file);
+    if (file) fd.append('file', file);     // 文件优先
+    else fd.append('text', text);
+    if (defaultDate) fd.append('default_date', defaultDate);
     fd.append('dry_run', dryRun ? 'true' : 'false');
     result.style.display = 'block';
     result.innerHTML = '处理中…';

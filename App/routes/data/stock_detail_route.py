@@ -221,6 +221,24 @@ def _query_trade_info(code: str, latest_close):
             'take_profit_price': float(plan.take_profit_price) if plan.take_profit_price is not None else None,
         }
 
+    # 叠加手动设置的止损/止盈：存在独立的 MANUAL-<code> plan 里，
+    # 不会被成交导入的 infer wipe（那个只删 INFER-%）。优先级最高。
+    manual = TradePlan.query.filter_by(plan_id=f'MANUAL-{code}').first()
+    if manual:
+        if info['active_plan'] is None:
+            info['active_plan'] = {
+                'plan_id': manual.plan_id,
+                'status': manual.status,
+                'trade_mode': manual.trade_mode,
+                'entry_price': float(manual.entry_price) if manual.entry_price is not None else (avg_cost or None),
+                'stop_loss_price': None,
+                'take_profit_price': None,
+            }
+        if manual.stop_loss_price is not None:
+            info['active_plan']['stop_loss_price'] = float(manual.stop_loss_price)
+        if manual.take_profit_price is not None:
+            info['active_plan']['take_profit_price'] = float(manual.take_profit_price)
+
     # 4) 浮盈/浮亏（持仓 + 有均价 + 有最新价时）
     if qty > 0 and avg_cost and latest_close:
         pnl = (float(latest_close) - avg_cost) * qty
@@ -701,6 +719,71 @@ def api_1m_refresh(code):
         'bars_15m': bars_15m,
         'path': str(out_path.relative_to(root)).replace('\\', '/'),
     })
+
+
+@stock_detail_bp.route('/api/<code>/sl_tp', methods=['POST'])
+def api_set_sl_tp(code):
+    """保存某股票的止损/止盈到独立的 MANUAL-<code> TradePlan。
+
+    body(JSON): {stop_loss_price, take_profit_price}  —— 任一可为空/null
+    用 MANUAL-<code> 作 plan_id，独立于成交导入推断的 INFER-<code>（后者每次导入会被
+    wipe 重建），所以手动设的止损止盈不会丢。entry_price 取当前持仓成本/最新价（非空约束）。
+    """
+    try:
+        from App.models.trade.trade_plan import TradePlan
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'交易模型不可用: {e}'}), 500
+
+    body = request.get_json(silent=True) or {}
+
+    def _f(v):
+        if v is None or v == '':
+            return None
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return None
+
+    sl = _f(body.get('stop_loss_price'))
+    tp = _f(body.get('take_profit_price'))
+
+    # entry_price 非空：优先持仓成本，否则最新日线收盘，再否则 0
+    latest_daily = (StockDaily.query
+                    .filter_by(stock_code=code)
+                    .order_by(StockDaily.date.desc()).first())
+    latest_close = latest_daily.close if latest_daily else None
+    trade_info = _query_trade_info(code, latest_close)
+    entry = trade_info.get('avg_cost') or latest_close or 0
+
+    info = StockInfo.find_stock(code)
+    name = info.name if info else code
+
+    plan_id = f'MANUAL-{code}'
+    plan = TradePlan.query.filter_by(plan_id=plan_id).first()
+    if plan is None:
+        plan = TradePlan(
+            plan_id=plan_id, stock_code=code, stock_name=name,
+            trade_mode=TradePlan.MODE_REAL, direction=TradePlan.DIRECTION_LONG,
+            status=TradePlan.STATUS_ACTIVE, entry_price=entry,
+        )
+        db.session.add(plan)
+    plan.stock_name = name
+    plan.entry_price = entry
+    plan.stop_loss_price = sl
+    plan.take_profit_price = tp
+    try:
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        logger.exception(f'{code} 保存止损止盈失败')
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+    return jsonify({'success': True, 'data': {
+        'plan_id': plan_id,
+        'entry_price': float(entry) if entry is not None else None,
+        'stop_loss_price': sl,
+        'take_profit_price': tp,
+    }})
 
 
 @stock_detail_bp.route('/api/<code>/trades', methods=['GET'])

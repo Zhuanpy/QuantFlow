@@ -761,7 +761,7 @@ async function loadBoards() {
             <div class="bc-head">
                 <span class="bc-name">${it.board_code} · ${it.board_name || ''}</span>
                 <span class="bc-stage ${stage}">${stage}</span>
-                <a class="bc-link" href="/board_trend/board/${it.board_code}" target="_blank">板块详情 →</a>
+                <a class="bc-link" href="/board_data/board?code=${it.board_code}" target="_blank">板块详情 →</a>
                 ${sc.record_date ? `<span style="color:#6b7280;font-size:.78rem;margin-left:auto;">评分日期 ${sc.record_date}</span>` : '<span style="color:#9ca3af;font-size:.78rem;margin-left:auto;">暂无评分</span>'}
             </div>
             ${sc.record_date ? `
@@ -778,7 +778,7 @@ async function loadBoards() {
 
     // 各板块异步拉 K 线（120 日）
     items.forEach((it, i) => {
-        fetch(`/board_trend/api/board/${it.board_code}/chart?days=120`)
+        fetch(`/board_data/api/board/${it.board_code}/chart?days=120`)
             .then(r => r.json())
             .then(r => {
                 if (r.success && r.data && r.data.rows) {

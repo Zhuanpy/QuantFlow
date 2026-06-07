@@ -4,7 +4,7 @@
 <div class="container">
     <div class="bd-header">
         <div>
-            <a href="{{ url_for('board_trend.page') }}" class="back-link">← 返回板块趋势打分</a>
+            <a href="{{ url_for('board_data.page') }}" class="back-link">← 返回板块数据</a>
             <h1 id="bdTitle">{{ board_code }}</h1>
             <div class="bd-meta" id="bdMeta">加载中...</div>
         </div>
@@ -56,7 +56,7 @@
 
     <!-- 历史评分时间线 -->
     <div class="history-wrap">
-        <h3>历史评分（最近 120 条）</h3>
+        <h3>历史评分（最近 120 条，每页 15 条）</h3>
         <table class="hist-table">
             <thead>
                 <tr><th>日期</th><th>阶段</th><th>置信</th><th>强度</th><th>信号</th>
@@ -64,6 +64,7 @@
             </thead>
             <tbody id="histBody"><tr><td colspan="12" class="empty">加载中...</td></tr></tbody>
         </table>
+        <div class="hist-pager" id="histPager"></div>
     </div>
 
     <!-- 成分股 -->
@@ -78,10 +79,12 @@
                 <tr><th>代码</th><th>名称</th>
                     <th title="总市值（亿元），优先取实时值，失败时回退到快照">总市值</th>
                     <th title="流通市值（亿元）">流通市值</th>
+                    <th class="hl" title="板块权重：该股流通市值 ÷ 板块流通市值合计。东财行业板块指数为流通市值加权，此即真实权重口径">权重</th>
                     <th>阶段</th><th>强度</th><th>信号</th><th class="hl">综合分</th><th>评分日期</th></tr>
             </thead>
-            <tbody id="stocksBody"><tr><td colspan="9" class="empty">加载中...</td></tr></tbody>
+            <tbody id="stocksBody"><tr><td colspan="10" class="empty">加载中...</td></tr></tbody>
         </table>
+        <div class="hist-pager" id="stocksPager"></div>
     </div>
 </div>
 
@@ -138,6 +141,9 @@
     .stage-tag.down_early { background:#ffedd5; color:#9a3412; }
     .stage-tag.down_late { background:#fee2e2; color:#991b1b; }
     .stage-tag.unknown { background:#f3f4f6; color:#4b5563; }
+    .hist-pager { display:flex; justify-content:flex-end; align-items:center; gap:.45rem; margin-top:.55rem; font-size:.82rem; color:#6b7280; }
+    .hist-pager button { padding:.25rem .65rem; border:1px solid #d1d5db; background:#fff; border-radius:.3rem; cursor:pointer; font-size:.82rem; }
+    .hist-pager button:disabled { opacity:.45; cursor:not-allowed; }
 </style>
 
 <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
@@ -145,6 +151,16 @@
 const BOARD_CODE = "{{ board_code }}";
 let chart = null;
 let chart15m = null;
+
+// 历史评分分页（客户端分页，数据一次取回）
+const HIST_PAGE_SIZE = 15;
+let histRows = [];
+let histPage = 1;
+
+// 成分股分页
+const STOCK_PAGE_SIZE = 20;
+let stockRows = [];
+let stockPage = 1;
 
 function fmtNum(v, n=1) {
     if (v === null || v === undefined || v === '') return '-';
@@ -230,12 +246,26 @@ async function loadHistory() {
         document.getElementById('bdMeta').textContent = '该板块尚无打分记录。';
     }
 
-    // 历史表
+    // 历史表（分页渲染）
+    histRows = rows;
+    histPage = 1;
+    renderHistPage();
+}
+
+function renderHistPage() {
     const tb = document.getElementById('histBody');
-    if (rows.length === 0) {
+    const pager = document.getElementById('histPager');
+    if (!histRows.length) {
         tb.innerHTML = `<tr><td colspan="12" class="empty">暂无历史</td></tr>`;
-    } else {
-        tb.innerHTML = rows.map(it => `
+        pager.innerHTML = '';
+        return;
+    }
+    const pages = Math.ceil(histRows.length / HIST_PAGE_SIZE);
+    if (histPage > pages) histPage = pages;
+    if (histPage < 1) histPage = 1;
+    const start = (histPage - 1) * HIST_PAGE_SIZE;
+    const slice = histRows.slice(start, start + HIST_PAGE_SIZE);
+    tb.innerHTML = slice.map(it => `
             <tr>
                 <td>${it.record_date}</td>
                 <td><span class="stage-tag ${it.trend_stage || 'unknown'}">${it.trend_stage || 'unknown'}</span></td>
@@ -251,12 +281,16 @@ async function loadHistory() {
                 <td class="hl">${fmtNum(it.total_score, 1)}</td>
             </tr>
         `).join('');
-    }
+    pager.innerHTML = `<span>共 ${histRows.length} 条</span>`
+        + `<button ${histPage <= 1 ? 'disabled' : ''} onclick="histGoPage(${histPage - 1})">上一页</button>`
+        + `<span>${histPage}/${pages}</span>`
+        + `<button ${histPage >= pages ? 'disabled' : ''} onclick="histGoPage(${histPage + 1})">下一页</button>`;
 }
+function histGoPage(p) { histPage = p; renderHistPage(); }
 
 async function loadChart() {
     const days = document.getElementById('daysSel').value;
-    const r = await fetch(`/board_trend/api/board/${BOARD_CODE}/chart?days=${days}${rangeQuery()}`).then(r=>r.json());
+    const r = await fetch(`/board_data/api/board/${BOARD_CODE}/chart?days=${days}${rangeQuery()}`).then(r=>r.json());
     if (!r.success) {
         document.getElementById('kChart').innerHTML =
             `<div style="padding:2rem;text-align:center;color:#dc2626;">加载图表失败：${r.message}</div>`;
@@ -298,18 +332,18 @@ async function loadChart() {
             { scale: true, gridIndex: 2, splitNumber: 2, axisLabel: { show: true } },
         ],
         dataZoom: [
-            { type: 'inside', xAxisIndex: [0,1,2], start: 60, end: 100 },
-            { show: true, xAxisIndex: [0,1,2], type: 'slider', bottom: 0, start: 60, end: 100 },
+            { type: 'inside', xAxisIndex: [0,1,2], start: 0, end: 100 },
+            { show: true, xAxisIndex: [0,1,2], type: 'slider', bottom: 0, start: 0, end: 100 },
         ],
         series: [
-            { name: '日K', type: 'candlestick', data: kdata,
-              itemStyle: { color: '#dc2626', color0: '#16a34a', borderColor: '#dc2626', borderColor0: '#16a34a' } },
+            { name: '日K', type: 'candlestick', data: kdata, barMaxWidth: 10,
+              itemStyle: { color: '#dc2626', color0: '#16a34a', borderColor: '#dc2626', borderColor0: '#16a34a', borderWidth: 1 } },
             { name: 'MA20', type: 'line', data: ma20, smooth: true, showSymbol: false, lineStyle: { width: 1.2, color: '#f59e0b' } },
             { name: 'MA60', type: 'line', data: ma60, smooth: true, showSymbol: false, lineStyle: { width: 1.2, color: '#8b5cf6' } },
-            { name: '量', type: 'bar', xAxisIndex: 1, yAxisIndex: 1, data: vol },
+            { name: '量', type: 'bar', xAxisIndex: 1, yAxisIndex: 1, barMaxWidth: 10, data: vol },
             { name: 'DIF', type: 'line', xAxisIndex: 2, yAxisIndex: 2, data: dif, smooth: true, showSymbol: false, lineStyle: { color: '#2563eb' } },
             { name: 'DEA', type: 'line', xAxisIndex: 2, yAxisIndex: 2, data: dea, smooth: true, showSymbol: false, lineStyle: { color: '#f59e0b' } },
-            { name: 'MACD', type: 'bar', xAxisIndex: 2, yAxisIndex: 2, data: bar.map(v => ({
+            { name: 'MACD', type: 'bar', xAxisIndex: 2, yAxisIndex: 2, barMaxWidth: 10, data: bar.map(v => ({
                 value: v, itemStyle: { color: v >= 0 ? '#dc2626' : '#16a34a' }
             })) },
         ]
@@ -318,7 +352,7 @@ async function loadChart() {
 
 async function loadChart15m() {
     const bars = document.getElementById('barsSel').value;
-    const r = await fetch(`/board_trend/api/board/${BOARD_CODE}/chart_15m?bars=${bars}${rangeQuery()}`).then(r=>r.json());
+    const r = await fetch(`/board_data/api/board/${BOARD_CODE}/chart_15m?bars=${bars}${rangeQuery()}`).then(r=>r.json());
     if (!r.success) {
         document.getElementById('kChart15m').innerHTML =
             `<div style="padding:2rem;text-align:center;color:#dc2626;">加载 15m 图表失败：${r.message}</div>`;
@@ -360,18 +394,18 @@ async function loadChart15m() {
             { scale: true, gridIndex: 2, splitNumber: 2, axisLabel: { show: true } },
         ],
         dataZoom: [
-            { type: 'inside', xAxisIndex: [0,1,2], start: 60, end: 100 },
-            { show: true, xAxisIndex: [0,1,2], type: 'slider', bottom: 0, start: 60, end: 100 },
+            { type: 'inside', xAxisIndex: [0,1,2], start: 0, end: 100 },
+            { show: true, xAxisIndex: [0,1,2], type: 'slider', bottom: 0, start: 0, end: 100 },
         ],
         series: [
-            { name: '15mK', type: 'candlestick', data: kdata,
-              itemStyle: { color: '#dc2626', color0: '#16a34a', borderColor: '#dc2626', borderColor0: '#16a34a' } },
+            { name: '15mK', type: 'candlestick', data: kdata, barMaxWidth: 10,
+              itemStyle: { color: '#dc2626', color0: '#16a34a', borderColor: '#dc2626', borderColor0: '#16a34a', borderWidth: 1 } },
             { name: 'MA20', type: 'line', data: ma20, smooth: true, showSymbol: false, lineStyle: { width: 1.2, color: '#f59e0b' } },
             { name: 'MA60', type: 'line', data: ma60, smooth: true, showSymbol: false, lineStyle: { width: 1.2, color: '#8b5cf6' } },
-            { name: '量', type: 'bar', xAxisIndex: 1, yAxisIndex: 1, data: vol },
+            { name: '量', type: 'bar', xAxisIndex: 1, yAxisIndex: 1, barMaxWidth: 10, data: vol },
             { name: 'DIF', type: 'line', xAxisIndex: 2, yAxisIndex: 2, data: dif, smooth: true, showSymbol: false, lineStyle: { color: '#2563eb' } },
             { name: 'DEA', type: 'line', xAxisIndex: 2, yAxisIndex: 2, data: dea, smooth: true, showSymbol: false, lineStyle: { color: '#f59e0b' } },
-            { name: 'MACD', type: 'bar', xAxisIndex: 2, yAxisIndex: 2, data: bar.map(v => ({
+            { name: 'MACD', type: 'bar', xAxisIndex: 2, yAxisIndex: 2, barMaxWidth: 10, data: bar.map(v => ({
                 value: v, itemStyle: { color: v >= 0 ? '#dc2626' : '#16a34a' }
             })) },
         ]
@@ -391,7 +425,7 @@ async function refreshCaps() {
     btn.textContent = '刷新中...';
     document.getElementById('stocksMeta').textContent = '正在逐只拉取最新市值，请耐心等待（每只约 1 秒）...';
     try {
-        const r = await fetch('/board_trend/api/refresh_caps', {
+        const r = await fetch('/board_data/api/refresh_caps', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({board_code: BOARD_CODE}),
@@ -417,7 +451,7 @@ async function refreshMembers() {
     btn.textContent = '更新中...';
     document.getElementById('stocksMeta').textContent = '正在从东方财富拉取最新名单...';
     try {
-        const r = await fetch('/board_trend/api/refresh_members', {
+        const r = await fetch('/board_data/api/refresh_members', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({board_code: BOARD_CODE}),
@@ -441,31 +475,50 @@ async function refreshMembers() {
 }
 
 async function loadStocks() {
-    const r = await fetch(`/board_trend/api/board/${BOARD_CODE}/stocks`).then(r => r.json())
+    const r = await fetch(`/board_data/api/board/${BOARD_CODE}/stocks`).then(r => r.json())
         .catch(() => ({ success: false, message: '请求失败' }));
     const tb = document.getElementById('stocksBody');
     const meta = document.getElementById('stocksMeta');
     if (!r.success) {
-        tb.innerHTML = `<tr><td colspan="7" class="empty">加载失败：${r.message || ''}</td></tr>`;
+        tb.innerHTML = `<tr><td colspan="10" class="empty">加载失败：${r.message || ''}</td></tr>`;
         return;
     }
     const d = r.data || {};
     const rows = d.rows || [];
     const capSrc = d.cap_source === 'live' ? '实时' : (d.cap_source === 'snapshot' ? '快照' : '');
+    const concTxt = (d.cr5 != null)
+        ? ` · 权重(流通市值加权) 前5 ${d.cr5}% / 前10 ${d.cr10}%`
+        : '';
     meta.textContent = rows.length
-        ? `共 ${d.count} 只 · 名单快照 ${d.member_date || '-'} · 市值${capSrc}（来源 industry_eastmoney）`
+        ? `共 ${d.count} 只 · 名单快照 ${d.member_date || '-'} · 市值${capSrc}（来源 industry_eastmoney）${concTxt} · 每页 ${STOCK_PAGE_SIZE} 只`
         : '暂无成分股记录（industry_eastmoney 中未收录该板块）';
-    if (rows.length === 0) {
-        tb.innerHTML = `<tr><td colspan="9" class="empty">暂无</td></tr>`;
+    stockRows = rows;
+    stockPage = 1;
+    renderStockPage();
+}
+
+const fmtCap = v => (v === null || v === undefined) ? '-' : (Number(v) / 1e8).toFixed(2);
+
+function renderStockPage() {
+    const tb = document.getElementById('stocksBody');
+    const pager = document.getElementById('stocksPager');
+    if (!stockRows.length) {
+        tb.innerHTML = `<tr><td colspan="10" class="empty">暂无</td></tr>`;
+        pager.innerHTML = '';
         return;
     }
-    const fmtCap = v => (v === null || v === undefined) ? '-' : (Number(v) / 1e8).toFixed(2);
-    tb.innerHTML = rows.map(it => `
+    const pages = Math.ceil(stockRows.length / STOCK_PAGE_SIZE);
+    if (stockPage > pages) stockPage = pages;
+    if (stockPage < 1) stockPage = 1;
+    const start = (stockPage - 1) * STOCK_PAGE_SIZE;
+    const slice = stockRows.slice(start, start + STOCK_PAGE_SIZE);
+    tb.innerHTML = slice.map(it => `
         <tr>
             <td><a href="/stock_trend/stock/${it.stock_code}" style="color:#2563eb;text-decoration:none;">${it.stock_code}</a></td>
             <td>${it.stock_name || '-'}</td>
             <td>${fmtCap(it.total_cap)}</td>
             <td>${fmtCap(it.circ_cap)}</td>
+            <td class="hl">${it.weight == null ? '-' : it.weight + '%'}</td>
             <td>${it.trend_stage ? `<span class="stage-tag ${it.trend_stage}">${it.trend_stage}</span>` : '-'}</td>
             <td>${it.trend_strength || '-'}</td>
             <td>${it.signal || '-'}</td>
@@ -473,7 +526,12 @@ async function loadStocks() {
             <td>${it.score_date || '-'}</td>
         </tr>
     `).join('');
+    pager.innerHTML = `<span>共 ${stockRows.length} 只</span>`
+        + `<button ${stockPage <= 1 ? 'disabled' : ''} onclick="stockGoPage(${stockPage - 1})">上一页</button>`
+        + `<span>${stockPage}/${pages}</span>`
+        + `<button ${stockPage >= pages ? 'disabled' : ''} onclick="stockGoPage(${stockPage + 1})">下一页</button>`;
 }
+function stockGoPage(p) { stockPage = p; renderStockPage(); }
 
 loadHistory();
 loadChart();
