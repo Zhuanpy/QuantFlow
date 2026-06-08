@@ -340,6 +340,66 @@ def _ema(s, n):
     return s.ewm(span=n, adjust=False).mean()
 
 
+_SUB_KEYS = ['price_structure_score', 'ma_score', 'macd_score',
+             'volume_score', 'momentum_score', 'volatility_score']
+
+
+def _score_history(df_tf, n=30):
+    """对一个周期的 K 线逐根打分（用截至该根的窗口现算），返回最近 n 根评分行（新→旧）。
+
+    每根需 ≥20 根历史才出分；计算量 = min(n, 可算根数) 次 v1 打分，轻量。
+    """
+    from App.services.board_trend_score_service import score_dataframe
+    if df_tf is None or df_tf.empty:
+        return []
+    total = len(df_tf)
+    start = max(20, total - n)
+    rows = []
+    for i in range(start, total):
+        sc = score_dataframe(df_tf.iloc[:i + 1])
+        d = df_tf['date'].iloc[i]
+        rows.append({
+            'date': d.strftime('%Y-%m-%d %H:%M') if hasattr(d, 'strftime') else str(d),
+            'trend_stage': sc['trend_stage'],
+            'trend_stage_confidence': sc['trend_stage_confidence'],
+            'trend_strength': sc['trend_strength'],
+            'signal': sc['signal'],
+            'total_score': sc['total_score'],
+            **{k: (sc['sub_scores'] or {}).get(k) for k in _SUB_KEYS},
+        })
+    rows.reverse()  # 新 → 旧
+    return rows
+
+
+def _resample_15m_to_30m(df15):
+    """15m DataFrame → 30m：按交易日内顺序两两合并（首open/末close/极值/量和）。
+
+    需含 date/open/close/high/low/volume；返回同结构 30m DataFrame（空则空表）。
+    """
+    if df15 is None or df15.empty:
+        return pd.DataFrame()
+    df = df15.copy()
+    df['date'] = pd.to_datetime(df['date'])
+    df = (df.dropna(subset=['open', 'close', 'high', 'low'])
+            .sort_values('date').reset_index(drop=True))
+    df['volume'] = pd.to_numeric(df.get('volume'), errors='coerce').fillna(0)
+    df['d'] = df['date'].dt.normalize()
+    rows = []
+    for _, g in df.groupby('d'):
+        g = g.reset_index(drop=True)
+        for i in range(0, len(g), 2):
+            ck = g.iloc[i:i + 2]
+            rows.append({
+                'date': ck['date'].iloc[-1],
+                'open': float(ck['open'].iloc[0]),
+                'close': float(ck['close'].iloc[-1]),
+                'high': float(ck['high'].max()),
+                'low': float(ck['low'].min()),
+                'volume': float(ck['volume'].sum()),
+            })
+    return pd.DataFrame(rows)
+
+
 @board_data_bp.route('/api/board/<code>/chart')
 def api_board_chart(code):
     """返回单板块的日 K + MA20/MA60 + MACD 数据，供前端绘图。
@@ -494,6 +554,199 @@ def api_board_chart_15m(code):
         }})
     except Exception as e:
         logger.exception('板块 15m 图表数据获取失败')
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@board_data_bp.route('/api/board/<code>/chart_30m')
+def api_board_chart_30m(code):
+    """返回单板块的 30 分钟 K 线 + MA20/MA60 + MACD + 量能。
+
+    无独立 30m 数据源：由 15m parquet 按"交易日内顺序两两合并"合成
+    （open=首根、close=末根、high/low=极值、volume=求和），MACD 在 30m 序列上重算。
+    query:
+      - bars=96                           按根数取末尾 N 根（默认，30m 每日 8 根 ≈ 12 日）
+      - start_date=YYYY-MM-DD&end_date=YYYY-MM-DD  指定区间（优先于 bars）
+    """
+    try:
+        from App.routes.data.viewer_15m_route import _get_15m_dir, _find_15m_file, _read_15m_file
+
+        start_date_s = (request.args.get('start_date') or '').strip()
+        end_date_s = (request.args.get('end_date') or '').strip()
+        use_range = bool(start_date_s and end_date_s)
+
+        fpath = _find_15m_file(_get_15m_dir(), code)
+        if not fpath:
+            return jsonify({'success': False, 'message': f'未找到板块 {code} 的 15m 数据文件'}), 404
+        df = _read_15m_file(fpath)
+        if df.empty:
+            return jsonify({'success': False, 'message': '无法读取 15m 数据（可能需要 pyarrow）'}), 500
+
+        # 15m → 30m：按交易日内顺序两两合并
+        d30 = _resample_15m_to_30m(df)
+        if d30.empty:
+            return jsonify({'success': False, 'message': '30m 合成后无数据'}), 404
+
+        close = d30['close']
+        d30['ma20'] = close.rolling(20, min_periods=1).mean()
+        d30['ma60'] = close.rolling(60, min_periods=1).mean()
+        ema12 = _ema(close, 12)
+        ema26 = _ema(close, 26)
+        d30['dif'] = ema12 - ema26
+        d30['dea'] = _ema(d30['dif'], 9)
+        d30['bar'] = (d30['dif'] - d30['dea']) * 2
+
+        if use_range:
+            try:
+                start_ts = pd.to_datetime(start_date_s)
+                end_ts = pd.to_datetime(end_date_s) + pd.Timedelta(hours=23, minutes=59, seconds=59)
+            except Exception:
+                return jsonify({'success': False, 'message': '日期格式错误'}), 400
+            if start_ts > end_ts:
+                return jsonify({'success': False, 'message': '起始日期不能晚于结束日期'}), 400
+            d30 = d30[(d30['date'] >= start_ts) & (d30['date'] <= end_ts)].reset_index(drop=True)
+            if d30.empty:
+                return jsonify({'success': False,
+                                'message': f'区间 {start_date_s} ~ {end_date_s} 内无 30m 数据'}), 404
+        else:
+            bars = max(24, min(int(request.args.get('bars', 96)), 3000))
+            d30 = d30.tail(bars).reset_index(drop=True)
+
+        def _r(v, n=4):
+            try:
+                if v is None or (isinstance(v, float) and pd.isna(v)):
+                    return None
+                return round(float(v), n)
+            except Exception:
+                return None
+
+        rows = []
+        for _, r in d30.iterrows():
+            rows.append({
+                'date': r['date'].strftime('%Y-%m-%d %H:%M'),
+                'open': _r(r['open'], 4),
+                'close': _r(r['close'], 4),
+                'high': _r(r['high'], 4),
+                'low': _r(r['low'], 4),
+                'volume': int(r['volume']) if pd.notna(r['volume']) else 0,
+                'ma20': _r(r['ma20'], 4),
+                'ma60': _r(r['ma60'], 4),
+                'dif': _r(r['dif'], 4),
+                'dea': _r(r['dea'], 4),
+                'bar': _r(r['bar'], 4),
+            })
+        return jsonify({'success': True, 'data': {
+            'board_code': code, 'count': len(rows), 'rows': rows,
+        }})
+    except Exception as e:
+        logger.exception('板块 30m 图表数据获取失败')
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@board_data_bp.route('/api/board/<code>/multiscore')
+def api_board_multiscore(code):
+    """多周期评分：对 日K / 30m / 15m 三个周期分别用同一套 v1 公式打分。
+
+    日K 取自 data_stock_daily（_load_board_daily）；30m/15m 由 15m parquet 现算。
+    供详情页「日K评分 / 30分K评分 / 15分K评分 / 评分汇总」标签使用。
+    """
+    try:
+        from datetime import date as _date
+        from App.services.board_trend_score_service import score_dataframe, _load_board_daily
+        from App.routes.data.viewer_15m_route import _get_15m_dir, _find_15m_file, _read_15m_file
+
+        # 日K
+        daily_df = _load_board_daily(code, _date.today())
+        daily = score_dataframe(daily_df)
+
+        # 15m / 30m（来自 parquet）
+        m15 = {'sub_scores': {}, 'total_score': None, 'trend_stage': 'unknown',
+               'trend_stage_confidence': 0.0, 'trend_strength': 'none',
+               'signal': 'none', 'snapshot': {}, 'bars': 0, 'error': '无 15m 数据文件'}
+        m30 = dict(m15)
+        m30_history, m15_history = [], []
+        fpath = _find_15m_file(_get_15m_dir(), code)
+        if fpath:
+            df15 = _read_15m_file(fpath)
+            if not df15.empty:
+                cols = ['date', 'open', 'close', 'high', 'low', 'volume']
+                base = df15[[c for c in cols if c in df15.columns]].copy()
+                base['date'] = pd.to_datetime(base['date'])
+                base = (base.dropna(subset=['open', 'close', 'high', 'low'])
+                            .sort_values('date').reset_index(drop=True))
+                m15 = score_dataframe(base)
+                m15_history = _score_history(base, 30)
+                d30 = _resample_15m_to_30m(base)
+                if not d30.empty:
+                    m30 = score_dataframe(d30)
+                    m30_history = _score_history(d30, 30)
+
+        return jsonify({'success': True, 'data': {
+            'board_code': code,
+            'daily': daily, 'm30': m30, 'm15': m15,
+            'm30_history': m30_history, 'm15_history': m15_history,
+        }})
+    except Exception as e:
+        logger.exception('板块多周期评分失败')
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+# ===================== 持仓跟踪（纳入持仓盘中列表）=====================
+@board_data_bp.route('/api/board/<code>/track_status')
+def api_board_track_status(code):
+    """查询该板块是否已纳入持仓跟踪，及已登记的 ETF 信息。"""
+    try:
+        from App.models.evaluation.BoardHolding import BoardHolding
+        BoardHolding.ensure_table()
+        row = BoardHolding.query.filter_by(board_code=code).first()
+        return jsonify({'success': True, 'data': {
+            'tracked': row is not None,
+            'info': row.to_dict() if row else None,
+        }})
+    except Exception as e:
+        logger.exception('查询板块跟踪状态失败')
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@board_data_bp.route('/api/board/<code>/track', methods=['POST'])
+def api_board_track(code):
+    """纳入持仓跟踪。body: {board_name?, etf_code?, etf_name?, note?}（均可空）。"""
+    try:
+        from App.models.evaluation.BoardHolding import BoardHolding
+        from App.models.evaluation.Board import Board
+        BoardHolding.ensure_table()
+        data = request.get_json(silent=True) or {}
+
+        board_name = (data.get('board_name') or '').strip()
+        if not board_name:
+            # 没传名称就从主表补一个
+            b = Board.query.filter_by(board_code=code).first()
+            board_name = b.board_name if b else code
+
+        row = BoardHolding.upsert(
+            board_code=code,
+            board_name=board_name,
+            etf_code=(data.get('etf_code') or ''),
+            etf_name=(data.get('etf_name') or ''),
+            note=(data.get('note') or ''),
+        )
+        return jsonify({'success': True, 'data': row.to_dict()})
+    except Exception as e:
+        db.session.rollback()
+        logger.exception('纳入板块持仓跟踪失败')
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@board_data_bp.route('/api/board/<code>/untrack', methods=['POST'])
+def api_board_untrack(code):
+    """取消持仓跟踪。"""
+    try:
+        from App.models.evaluation.BoardHolding import BoardHolding
+        BoardHolding.ensure_table()
+        ok = BoardHolding.delete_by_code(code)
+        return jsonify({'success': True, 'data': {'removed': ok}})
+    except Exception as e:
+        db.session.rollback()
+        logger.exception('取消板块持仓跟踪失败')
         return jsonify({'success': False, 'message': str(e)}), 500
 
 
@@ -675,7 +928,12 @@ def api_refresh_members():
 
 @board_data_bp.route('/api/refresh_caps', methods=['POST'])
 def api_refresh_caps():
-    """只刷新市值（基于 industry_eastmoney 已有名单），用 stock_individual_info_em 逐只查。
+    """刷新成分股市值（基于 industry_eastmoney 已有名单）。
+
+    数据源优先级：
+      1) 批量 clist（em_industry_cons_via_http）—— 一次拿全板块 f20/f21，快
+      2) 逐只 akshare 个股信息（ak_individual_caps）—— clist 挂时兜底（emweb 子域）
+    两条都拿不到 → 东财整体不可达（限流/RST），返回 502 并提示用快照。
 
     body: { board_code: 'BK0739' }   # 必填，避免一次刷上千只股票
     """
@@ -698,10 +956,28 @@ def api_refresh_caps():
             return jsonify({'success': False,
                             'message': f'industry_eastmoney 中没有 {code} 的成分股名单'}), 404
 
-        cap_map = ak_individual_caps(stock_codes)
+        # 1) 首选：批量 clist（一次返回全部市值）
+        cap_map = {}
+        source = None
+        try:
+            members = em_industry_cons_via_http(code, retries=2)
+            cap_map = {m['stock_code']: (m.get('total_cap'), m.get('circ_cap'))
+                       for m in members
+                       if m.get('total_cap') is not None or m.get('circ_cap') is not None}
+            if cap_map:
+                source = 'clist'
+        except Exception as e:
+            logger.info(f'刷市值：批量 clist 失败，转逐只 akshare 兜底：{str(e)[:120]}')
+
+        # 2) 兜底：逐只 akshare 个股信息
         if not cap_map:
-            return jsonify({'success': False,
-                            'message': '所有个股的市值都拉取失败，请稍后再试'}), 502
+            cap_map = ak_individual_caps(stock_codes)
+            if cap_map:
+                source = 'akshare'
+
+        if not cap_map:
+            return jsonify({'success': False, 'message':
+                            '东财市值接口暂不可达（限流/RST），请稍后再试；列表当前显示的是快照市值。'}), 502
 
         updated = 0
         with eng.begin() as conn:
@@ -719,6 +995,7 @@ def api_refresh_caps():
             'requested': len(stock_codes),
             'updated': updated,
             'failed': len(stock_codes) - len(cap_map),
+            'source': source,
         }})
     except Exception as e:
         db.session.rollback()

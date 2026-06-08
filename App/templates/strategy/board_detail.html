@@ -4,8 +4,15 @@
 <div class="container">
     <div class="bd-header">
         <div>
-            <a href="{{ url_for('board_data.page') }}" class="back-link">← 返回板块数据</a>
-            <h1 id="bdTitle">{{ board_code }}</h1>
+            <a href="{{ url_for('board_trend.page') }}" class="back-link">← 返回板块趋势打分</a>
+            <div class="bd-title-row">
+                <h1 id="bdTitle">{{ board_code }}</h1>
+                {% if board_code %}
+                <a class="em-link" href="https://quote.eastmoney.com/bk/90.{{ board_code }}.html?jump_to_web=true"
+                   target="_blank" rel="noopener" title="在东方财富查看 {{ board_code }} 行情">东方财富 ↗</a>
+                <button id="trackBtn" class="track-btn" onclick="onTrackClick()" title="纳入持仓盘中跟踪列表">…</button>
+                {% endif %}
+            </div>
             <div class="bd-meta" id="bdMeta">加载中...</div>
         </div>
         <div class="bd-actions">
@@ -15,6 +22,14 @@
                     <option value="120" selected>120 日</option>
                     <option value="250">250 日</option>
                     <option value="500">500 日</option>
+                </select>
+            </label>
+            <label>30m
+                <select id="barsSel30" onchange="loadChart30m()">
+                    <option value="48">48 根 (6日)</option>
+                    <option value="96" selected>96 根 (12日)</option>
+                    <option value="240">240 根 (30日)</option>
+                    <option value="480">480 根 (60日)</option>
                 </select>
             </label>
             <label>15m
@@ -51,20 +66,40 @@
     <div class="chart-title">日 K 线 <span class="chart-status" id="kChartStatus"></span></div>
     <div id="kChart" class="chart-box"></div>
 
+    <div class="chart-title">30 分钟 K 线 <span class="chart-status" id="kChart30mStatus"></span></div>
+    <div id="kChart30m" class="chart-box"></div>
+
     <div class="chart-title">15 分钟 K 线（交易主周期）<span class="chart-status" id="kChart15mStatus"></span></div>
     <div id="kChart15m" class="chart-box"></div>
 
-    <!-- 历史评分时间线 -->
+    <!-- 评分（四标签：日K / 30分 / 15分 / 汇总）-->
     <div class="history-wrap">
-        <h3>历史评分（最近 120 条，每页 15 条）</h3>
-        <table class="hist-table">
-            <thead>
-                <tr><th>日期</th><th>阶段</th><th>置信</th><th>强度</th><th>信号</th>
-                    <th>价格</th><th>均线</th><th>MACD</th><th>量能</th><th>动量</th><th>波动率</th><th class="hl">综合分</th></tr>
-            </thead>
-            <tbody id="histBody"><tr><td colspan="12" class="empty">加载中...</td></tr></tbody>
-        </table>
-        <div class="hist-pager" id="histPager"></div>
+        <div class="score-tabs">
+            <button class="score-tab active" data-tab="daily" onclick="switchScoreTab('daily')">日K评分</button>
+            <button class="score-tab" data-tab="m30" onclick="switchScoreTab('m30')">30分K评分</button>
+            <button class="score-tab" data-tab="m15" onclick="switchScoreTab('m15')">15分K评分</button>
+            <button class="score-tab" data-tab="summary" onclick="switchScoreTab('summary')">评分汇总</button>
+        </div>
+
+        <!-- 日K：持久化的历史评分表 -->
+        <div class="score-pane" id="pane-daily">
+            <div class="pane-sub">历史评分（最近 120 条，每页 15 条）· 来源 eval_board_trend_score</div>
+            <table class="hist-table">
+                <thead>
+                    <tr><th>日期</th><th>阶段</th><th>置信</th><th>强度</th><th>信号</th>
+                        <th>价格</th><th>均线</th><th>MACD</th><th>量能</th><th>动量</th><th>波动率</th><th class="hl">综合分</th></tr>
+                </thead>
+                <tbody id="histBody"><tr><td colspan="12" class="empty">加载中...</td></tr></tbody>
+            </table>
+            <div class="hist-pager" id="histPager"></div>
+        </div>
+
+        <!-- 30分 / 15分：当前周期评分卡（现算）-->
+        <div class="score-pane" id="pane-m30" style="display:none;"><div id="card-m30"><div class="empty" style="padding:1.5rem;">加载中...</div></div></div>
+        <div class="score-pane" id="pane-m15" style="display:none;"><div id="card-m15"><div class="empty" style="padding:1.5rem;">加载中...</div></div></div>
+
+        <!-- 汇总 -->
+        <div class="score-pane" id="pane-summary" style="display:none;"><div id="summaryBox"><div class="empty" style="padding:1.5rem;">加载中...</div></div></div>
     </div>
 
     <!-- 成分股 -->
@@ -88,10 +123,47 @@
     </div>
 </div>
 
+<!-- 纳入持仓跟踪：登记你持有的对应 ETF（可留空）-->
+<div class="track-modal" id="trackModal">
+    <div class="box">
+        <div class="hd">
+            <h3>纳入持仓跟踪</h3>
+            <button class="x" onclick="closeTrackModal()">&times;</button>
+        </div>
+        <div class="bd">
+            <div style="font-size:.82rem;color:#6b7280;">把 <b id="tkBoard"></b> 加入「持仓盘中」列表跟踪。下面 ETF 信息可留空（仅作你持有什么的参考）。</div>
+            <label>对应 ETF 代码<input type="text" id="tkEtfCode" placeholder="如 512800（银行ETF），可留空"></label>
+            <label>ETF 名称<input type="text" id="tkEtfName" placeholder="可留空"></label>
+            <label>备注<input type="text" id="tkNote" placeholder="可留空"></label>
+        </div>
+        <div class="ft">
+            <button class="btn-clear" onclick="closeTrackModal()">取消</button>
+            <button class="btn-apply" onclick="submitTrack()">确认纳入</button>
+        </div>
+    </div>
+</div>
+
 <style>
     .container { max-width:1400px; margin:1rem auto; padding:0 1rem; }
     .back-link { color:#2563eb; font-size:.85rem; text-decoration:none; }
     .back-link:hover { text-decoration:underline; }
+    .bd-title-row { display:flex; align-items:center; gap:.7rem; flex-wrap:wrap; }
+    .em-link { display:inline-block; font-size:.78rem; font-weight:500;
+               color:#fff; background:#e11d48; padding:.22rem .6rem; border-radius:.35rem; text-decoration:none; }
+    .em-link:hover { background:#be123c; }
+    .track-btn { font-size:.78rem; font-weight:500; cursor:pointer; padding:.22rem .6rem; border-radius:.35rem;
+                 border:1px solid #16a34a; background:#16a34a; color:#fff; }
+    .track-btn:hover { filter:brightness(.95); }
+    .track-btn.tracked { background:#fff; color:#16a34a; }
+    .track-modal { position:fixed; inset:0; background:rgba(0,0,0,.4); display:none; align-items:center; justify-content:center; z-index:300; }
+    .track-modal .box { background:#fff; border-radius:.6rem; width:min(420px,94vw); box-shadow:0 10px 40px rgba(0,0,0,.18); }
+    .track-modal .hd { display:flex; justify-content:space-between; align-items:center; padding:.8rem 1rem; border-bottom:1px solid #f1f5f9; }
+    .track-modal .hd h3 { margin:0; font-size:1rem; }
+    .track-modal .bd { padding:.85rem 1rem; display:flex; flex-direction:column; gap:.55rem; }
+    .track-modal label { display:flex; flex-direction:column; gap:.2rem; font-size:.8rem; color:#4b5563; }
+    .track-modal input { padding:.4rem .55rem; border:1px solid #d1d5db; border-radius:.35rem; font-size:.88rem; }
+    .track-modal .ft { padding:.75rem 1rem; border-top:1px solid #f1f5f9; display:flex; justify-content:flex-end; gap:.5rem; }
+    .track-modal .x { background:none; border:none; font-size:1.3rem; cursor:pointer; color:#6b7280; }
     .bd-header { display:flex; justify-content:space-between; align-items:flex-start;
                  background:#fff; padding:1rem 1.25rem; border-radius:.6rem; box-shadow:var(--shadow-sm); margin-bottom:1rem; }
     .bd-header h1 { margin:.25rem 0 0; }
@@ -141,6 +213,26 @@
     .stage-tag.down_early { background:#ffedd5; color:#9a3412; }
     .stage-tag.down_late { background:#fee2e2; color:#991b1b; }
     .stage-tag.unknown { background:#f3f4f6; color:#4b5563; }
+    .score-tabs { display:flex; gap:.2rem; border-bottom:2px solid #f1f5f9; margin-bottom:.7rem; }
+    .score-tab { padding:.45rem .95rem; border:none; background:none; cursor:pointer; font-size:.9rem;
+                 color:#6b7280; border-bottom:2px solid transparent; margin-bottom:-2px; }
+    .score-tab:hover { color:#2563eb; }
+    .score-tab.active { color:#2563eb; font-weight:600; border-bottom-color:#2563eb; }
+    .pane-sub { font-size:.8rem; color:#9ca3af; margin-bottom:.45rem; }
+    .tf-head { display:flex; align-items:center; gap:1rem; flex-wrap:wrap; margin-bottom:.7rem; }
+    .tf-total { font-size:1.6rem; font-weight:700; color:#2563eb; }
+    .tf-head b { color:#1f2937; }
+    .tf-sub-grid { display:grid; grid-template-columns:repeat(6,1fr); gap:.5rem; }
+    .tf-sub { background:#f8fafc; border:1px solid #eef2f7; border-radius:.4rem; padding:.5rem; text-align:center; }
+    .tf-sub .lbl { font-size:.72rem; color:#6b7280; } .tf-sub .val { font-size:1.1rem; font-weight:600; color:#1f2937; }
+    .tf-snap { margin-top:.65rem; font-size:.8rem; color:#4b5563; display:flex; gap:1.1rem; flex-wrap:wrap; }
+    .tf-snap b { color:#1f2937; }
+    .sum-table { width:100%; border-collapse:collapse; font-size:.84rem; }
+    .sum-table th, .sum-table td { padding:.5rem .5rem; border-bottom:1px solid #f1f5f9; text-align:center; white-space:nowrap; }
+    .sum-table th { background:#f9fafb; color:#374151; }
+    .sum-table td:first-child, .sum-table th:first-child { text-align:left; font-weight:600; }
+    .sum-table td.hl, .sum-table th.hl { background:#eff6ff; font-weight:600; }
+    .resonance { margin-top:.75rem; padding:.6rem .85rem; border-radius:.45rem; font-size:.9rem; color:#1f2937; border:1px solid #f1f5f9; }
     .hist-pager { display:flex; justify-content:flex-end; align-items:center; gap:.45rem; margin-top:.55rem; font-size:.82rem; color:#6b7280; }
     .hist-pager button { padding:.25rem .65rem; border:1px solid #d1d5db; background:#fff; border-radius:.3rem; cursor:pointer; font-size:.82rem; }
     .hist-pager button:disabled { opacity:.45; cursor:not-allowed; }
@@ -151,6 +243,7 @@
 const BOARD_CODE = "{{ board_code }}";
 let chart = null;
 let chart15m = null;
+let chart30m = null;
 
 // 历史评分分页（客户端分页，数据一次取回）
 const HIST_PAGE_SIZE = 15;
@@ -185,6 +278,7 @@ function applyDateRange() {
     if (s > e) { alert('起始日期不能晚于结束日期'); return; }
     document.getElementById('rangeHint').textContent = `区间生效：${s} ~ ${e}（覆盖左侧窗口/根数）`;
     loadChart();
+    loadChart30m();
     loadChart15m();
 }
 
@@ -193,6 +287,7 @@ function clearDateRange() {
     document.getElementById('endDate').value = '';
     document.getElementById('rangeHint').textContent = '';
     loadChart();
+    loadChart30m();
     loadChart15m();
 }
 
@@ -287,6 +382,128 @@ function renderHistPage() {
         + `<button ${histPage >= pages ? 'disabled' : ''} onclick="histGoPage(${histPage + 1})">下一页</button>`;
 }
 function histGoPage(p) { histPage = p; renderHistPage(); }
+
+// ---------------- 评分四标签：日K / 30分 / 15分 / 汇总 ----------------
+const STAGE_LABEL = { up_early:'上涨前期', up_late:'上涨后期', down_early:'下跌前期', down_late:'下跌后期', unknown:'未识别' };
+const SIGNAL_LABEL = { buy:'买入', hold:'持有', sell:'卖出', wait:'观望', none:'-' };
+const SUBS = [['price_structure_score','价格'],['ma_score','均线'],['macd_score','MACD'],
+              ['volume_score','量能'],['momentum_score','动量'],['volatility_score','波动率']];
+let multiScore = null, multiLoading = false;
+
+function switchScoreTab(tab) {
+    document.querySelectorAll('.score-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+    ['daily','m30','m15','summary'].forEach(t => {
+        const p = document.getElementById('pane-' + t);
+        if (p) p.style.display = (t === tab) ? 'block' : 'none';
+    });
+    if (tab !== 'daily' && !multiScore && !multiLoading) loadMultiScore();
+}
+
+async function loadMultiScore() {
+    multiLoading = true;
+    const r = await fetch(`/board_data/api/board/${BOARD_CODE}/multiscore`).then(r => r.json()).catch(() => null);
+    multiLoading = false;
+    if (!r || !r.success) {
+        ['card-m30','card-m15','summaryBox'].forEach(id => {
+            const e = document.getElementById(id);
+            if (e) e.innerHTML = `<div class="empty" style="padding:1.5rem;">加载失败：${(r && r.message) || ''}</div>`;
+        });
+        return;
+    }
+    multiScore = r.data;
+    tfState.m30.rows = multiScore.m30_history || []; tfState.m30.page = 1; renderTfHistory('m30');
+    tfState.m15.rows = multiScore.m15_history || []; tfState.m15.page = 1; renderTfHistory('m15');
+    renderSummary(multiScore);
+}
+
+// 30分/15分历史评分分页（各自维护页码，15 条/页，与日K一致）
+const TF_PAGE_SIZE = 15;
+const tfState = { m30: { rows: [], page: 1, label: '30分K' }, m15: { rows: [], page: 1, label: '15分K' } };
+
+function renderTfHistory(tf) {
+    const st = tfState[tf];
+    const el = document.getElementById('card-' + tf);
+    const rows = st.rows;
+    if (!rows || !rows.length) {
+        el.innerHTML = `<div class="empty" style="padding:1.5rem;">${st.label}：暂无评分（15m 数据不足）</div>`;
+        return;
+    }
+    const pages = Math.ceil(rows.length / TF_PAGE_SIZE);
+    if (st.page > pages) st.page = pages;
+    if (st.page < 1) st.page = 1;
+    const start = (st.page - 1) * TF_PAGE_SIZE;
+    const slice = rows.slice(start, start + TF_PAGE_SIZE);
+    const head = `<tr><th>时间</th><th>阶段</th><th>置信</th><th>强度</th><th>信号</th>`
+        + `<th>价格</th><th>均线</th><th>MACD</th><th>量能</th><th>动量</th><th>波动率</th><th class="hl">综合分</th></tr>`;
+    const body = slice.map(it => {
+        const stage = it.trend_stage || 'unknown';
+        return `<tr>
+            <td>${it.date}</td>
+            <td><span class="stage-tag ${stage}">${STAGE_LABEL[stage] || stage}</span></td>
+            <td>${fmtNum(it.trend_stage_confidence,0)}</td>
+            <td>${it.trend_strength || '-'}</td>
+            <td>${SIGNAL_LABEL[it.signal] || it.signal || '-'}</td>
+            <td>${fmtNum(it.price_structure_score)}</td>
+            <td>${fmtNum(it.ma_score)}</td>
+            <td>${fmtNum(it.macd_score)}</td>
+            <td>${fmtNum(it.volume_score)}</td>
+            <td>${fmtNum(it.momentum_score)}</td>
+            <td>${fmtNum(it.volatility_score)}</td>
+            <td class="hl">${fmtNum(it.total_score,1)}</td>
+        </tr>`;
+    }).join('');
+    const pager = `<div class="hist-pager"><span>共 ${rows.length} 根</span>`
+        + (pages > 1
+            ? `<button ${st.page<=1?'disabled':''} onclick="tfGoPage('${tf}', ${st.page-1})">上一页</button>`
+              + `<span>${st.page}/${pages}</span>`
+              + `<button ${st.page>=pages?'disabled':''} onclick="tfGoPage('${tf}', ${st.page+1})">下一页</button>`
+            : '')
+        + `</div>`;
+    el.innerHTML = `<div class="pane-sub">最近 ${rows.length} 根 ${st.label} 评分（每根用截至该根的窗口现算，新→旧）</div>`
+        + `<table class="hist-table">${head}${body}</table>` + pager;
+}
+function tfGoPage(tf, p) { tfState[tf].page = p; renderTfHistory(tf); }
+
+function dirOf(stage) {
+    if (stage === 'up_early' || stage === 'up_late') return '偏多';
+    if (stage === 'down_early' || stage === 'down_late') return '偏空';
+    return '中性';
+}
+
+function renderSummary(d) {
+    const tfs = [['日K', d.daily], ['30分', d.m30], ['15分', d.m15]];
+    const head = `<tr><th>周期</th><th>阶段</th><th>信号</th><th class="hl">综合分</th><th>置信</th><th>强度</th>${SUBS.map(([,n]) => `<th>${n}</th>`).join('')}</tr>`;
+    const body = tfs.map(([name, s]) => {
+        if (!s || s.error || s.total_score == null)
+            return `<tr><td>${name}</td><td colspan="11" class="empty">${(s && s.error) || '数据不足'}</td></tr>`;
+        const stage = s.trend_stage || 'unknown';
+        return `<tr><td>${name}</td>
+            <td><span class="stage-tag ${stage}">${STAGE_LABEL[stage] || stage}</span></td>
+            <td>${SIGNAL_LABEL[s.signal] || '-'}</td>
+            <td class="hl">${fmtNum(s.total_score,1)}</td>
+            <td>${fmtNum(s.trend_stage_confidence,0)}</td>
+            <td>${s.trend_strength || '-'}</td>
+            ${SUBS.map(([k]) => `<td>${fmtNum(s.sub_scores[k])}</td>`).join('')}
+        </tr>`;
+    }).join('');
+
+    const dirs = tfs.map(([,s]) => (s && !s.error && s.total_score != null) ? dirOf(s.trend_stage) : null).filter(Boolean);
+    const bull = dirs.filter(x => x === '偏多').length, bear = dirs.filter(x => x === '偏空').length;
+    let concl, bg;
+    if (dirs.length === 3 && bull === 3) { concl = '三周期共振看多：日 / 30分 / 15分 一致偏多，趋势较确定。'; bg = '#fef2f2'; }
+    else if (dirs.length === 3 && bear === 3) { concl = '三周期共振看空：日 / 30分 / 15分 一致偏空，规避为主。'; bg = '#f0fdf4'; }
+    else {
+        const dd = dirOf((d.daily||{}).trend_stage), m3 = dirOf((d.m30||{}).trend_stage), m1 = dirOf((d.m15||{}).trend_stage);
+        const tail = bear > bull ? '短周期已弱于日线，注意回调风险。'
+                   : (bull > bear ? '短周期先于日线转强，留意能否带动日线。' : '多空交织，方向待明朗。');
+        concl = `周期分歧：日K ${dd} / 30分 ${m3} / 15分 ${m1}。${tail}`;
+        bg = '#fffbeb';
+    }
+    document.getElementById('summaryBox').innerHTML =
+        `<table class="sum-table">${head}${body}</table>`
+        + `<div class="resonance" style="background:${bg};">${concl}</div>`
+        + `<div style="font-size:.74rem;color:#9ca3af;margin-top:.5rem;">注：30分/15分用同一套日K公式在对应周期K线上计算（“近60日”等口径相应变为“近60根”），仅作多周期趋势参考；日K历史表为持久化评分。</div>`;
+}
 
 async function loadChart() {
     const days = document.getElementById('daysSel').value;
@@ -412,8 +629,71 @@ async function loadChart15m() {
     });
 }
 
+async function loadChart30m() {
+    const bars = document.getElementById('barsSel30').value;
+    const r = await fetch(`/board_data/api/board/${BOARD_CODE}/chart_30m?bars=${bars}${rangeQuery()}`).then(r=>r.json());
+    if (!r.success) {
+        document.getElementById('kChart30m').innerHTML =
+            `<div style="padding:2rem;text-align:center;color:#dc2626;">加载 30m 图表失败：${r.message}</div>`;
+        return;
+    }
+    const rows = r.data.rows;
+    setChartStatus('kChart30mStatus', rows, '30m');
+    const dates = rows.map(x => x.date);
+    const kdata = rows.map(x => [x.open, x.close, x.low, x.high]);
+    const ma20  = rows.map(x => x.ma20);
+    const ma60  = rows.map(x => x.ma60);
+    const dif   = rows.map(x => x.dif);
+    const dea   = rows.map(x => x.dea);
+    const bar   = rows.map(x => x.bar);
+    const vol   = rows.map(x => ({
+        value: x.volume,
+        itemStyle: { color: x.close >= x.open ? '#dc2626' : '#16a34a' }
+    }));
+
+    if (!chart30m) chart30m = echarts.init(document.getElementById('kChart30m'));
+    chart30m.setOption({
+        animation: false,
+        tooltip: { trigger: 'axis', axisPointer: { type: 'cross' } },
+        legend: { data: ['30mK', 'MA20', 'MA60', 'DIF', 'DEA', 'MACD'] , top: 0 },
+        axisPointer: { link: [{ xAxisIndex: 'all' }] },
+        grid: [
+            { left: 60, right: 30, top: 30, height: '50%' },
+            { left: 60, right: 30, top: '62%', height: '15%' },
+            { left: 60, right: 30, top: '80%', height: '17%' },
+        ],
+        xAxis: [
+            { type: 'category', data: dates, scale: true, boundaryGap: false, axisLine: { onZero: false }, splitLine: { show: false } },
+            { type: 'category', gridIndex: 1, data: dates, axisLabel: { show: false }, axisLine: { onZero: false }, splitLine: { show: false } },
+            { type: 'category', gridIndex: 2, data: dates, axisLabel: { show: false }, axisLine: { onZero: false }, splitLine: { show: false } },
+        ],
+        yAxis: [
+            { scale: true, splitArea: { show: true } },
+            { scale: true, gridIndex: 1, splitNumber: 2, axisLabel: { show: true } },
+            { scale: true, gridIndex: 2, splitNumber: 2, axisLabel: { show: true } },
+        ],
+        dataZoom: [
+            { type: 'inside', xAxisIndex: [0,1,2], start: 0, end: 100 },
+            { show: true, xAxisIndex: [0,1,2], type: 'slider', bottom: 0, start: 0, end: 100 },
+        ],
+        series: [
+            { name: '30mK', type: 'candlestick', data: kdata, barMaxWidth: 10,
+              itemStyle: { color: '#dc2626', color0: '#16a34a', borderColor: '#dc2626', borderColor0: '#16a34a', borderWidth: 1 } },
+            { name: 'MA20', type: 'line', data: ma20, smooth: true, showSymbol: false, lineStyle: { width: 1.2, color: '#f59e0b' } },
+            { name: 'MA60', type: 'line', data: ma60, smooth: true, showSymbol: false, lineStyle: { width: 1.2, color: '#8b5cf6' } },
+            { name: '量', type: 'bar', xAxisIndex: 1, yAxisIndex: 1, barMaxWidth: 10, data: vol },
+            { name: 'DIF', type: 'line', xAxisIndex: 2, yAxisIndex: 2, data: dif, smooth: true, showSymbol: false, lineStyle: { color: '#2563eb' } },
+            { name: 'DEA', type: 'line', xAxisIndex: 2, yAxisIndex: 2, data: dea, smooth: true, showSymbol: false, lineStyle: { color: '#f59e0b' } },
+            { name: 'MACD', type: 'bar', xAxisIndex: 2, yAxisIndex: 2, barMaxWidth: 10, data: bar.map(v => ({
+                value: v, itemStyle: { color: v >= 0 ? '#dc2626' : '#16a34a' }
+            })) },
+        ]
+    });
+}
+
 window.addEventListener('resize', () => {
     if (chart) chart.resize();
+    if (chart30m) chart30m.resize();
     if (chart15m) chart15m.resize();
 });
 
@@ -533,9 +813,74 @@ function renderStockPage() {
 }
 function stockGoPage(p) { stockPage = p; renderStockPage(); }
 
+// ---------------- 纳入持仓跟踪 ----------------
+let _tracked = false;
+
+async function loadTrackStatus() {
+    const btn = document.getElementById('trackBtn');
+    if (!btn) return;
+    try {
+        const r = await fetch(`/board_data/api/board/${BOARD_CODE}/track_status`).then(r => r.json());
+        _tracked = !!(r.success && r.data && r.data.tracked);
+    } catch (e) { _tracked = false; }
+    renderTrackBtn();
+}
+function renderTrackBtn() {
+    const btn = document.getElementById('trackBtn');
+    if (!btn) return;
+    if (_tracked) {
+        btn.textContent = '✓ 已跟踪';
+        btn.classList.add('tracked');
+        btn.title = '已纳入持仓盘中跟踪，点击取消';
+    } else {
+        btn.textContent = '➕ 纳入持仓跟踪';
+        btn.classList.remove('tracked');
+        btn.title = '把本板块加入「持仓盘中」列表跟踪';
+    }
+}
+function onTrackClick() {
+    if (_tracked) {
+        if (!confirm(`取消跟踪 ${BOARD_CODE}？（将从持仓盘中列表移除）`)) return;
+        untrack();
+    } else {
+        document.getElementById('tkBoard').textContent =
+            `${BOARD_CODE}${(document.getElementById('bdTitle').textContent || '').replace(BOARD_CODE, '').trim() ? ' ' + document.getElementById('bdTitle').textContent.replace(BOARD_CODE, '').trim() : ''}`;
+        document.getElementById('tkEtfCode').value = '';
+        document.getElementById('tkEtfName').value = '';
+        document.getElementById('tkNote').value = '';
+        document.getElementById('trackModal').style.display = 'flex';
+    }
+}
+function closeTrackModal() { document.getElementById('trackModal').style.display = 'none'; }
+async function submitTrack() {
+    const body = {
+        board_name: (document.getElementById('bdTitle').textContent || '').replace(BOARD_CODE, '').trim() || BOARD_CODE,
+        etf_code: document.getElementById('tkEtfCode').value.trim(),
+        etf_name: document.getElementById('tkEtfName').value.trim(),
+        note: document.getElementById('tkNote').value.trim(),
+    };
+    const r = await fetch(`/board_data/api/board/${BOARD_CODE}/track`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    }).then(r => r.json()).catch(() => ({ success: false, message: '请求失败' }));
+    if (!r.success) { alert('纳入失败：' + (r.message || '')); return; }
+    _tracked = true; renderTrackBtn(); closeTrackModal();
+    alert('已纳入持仓盘中跟踪。到「持仓股票实时 15m 趋势」页即可看到本板块。');
+}
+async function untrack() {
+    const r = await fetch(`/board_data/api/board/${BOARD_CODE}/untrack`, { method: 'POST' })
+        .then(r => r.json()).catch(() => ({ success: false, message: '请求失败' }));
+    if (!r.success) { alert('取消失败：' + (r.message || '')); return; }
+    _tracked = false; renderTrackBtn();
+}
+document.getElementById('trackModal').addEventListener('click', e => {
+    if (e.target.id === 'trackModal') closeTrackModal();
+});
+
 loadHistory();
 loadChart();
+loadChart30m();
 loadChart15m();
 loadStocks();
+loadTrackStatus();
 </script>
 {% endblock %}

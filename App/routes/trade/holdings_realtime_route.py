@@ -44,12 +44,14 @@ def api_holdings_list():
         items = get_focus_stocks()
         holding_count = sum(1 for x in items if x.get('kind') == 'holding')
         watching_count = sum(1 for x in items if x.get('kind') == 'watching')
+        board_count = sum(1 for x in items if x.get('kind') == 'board')
         return jsonify({
             'success': True,
             'data': items,
             'count': len(items),
             'holding_count': holding_count,
             'watching_count': watching_count,
+            'board_count': board_count,
         })
     except Exception as e:
         logger.exception('关注列表 API 异常')

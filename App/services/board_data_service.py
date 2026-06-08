@@ -268,8 +268,10 @@ def ak_individual_caps(stock_codes, retries: int = 2, sleep_sec: float = 0.6):
     import time
     import akshare as ak
     out = {}
+    failed = 0
+    last_err = None
     for sc in stock_codes:
-        last_err = None
+        err = None
         for i in range(retries):
             try:
                 df = ak.stock_individual_info_em(symbol=sc)
@@ -287,12 +289,17 @@ def ak_individual_caps(stock_codes, retries: int = 2, sleep_sec: float = 0.6):
                 out[sc] = (_f(tc), _f(cc))
                 break
             except Exception as e:
-                last_err = e
+                err = e
                 if i < retries - 1:
                     time.sleep(sleep_sec * (i + 1))
-        if last_err is not None and sc not in out:
-            logger.info(f'个股 {sc} 市值拉取失败：{last_err}')
+        if err is not None and sc not in out:
+            failed += 1
+            last_err = err
+            logger.debug(f'个股 {sc} 市值拉取失败：{err}')
         time.sleep(sleep_sec)  # 节流
+    # 只在结尾汇总一行，避免逐只刷屏（东财整体限流时会很吵）
+    if failed:
+        logger.info(f'akshare 个股市值：成功 {len(out)} / 失败 {failed}（末错：{last_err}）')
     return out
 
 

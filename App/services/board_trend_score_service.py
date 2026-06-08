@@ -401,19 +401,22 @@ class BoardScoreResult:
     error: Optional[str] = None
 
 
-def compute_one(board_code: str, record_date: date) -> BoardScoreResult:
-    """单板块打分。失败时 error 字段非空，sub_scores 给中性分。"""
-    df = _load_board_daily(board_code, record_date)
-    if df.empty or len(df) < 20:
-        return BoardScoreResult(
-            board_code=board_code, record_date=record_date,
-            sub_scores={k: None for k in WEIGHTS.keys()},
-            total_score=None, trend_stage='unknown',
-            trend_stage_confidence=0.0, trend_strength='none', signal='none',
-            snapshot={}, error=f'数据不足（rows={len(df)}）',
-        )
+def score_dataframe(df: pd.DataFrame) -> dict:
+    """对任意 OHLCV DataFrame（日K / 30m / 15m 均可）按 v1 公式打分。
 
-    actual_date = df['date'].iloc[-1]  # 实际用的最新一日（≤ record_date）
+    df 需含 date/open/close/high/low/volume，按时间升序排列。
+    数据不足（<20 根）时 trend_stage='unknown'、子分为 None。
+    返回 dict（字段与 BoardScoreResult 对齐，外加 bars/error），便于多周期复用。
+    """
+    n = 0 if df is None else len(df)
+    if df is None or df.empty or n < 20:
+        return {
+            'sub_scores': {k: None for k in WEIGHTS.keys()},
+            'total_score': None, 'trend_stage': 'unknown',
+            'trend_stage_confidence': 0.0, 'trend_strength': 'none',
+            'signal': 'none', 'snapshot': {}, 'bars': n,
+            'error': f'数据不足（rows={n}）',
+        }
 
     ps_s, ps_d = _score_price_structure(df)
     ma_s, ma_d = _score_ma(df)
@@ -457,14 +460,36 @@ def compute_one(board_code: str, record_date: date) -> BoardScoreResult:
     confidence = _confidence_from_subscores(sub)
     strength = _strength_from_total(total)
 
+    return {
+        'sub_scores': {k: round(v, 2) for k, v in sub.items()},
+        'total_score': round(total, 2),
+        'trend_stage': stage,
+        'trend_stage_confidence': round(confidence, 1),
+        'trend_strength': strength,
+        'signal': signal,
+        'snapshot': {k: (round(v, 4) if isinstance(v, (int, float)) else v)
+                     for k, v in snap.items() if v is not None},
+        'bars': n,
+        'error': None,
+    }
+
+
+def compute_one(board_code: str, record_date: date) -> BoardScoreResult:
+    """单板块打分（日K）。失败时 error 字段非空，sub_scores 给 None。"""
+    df = _load_board_daily(board_code, record_date)
+    res = score_dataframe(df)
+    actual_date = df['date'].iloc[-1] if not df.empty else record_date
     return BoardScoreResult(
-        board_code=board_code, record_date=actual_date,
-        sub_scores={k: round(v, 2) for k, v in sub.items()},
-        total_score=round(total, 2),
-        trend_stage=stage, trend_stage_confidence=round(confidence, 1),
-        trend_strength=strength, signal=signal,
-        snapshot={k: (round(v, 4) if isinstance(v, (int, float)) else v)
-                  for k, v in snap.items() if v is not None},
+        board_code=board_code,
+        record_date=actual_date if res['error'] is None else record_date,
+        sub_scores=res['sub_scores'],
+        total_score=res['total_score'],
+        trend_stage=res['trend_stage'],
+        trend_stage_confidence=res['trend_stage_confidence'],
+        trend_strength=res['trend_strength'],
+        signal=res['signal'],
+        snapshot=res['snapshot'],
+        error=res['error'],
     )
 
 
@@ -480,6 +505,25 @@ def compute_and_persist(board_codes: List[str], record_date: date) -> dict:
     ok, fail = 0, 0
     errors, updated = [], []
 
+    # 解析板块名（新建评分行时 board_name 为 NOT NULL，必须带上）。
+    # 优先取板块主表 eval_board，兜底取已有评分行，最后退化为代码本身。
+    name_map = {}
+    try:
+        from App.models.evaluation.Board import Board
+        for b in Board.query.filter(Board.board_code.in_(list(board_codes))).all():
+            if b.board_name:
+                name_map[b.board_code] = b.board_name
+    except Exception:
+        pass
+    try:
+        for row in (db.session.query(BoardTrendScore.board_code, BoardTrendScore.board_name)
+                    .filter(BoardTrendScore.board_code.in_(list(board_codes)))
+                    .distinct()):
+            if row[1]:
+                name_map.setdefault(row[0], row[1])
+    except Exception:
+        pass
+
     for code in board_codes:
         try:
             r = compute_one(code, record_date)
@@ -489,6 +533,7 @@ def compute_and_persist(board_codes: List[str], record_date: date) -> dict:
                 # 仍然 upsert 一条 stage='unknown' 的占位
                 BoardTrendScore.upsert(
                     board_code=code, record_date=record_date,
+                    board_name=name_map.get(code, code),
                     trend_stage='unknown', trend_stage_confidence=0.0,
                     trend_strength='none', signal='none',
                     formula_version=FORMULA_VERSION, is_manual=False,
@@ -498,6 +543,7 @@ def compute_and_persist(board_codes: List[str], record_date: date) -> dict:
 
             BoardTrendScore.upsert(
                 board_code=code, record_date=record_date,
+                board_name=name_map.get(code, code),
                 trend_stage=r.trend_stage,
                 trend_stage_confidence=r.trend_stage_confidence,
                 trend_strength=r.trend_strength,
