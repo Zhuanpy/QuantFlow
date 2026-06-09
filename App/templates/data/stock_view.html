@@ -3,12 +3,21 @@
 {% set view_mode = view_mode | default('after_close') %}
 <div class="stock-detail" style="padding:1.25rem;max-width:1400px;margin:0 auto;">
 
-  <!-- ========== 视角导航 tabs（3 个独立页面）+ period 切换器 ========== -->
-  <div style="display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:.5rem;">
+  <!-- ========== 视角导航 tabs + 切换股票搜索 + period 切换器（控制类集中在顶部右侧） ========== -->
+  <div style="display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:.6rem;margin-bottom:.9rem;">
     <div style="flex:1 1 auto;min-width:0;">
       {% include 'data/_stock_view_tabs.html' %}
     </div>
-    <div style="margin-bottom:.6rem;display:flex;align-items:center;gap:.4rem;">
+    <div style="display:flex;align-items:center;gap:.55rem;flex-wrap:wrap;">
+      <!-- 切换股票搜索框 -->
+      <div style="position:relative;flex:0 0 260px;min-width:200px;">
+        <input id="stockSearch" type="text" autocomplete="off"
+               placeholder="🔍 切换股票：代码或名称"
+               style="width:100%;padding:.42rem .7rem;border:1px solid #d1d5db;border-radius:8px;font-size:.88rem;outline:none;box-sizing:border-box;"
+               onfocus="this.style.borderColor='#2563eb'" onblur="this.style.borderColor='#d1d5db'">
+        <div id="searchResults"
+             style="display:none;position:absolute;top:calc(100% + 4px);left:0;right:0;background:#fff;border:1px solid #e5e7eb;border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,.12);max-height:320px;overflow-y:auto;z-index:50;text-align:left;"></div>
+      </div>
       <span style="color:#6b7280;font-size:.82rem;">周期</span>
       <select id="periodSelect" style="padding:.3rem .55rem;border:1px solid #d1d5db;border-radius:6px;font-size:.85rem;background:#fff;cursor:pointer;">
         <option value="15m">15 分钟</option>
@@ -16,21 +25,16 @@
         <option value="60m">60 分钟</option>
         <option value="daily">日线</option>
       </select>
+      {% if stock_code %}
+      <a href="/stock/onemin?code={{ stock_code }}" title="1 分钟数据完整性检测（按年份）"
+         style="font-size:.82rem;color:#2563eb;text-decoration:none;white-space:nowrap;">1m 完整性 ↗</a>
+      {% endif %}
     </div>
   </div>
 
-  <!-- ========== 搜索 + (历史回放专属) 时光机日期 ========== -->
-  <div style="display:flex;gap:.75rem;align-items:stretch;flex-wrap:wrap;margin-bottom:1rem;">
-    <!-- 搜索框 -->
-    <div style="position:relative;flex:0 0 320px;min-width:240px;">
-      <input id="stockSearch" type="text" autocomplete="off"
-             placeholder="切换股票：代码或名称"
-             style="width:100%;height:100%;padding:.5rem .75rem;border:1px solid #d1d5db;border-radius:8px;font-size:.9rem;outline:none;box-sizing:border-box;"
-             onfocus="this.style.borderColor='#2563eb'" onblur="this.style.borderColor='#d1d5db'">
-      <div id="searchResults"
-           style="display:none;position:absolute;top:calc(100% + 4px);left:0;right:0;background:#fff;border:1px solid #e5e7eb;border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,.12);max-height:320px;overflow-y:auto;z-index:50;"></div>
-    </div>
-    {% if view_mode == 'replay' %}
+  <!-- ========== (历史回放专属) 时光机日期 ========== -->
+  {% if view_mode == 'replay' %}
+  <div style="display:flex;margin-bottom:1rem;">
     <div id="asOfBar" style="flex:1 1 auto;min-width:340px;display:flex;align-items:center;gap:.55rem;flex-wrap:wrap;padding:.4rem .75rem;border:1px solid #c7d2fe;border-radius:8px;background:#eef2ff;">
       <span style="font-size:1.05rem;">⏱</span>
       <span style="font-weight:600;color:#3730a3;font-size:.9rem;">时光机日期</span>
@@ -40,8 +44,8 @@
               style="padding:.3rem .75rem;border:1px solid #4f46e5;background:#4f46e5;color:#fff;border-radius:6px;font-size:.83rem;cursor:pointer;">应用</button>
       <span id="asOfHint" style="color:#6366f1;font-size:.78rem;margin-left:auto;">选一个交易日，所有图表/统计按那天的视角重算</span>
     </div>
-    {% endif %}
   </div>
+  {% endif %}
   {% if view_mode == 'replay' %}
   <div id="asOfBanner" style="display:none;margin-bottom:1rem;padding:.55rem .9rem;border:1px solid #c7d2fe;background:#eef2ff;border-radius:8px;color:#3730a3;font-size:.9rem;">
     🕰 <b id="asOfBannerDate"></b> 视角 — 当前显示该日及之前的数据，所有趋势/波段/振幅按那天的视角重算

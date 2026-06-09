@@ -80,6 +80,13 @@ def stock_replay_page():
                            view_mode='replay', period=_read_period_arg())
 
 
+@stock_detail_bp.route('/onemin')
+def stock_onemin_check_page():
+    """个股 1 分钟数据完整性检测页（按年份）。静态路径，优先于 /stock/<code>。"""
+    code = (request.args.get('code') or '').strip()
+    return render_template('data/onemin_check.html', stock_code=code)
+
+
 # ==================== 工具函数 ====================
 def _project_root() -> Path:
     from config import Config
@@ -1315,6 +1322,134 @@ def api_1m(code):
         'count': len(records),
         'data': records,
     })
+
+
+# ==================== 1m 完整性检测（按年份） ====================
+_ONEMIN_FULL_BARS = 240      # A 股整日 1m 根数（9:30-11:30 + 13:00-15:00）
+_ONEMIN_FULL_MIN = 238       # ≥ 此值视为"完整"（容忍个别缺分钟）
+
+
+def _onemin_quarter_bases():
+    root = _project_root()
+    return [root / 'data' / 'data' / 'quarters', root / 'data' / 'quarters']
+
+
+def _onemin_years(code: str):
+    """有历史 1m 数据的年份 → {year: [季度...]}（只查文件存在，不读内容）。"""
+    out = {}
+    for base in _onemin_quarter_bases():
+        if not base.exists():
+            continue
+        for ydir in base.iterdir():
+            if not ydir.is_dir() or not ydir.name.isdigit():
+                continue
+            qs = []
+            for q in ('Q1', 'Q2', 'Q3', 'Q4'):
+                if (ydir / q / f'{code}.parquet').exists() or (ydir / q / f'{code}.csv').exists():
+                    qs.append(q)
+            if qs:
+                out.setdefault(ydir.name, set()).update(qs)
+    return {y: sorted(v) for y, v in out.items()}
+
+
+def _onemin_day_counts(code: str, year: int):
+    """读该年各季度 parquet 的 date 列 → {date(iso): bar_count}。"""
+    counts = {}
+    for base in _onemin_quarter_bases():
+        ydir = base / str(year)
+        if not ydir.exists():
+            continue
+        for q in ('Q1', 'Q2', 'Q3', 'Q4'):
+            for ext in ('parquet', 'csv'):
+                fp = ydir / q / f'{code}.{ext}'
+                if not fp.exists():
+                    continue
+                try:
+                    df = (pd.read_parquet(fp, columns=['date']) if ext == 'parquet'
+                          else pd.read_csv(fp, usecols=['date']))
+                    df['date'] = pd.to_datetime(df['date'])
+                    vc = df['date'].dt.date.value_counts()
+                    for d, n in vc.items():
+                        iso = d.isoformat()
+                        counts[iso] = counts.get(iso, 0) + int(n)
+                except Exception as e:
+                    logger.warning(f'读 {fp} 失败: {e}')
+    return counts
+
+
+def _onemin_completeness(code: str, year: int):
+    """对比"应有交易日(data_stock_daily)"与"实际 1m 覆盖"，逐日定状态 + 汇总。"""
+    day_counts = _onemin_day_counts(code, year)
+
+    # 应有交易日（该股票该年在日 K 里出现过的日期）
+    rows = (db.session.query(StockDaily.date)
+            .filter(StockDaily.stock_code == code)
+            .filter(StockDaily.date >= datetime(year, 1, 1))
+            .filter(StockDaily.date < datetime(year + 1, 1, 1))
+            .order_by(StockDaily.date.asc()).all())
+    trading_days = [r[0].isoformat() for r in rows]
+
+    days, full, short, missing = [], 0, 0, 0
+    missing_list, short_list = [], []
+    for d in trading_days:
+        n = day_counts.get(d, 0)
+        if n == 0:
+            status = 'missing'; missing += 1; missing_list.append(d)
+        elif n >= _ONEMIN_FULL_MIN:
+            status = 'full'; full += 1
+        else:
+            status = 'short'; short += 1; short_list.append({'date': d, 'bars': n})
+        days.append({'date': d, 'bars': n, 'status': status})
+
+    # 1m 有、daily 无的"多余日"（信息项）
+    extra = sorted([{'date': d, 'bars': n} for d, n in day_counts.items()
+                    if d not in set(trading_days)], key=lambda x: x['date'])
+
+    # 按季度细分
+    quarters = {}
+    for it in days:
+        mo = int(it['date'][5:7]); q = f'Q{(mo - 1) // 3 + 1}'
+        b = quarters.setdefault(q, {'expected': 0, 'full': 0, 'short': 0, 'missing': 0})
+        b['expected'] += 1; b[it['status']] += 1
+
+    one_dates = sorted(day_counts.keys())
+    expected = len(trading_days)
+    return {
+        'code': code, 'year': year,
+        'expected_days': expected,
+        'full': full, 'short': short, 'missing': missing,
+        'complete_rate': round(full / expected * 100, 1) if expected else None,
+        'has_1m': bool(day_counts),
+        'onemin_date_range': [one_dates[0], one_dates[-1]] if one_dates else None,
+        'onemin_day_count': len(day_counts),
+        'quarters': quarters,
+        'days': days,
+        'missing_list': missing_list,
+        'short_list': short_list,
+        'extra_list': extra,
+        'full_bars': _ONEMIN_FULL_BARS,
+    }
+
+
+@stock_detail_bp.route('/api/<code>/1m/years', methods=['GET'])
+def api_1m_years(code):
+    y = _onemin_years(code)
+    years = sorted(y.keys(), reverse=True)
+    return jsonify({'success': True, 'years': years, 'quarters': y,
+                    'latest': years[0] if years else None})
+
+
+@stock_detail_bp.route('/api/<code>/1m/completeness', methods=['GET'])
+def api_1m_completeness(code):
+    year_s = (request.args.get('year') or '').strip()
+    if not year_s.isdigit():
+        return jsonify({'success': False, 'message': '需要 year 参数 (YYYY)'}), 400
+    try:
+        data = _onemin_completeness(code, int(year_s))
+        return jsonify({'success': True, 'data': data})
+    except Exception as e:
+        logger.exception('1m 完整性检测失败')
+        return jsonify({'success': False, 'message': str(e)}), 500
 
 
 def _list_param_months(code: str):

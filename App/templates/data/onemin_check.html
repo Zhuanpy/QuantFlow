@@ -1,0 +1,185 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="oc" style="padding:1.25rem;max-width:1300px;margin:0 auto;">
+
+  <!-- ===== 顶部：标题 + 搜索 + 年份 ===== -->
+  <div style="display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:.6rem;margin-bottom:1rem;">
+    <div>
+      <h1 style="margin:0;font-size:1.4rem;">1 分钟数据完整性检测</h1>
+      <div style="color:#6b7280;font-size:.85rem;margin-top:.2rem;">
+        按年份核查每个交易日的 1m 数据是否齐全（整日 ≈ 240 根）。参照"交易日"取自日 K（data_stock_daily）。
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:.55rem;flex-wrap:wrap;">
+      <div style="position:relative;flex:0 0 240px;">
+        <input id="stockSearch" type="text" autocomplete="off" placeholder="🔍 切换股票：代码或名称"
+               style="width:100%;padding:.42rem .7rem;border:1px solid #d1d5db;border-radius:8px;font-size:.88rem;outline:none;box-sizing:border-box;"
+               onfocus="this.style.borderColor='#2563eb'" onblur="this.style.borderColor='#d1d5db'">
+        <div id="searchResults" style="display:none;position:absolute;top:calc(100% + 4px);left:0;right:0;background:#fff;border:1px solid #e5e7eb;border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,.12);max-height:320px;overflow-y:auto;z-index:50;text-align:left;"></div>
+      </div>
+      <span style="color:#6b7280;font-size:.82rem;">年份</span>
+      <select id="yearSelect" style="padding:.32rem .55rem;border:1px solid #d1d5db;border-radius:6px;font-size:.85rem;background:#fff;cursor:pointer;"></select>
+      <a id="detailLink" href="#" target="_blank" style="font-size:.82rem;color:#2563eb;text-decoration:none;">个股详情 ↗</a>
+    </div>
+  </div>
+
+  <div id="stockTitle" style="font-size:1.05rem;font-weight:600;color:#1f2937;margin-bottom:.75rem;"></div>
+
+  <!-- ===== 汇总卡片 ===== -->
+  <div id="summaryCards" style="display:grid;grid-template-columns:repeat(5,1fr);gap:.6rem;margin-bottom:1rem;"></div>
+
+  <!-- ===== 按季度 ===== -->
+  <div id="quarterRow" style="display:flex;gap:.6rem;flex-wrap:wrap;margin-bottom:1rem;"></div>
+
+  <!-- ===== 月历热力图 ===== -->
+  <div class="card" style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:1.1rem;margin-bottom:1rem;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.6rem;flex-wrap:wrap;gap:.5rem;">
+      <h2 style="margin:0;font-size:1.05rem;">逐日完整性（仅交易日）</h2>
+      <div style="font-size:.8rem;color:#6b7280;display:flex;gap:.8rem;flex-wrap:wrap;">
+        <span><span style="display:inline-block;width:11px;height:11px;background:#16a34a;border-radius:2px;vertical-align:-1px;"></span> 完整</span>
+        <span><span style="display:inline-block;width:11px;height:11px;background:#f59e0b;border-radius:2px;vertical-align:-1px;"></span> 不足(根数偏少)</span>
+        <span><span style="display:inline-block;width:11px;height:11px;background:#dc2626;border-radius:2px;vertical-align:-1px;"></span> 缺失</span>
+      </div>
+    </div>
+    <div id="calendar"></div>
+  </div>
+
+  <!-- ===== 问题清单 ===== -->
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:.8rem;" id="problemGrid"></div>
+
+</div>
+
+<script>
+const CODE0 = "{{ stock_code }}";
+let CODE = CODE0;
+
+function card(label, val, color, sub) {
+  return `<div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:.8rem 1rem;">
+    <div style="color:#6b7280;font-size:.78rem;">${label}</div>
+    <div style="font-size:1.6rem;font-weight:700;color:${color};line-height:1.2;">${val}</div>
+    ${sub ? `<div style="color:#9ca3af;font-size:.74rem;">${sub}</div>` : ''}</div>`;
+}
+
+async function loadYears() {
+  const sel = document.getElementById('yearSelect');
+  if (!CODE) { sel.innerHTML = '<option>—</option>'; return; }
+  document.getElementById('detailLink').href = `/stock/?code=${CODE}`;
+  const r = await fetch(`/stock/api/${CODE}/1m/years`).then(r => r.json()).catch(() => null);
+  if (!r || !r.success || !r.years.length) {
+    sel.innerHTML = '<option value="">无 1m 数据</option>';
+    document.getElementById('summaryCards').innerHTML =
+      `<div style="grid-column:1/-1;color:#9ca3af;padding:2rem;text-align:center;background:#fff;border:1px solid #e5e7eb;border-radius:8px;">该股票暂无历史 1m 数据（data/.../quarters 下无文件）</div>`;
+    document.getElementById('calendar').innerHTML = '';
+    document.getElementById('quarterRow').innerHTML = '';
+    document.getElementById('problemGrid').innerHTML = '';
+    return;
+  }
+  sel.innerHTML = r.years.map(y => `<option value="${y}">${y}（${(r.quarters[y] || []).join('/')}）</option>`).join('');
+  loadYear();
+}
+
+async function loadYear() {
+  const year = document.getElementById('yearSelect').value;
+  if (!CODE || !year) return;
+  const cal = document.getElementById('calendar');
+  cal.innerHTML = '<div style="color:#9ca3af;padding:1.5rem;text-align:center;">检测中…</div>';
+  const r = await fetch(`/stock/api/${CODE}/1m/completeness?year=${year}`).then(r => r.json()).catch(() => null);
+  if (!r || !r.success) {
+    cal.innerHTML = `<div style="color:#dc2626;padding:1.5rem;text-align:center;">加载失败：${(r && r.message) || ''}</div>`;
+    return;
+  }
+  render(r.data);
+}
+
+function render(d) {
+  // 汇总卡片
+  document.getElementById('summaryCards').innerHTML =
+      card('应有交易日', d.expected_days, '#2563eb', d.onemin_date_range ? `1m 覆盖 ${d.onemin_date_range[0]} ~ ${d.onemin_date_range[1]}` : '无 1m')
+    + card('完整', d.full, '#16a34a', `≥ ${d.full_bars - 2} 根`)
+    + card('不足', d.short, '#d97706', '根数偏少')
+    + card('缺失', d.missing, '#dc2626', '该交易日无 1m')
+    + card('完整率', (d.complete_rate == null ? '—' : d.complete_rate + '%'),
+           d.complete_rate >= 99 ? '#16a34a' : d.complete_rate >= 90 ? '#d97706' : '#dc2626', '');
+
+  // 季度细分
+  document.getElementById('quarterRow').innerHTML = ['Q1', 'Q2', 'Q3', 'Q4'].map(q => {
+    const b = (d.quarters || {})[q];
+    if (!b) return `<div style="flex:1;min-width:150px;background:#f9fafb;border:1px dashed #e5e7eb;border-radius:8px;padding:.6rem .8rem;color:#9ca3af;font-size:.82rem;">${q}：无</div>`;
+    return `<div style="flex:1;min-width:150px;background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:.6rem .8rem;font-size:.82rem;">
+      <b>${q}</b> · ${b.expected} 交易日<br>
+      <span style="color:#16a34a;">完整 ${b.full}</span> ·
+      <span style="color:#d97706;">不足 ${b.short}</span> ·
+      <span style="color:#dc2626;">缺失 ${b.missing}</span></div>`;
+  }).join('');
+
+  // 月历热力图：按月分组
+  const byMonth = {};
+  (d.days || []).forEach(it => {
+    const m = it.date.slice(0, 7);
+    (byMonth[m] = byMonth[m] || []).push(it);
+  });
+  const colorOf = s => s === 'full' ? '#16a34a' : s === 'short' ? '#f59e0b' : '#dc2626';
+  const months = Object.keys(byMonth).sort();
+  document.getElementById('calendar').innerHTML = months.length ? months.map(m => {
+    const cells = byMonth[m].map(it => {
+      const dd = it.date.slice(8, 10);
+      return `<span title="${it.date} · ${it.bars} 根 · ${({full:'完整',short:'不足',missing:'缺失'})[it.status]}"
+        style="display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:4px;font-size:.7rem;color:#fff;background:${colorOf(it.status)};cursor:default;">${dd}</span>`;
+    }).join('');
+    return `<div style="margin-bottom:.55rem;">
+      <div style="font-size:.8rem;color:#6b7280;margin-bottom:.25rem;">${m}</div>
+      <div style="display:flex;flex-wrap:wrap;gap:3px;">${cells}</div></div>`;
+  }).join('') : '<div style="color:#9ca3af;padding:1rem;text-align:center;">该年无交易日记录</div>';
+
+  // 问题清单
+  const missBox = (d.missing_list && d.missing_list.length)
+    ? `<div style="display:flex;flex-wrap:wrap;gap:4px;">${d.missing_list.map(x => `<span style="background:#fee2e2;color:#991b1b;padding:.1rem .4rem;border-radius:4px;font-size:.76rem;font-family:monospace;">${x}</span>`).join('')}</div>`
+    : '<div style="color:#16a34a;font-size:.85rem;">无 ✓</div>';
+  const shortBox = (d.short_list && d.short_list.length)
+    ? `<div style="display:flex;flex-wrap:wrap;gap:4px;">${d.short_list.map(x => `<span title="${x.bars} 根" style="background:#fef3c7;color:#92400e;padding:.1rem .4rem;border-radius:4px;font-size:.76rem;font-family:monospace;">${x.date}·${x.bars}</span>`).join('')}</div>`
+    : '<div style="color:#16a34a;font-size:.85rem;">无 ✓</div>';
+  const extraNote = (d.extra_list && d.extra_list.length)
+    ? `<div style="margin-top:.5rem;color:#9ca3af;font-size:.76rem;">另有 ${d.extra_list.length} 天 1m 有数据但日 K 无（多为停牌/数据源差异）</div>` : '';
+  document.getElementById('problemGrid').innerHTML =
+      `<div class="card" style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:1rem;">
+         <h3 style="margin:0 0 .5rem;font-size:.95rem;color:#dc2626;">缺失日期（${(d.missing_list || []).length}）</h3>${missBox}</div>`
+    + `<div class="card" style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:1rem;">
+         <h3 style="margin:0 0 .5rem;font-size:.95rem;color:#d97706;">根数不足（${(d.short_list || []).length}）</h3>${shortBox}${extraNote}</div>`;
+}
+
+// ---- 股票搜索切换 ----
+let _searchTimer = null;
+const searchInput = document.getElementById('stockSearch');
+const searchBox = document.getElementById('searchResults');
+searchInput.addEventListener('input', () => {
+  clearTimeout(_searchTimer);
+  const q = searchInput.value.trim();
+  if (!q) { searchBox.style.display = 'none'; return; }
+  _searchTimer = setTimeout(async () => {
+    const r = await fetch(`/stock_trend/api/search?q=${encodeURIComponent(q)}&limit=15`).then(r => r.json()).catch(() => null);
+    const list = (r && (r.data || r.results || r.stocks)) || [];
+    if (!list.length) { searchBox.style.display = 'none'; return; }
+    searchBox.innerHTML = list.map(s => {
+      const cc = s.stock_code || s.code, nm = s.stock_name || s.name || '';
+      return `<div onclick="gotoStock('${cc}')" style="padding:.45rem .7rem;cursor:pointer;font-size:.85rem;border-bottom:1px solid #f3f4f6;"
+        onmouseover="this.style.background='#f3f4f6'" onmouseout="this.style.background='#fff'"><b>${cc}</b> <span style="color:#6b7280;">${nm}</span></div>`;
+    }).join('');
+    searchBox.style.display = 'block';
+  }, 200);
+});
+document.addEventListener('click', e => { if (!searchInput.contains(e.target) && !searchBox.contains(e.target)) searchBox.style.display = 'none'; });
+function gotoStock(code) { window.location.href = `/stock/onemin?code=${code}`; }
+
+document.getElementById('yearSelect').addEventListener('change', loadYear);
+
+if (CODE) {
+  document.getElementById('stockTitle').textContent = `股票 ${CODE}`;
+  loadYears();
+} else {
+  document.getElementById('summaryCards').innerHTML =
+    `<div style="grid-column:1/-1;color:#6b7280;padding:2.5rem;text-align:center;background:#fff;border:1px solid #e5e7eb;border-radius:8px;">
+       请在右上角搜索框输入股票代码或名称，例如 <code style="background:#f3f4f6;padding:.1rem .4rem;border-radius:4px;">002812</code></div>`;
+  searchInput.focus();
+}
+</script>
+{% endblock %}
