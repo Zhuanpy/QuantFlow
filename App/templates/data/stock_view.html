@@ -112,7 +112,7 @@
   <!-- ========== ① 15m K 线图 ========== -->
   <div class="card" style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:1.25rem;margin-bottom:1rem;">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.75rem;">
-      <h2 style="margin:0;font-size:1.125rem;">① 15 分钟 K 线</h2>
+      <h2 id="kTitle" style="margin:0;font-size:1.125rem;">① 15 分钟 K 线</h2>
       <select id="kRange" class="form-select">
         <option value="500">最近 500 根</option>
         <option value="1000" selected>最近 1000 根</option>
@@ -130,7 +130,7 @@
     <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem;margin-bottom:.75rem;">
       <h2 style="margin:0;font-size:1.125rem;">①‴ 周期振幅分布（上涨 / 下跌 分开正态拟合 + 当前位置）</h2>
       <div style="display:flex;align-items:center;gap:.75rem;flex-wrap:wrap;">
-        <span style="color:#6b7280;font-size:.78rem;">口径：(本周期末根 close − 上一反向周期极值) / 上一反向周期极值</span>
+        <span style="color:#6b7280;font-size:.78rem;">口径：(本周期内极值 − 周期起点价) / 周期起点价</span>
         <a id="ampScreenerLink" href="/screener/" target="_blank"
            title="跳到全市场正态统计表，按周期振幅筛选其它股票" style="font-size:.82rem;color:#2563eb;text-decoration:none;">
           → 全市场对比（按振幅筛选）
@@ -377,6 +377,11 @@ function stockUrl(code) { return '/stock/?code=' + encodeURIComponent(code); }
 const VIEW_MODE = '{{ view_mode | default("after_close") }}';
 let ASOF = null;
 let PERIOD = '{{ period | default("15m") }}';   // 15m / 30m / 60m / daily
+const PERIOD_LABEL = { '15m': '15 分钟 K 线', '30m': '30 分钟 K 线', '60m': '60 分钟 K 线', 'daily': '日 K 线' };
+function updatePeriodLabels() {
+  const t = document.getElementById('kTitle');
+  if (t) t.textContent = '① ' + (PERIOD_LABEL[PERIOD] || '15 分钟 K 线');
+}
 
 if (VIEW_MODE === 'replay') {
   const u = new URLSearchParams(window.location.search);
@@ -388,7 +393,7 @@ function withAsOf(url) {
   if (VIEW_MODE === 'replay' && ASOF) {
     url += (url.includes('?') ? '&' : '?') + 'as_of=' + encodeURIComponent(ASOF);
   }
-  if (PERIOD && PERIOD !== '15m') {
+  if (PERIOD) {
     url += (url.includes('?') ? '&' : '?') + 'period=' + encodeURIComponent(PERIOD);
   }
   return url;
@@ -397,6 +402,19 @@ function withAsOf(url) {
 async function fetchJson(url) {
   try { const r = await fetch(url); return await r.json(); }
   catch (e) { return { success: false, message: e.message }; }
+}
+
+// 带超时的请求：避免某个接口卡住时，对应区块永远停在"加载中"
+async function fetchJsonT(url, ms = 20000) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), ms);
+  try {
+    const r = await fetch(url, { signal: ctrl.signal });
+    return await r.json();
+  } catch (e) {
+    return { success: false,
+             message: e.name === 'AbortError' ? `请求超时（>${ms / 1000}s）` : e.message };
+  } finally { clearTimeout(t); }
 }
 
 // ---------- 股票搜索 / 切换 ----------
@@ -736,7 +754,7 @@ async function load15m() {
         return `<span style="font-size:.85rem;color:#6b7280;">${w} <b style="color:${col};font-family:monospace;">${sign}${p}%</b>（${ct.start_price} → ${ct.last_price}）</span>`;
       })() : ''}
       ${ct.amplitude_pct != null
-        ? `<span style="font-size:.85rem;color:#6b7280;">振幅 <b style="color:#374151;font-family:monospace;">${ct.amplitude_pct}%</b>（${ct.low_price} ~ ${ct.high_price}）</span>`
+        ? `<span style="font-size:.85rem;color:#6b7280;">振幅 <b style="color:#374151;font-family:monospace;">${ct.amplitude_pct}%</b>（${ct.amp_start != null ? ct.amp_start : ct.low_price} → ${ct.amp_to != null ? ct.amp_to : ct.high_price}）</span>`
         : ''}
       ${ct.is_active
         ? '<span style="margin-left:auto;background:#fff;border:1px solid '+c.bd+';color:'+c.fg+';padding:.15rem .55rem;border-radius:9999px;font-size:.78rem;font-weight:600;">● 进行中</span>'
@@ -1032,7 +1050,7 @@ async function loadCycles() {
   }
 }
 async function _loadCyclesImpl() {
-  const j = await fetchJson(withAsOf(`${API}/cycles`));
+  const j = await fetchJsonT(withAsOf(`${API}/cycles`), 20000);
   const body = document.getElementById('cycleBody');
   const statsEl = document.getElementById('cycleStats');
   const distUpEl = document.getElementById('cycleDistChartUp');
@@ -1057,8 +1075,9 @@ async function _loadCyclesImpl() {
   };
   if (!j.success) {
     statsEl.innerText = '';
-    body.innerHTML = `<tr><td colspan="9" style="text-align:center;color:#dc2626;padding:1rem;">${j.message || '加载失败'}</td></tr>`;
-    distMsg(j.message || '加载失败', '#dc2626');
+    const retryBtn = `<button onclick="loadCycles()" style="margin-left:.5rem;padding:.15rem .6rem;border:1px solid #cbd5e1;border-radius:6px;cursor:pointer;background:#fff;font-size:.8rem;">↻ 重试</button>`;
+    body.innerHTML = `<tr><td colspan="9" style="text-align:center;color:#dc2626;padding:1rem;">${j.message || '加载失败'}${retryBtn}</td></tr>`;
+    distMsg(`${j.message || '加载失败'}<br>${retryBtn}`, '#dc2626');
     return;
   }
   if (typeof Plotly === 'undefined') {
@@ -1139,6 +1158,15 @@ async function _loadCyclesImpl() {
 // opts: { value:c=>number|null, xtitle, numfmt(hover/d3), fmt(v)=>展示字符串 }
 function renderDist(subset, el, infoEl, current, curColor, opts) {
   if (!el) return;
+  // 单图隔离：任何绘制异常只影响这一张，且绝不把容器留在"加载中"
+  try { _renderDistImpl(subset, el, infoEl, current, curColor, opts); }
+  catch (err) {
+    console.error('[renderDist]', err);
+    el.innerHTML = `<div style="color:#dc2626;padding:1.5rem;text-align:center;">绘图失败：${(err && err.message) || err}`
+      + `<br><button onclick="loadCycles()" style="margin-top:.4rem;padding:.2rem .6rem;border:1px solid #cbd5e1;border-radius:6px;cursor:pointer;background:#fff;">↻ 重试</button></div>`;
+  }
+}
+function _renderDistImpl(subset, el, infoEl, current, curColor, opts) {
   const valOf = opts.value, fmt = opts.fmt, nf = opts.numfmt;
   const MAX_HIST = 60;   // 只取最近 60 个已完成周期（贴近当前行情）
   const MIN_FIT = 8;     // < 8 不拟合
@@ -1222,8 +1250,8 @@ function renderDist(subset, el, infoEl, current, curColor, opts) {
   if (cur != null) {
     const cy = Math.exp(-((cur - mean) ** 2) / (2 * sig * sig)) / (sig * Math.sqrt(2 * Math.PI));
     shapes.push(vline(cur, curColor, 'solid'));
-    annos.push({ x: cur, y: cy, yref: 'y', text: `当前 ${fmt(cur)}`, showarrow: true, arrowhead: 3,
-                 ax: 0, ay: -28, font: { size: 12, color: curColor, weight: 700 }, arrowcolor: curColor });
+    annos.push({ x: cur, y: cy, yref: 'y', text: `<b>当前 ${fmt(cur)}</b>`, showarrow: true, arrowhead: 3,
+                 ax: 0, ay: -28, font: { size: 12, color: curColor }, arrowcolor: curColor });
     traces.push({ type: 'scatter', mode: 'markers', x: [cur], y: [cy], name: '当前周期',
                   marker: { color: curColor, size: 11, symbol: 'diamond' },
                   hovertemplate: `当前 %{x:${nf}}<extra></extra>` });
@@ -1236,7 +1264,11 @@ function renderDist(subset, el, infoEl, current, curColor, opts) {
     bargap: 0.02, showlegend: true,
     legend: { orientation: 'h', y: -0.38, yanchor: 'top', x: 0.5, xanchor: 'center' },
     shapes, annotations: annos,
-  }, { responsive: true });
+  }, { responsive: true }).catch(err => {
+    // Plotly 异步渲染报错（如非法属性）：显示出来而非默默停在加载中
+    console.error('[Plotly.newPlot]', err);
+    el.innerHTML = `<div style="color:#dc2626;padding:1.5rem;text-align:center;">绘图引擎报错：${(err && err.message) || err}</div>`;
+  });
 
   if (infoEl) {
     const sampTxt = `样本 ${n} 个`
@@ -1478,14 +1510,23 @@ if (VIEW_MODE === 'replay') {
   const sel = document.getElementById('periodSelect');
   if (!sel) return;
   sel.value = PERIOD;
+  updatePeriodLabels();
+  // 初始加载时让 URL 始终带上 period（含默认 15m），便于书签/分享与一致性
+  {
+    const u0 = new URL(window.location.href);
+    if (u0.searchParams.get('period') !== PERIOD) {
+      u0.searchParams.set('period', PERIOD);
+      history.replaceState(null, '', u0.toString());
+    }
+  }
   sel.onchange = () => {
     const newP = sel.value;
     if (newP === PERIOD) return;
     PERIOD = newP;
-    // 同步 URL（默认 15m 不写）
+    updatePeriodLabels();
+    // 同步 URL（始终写上 period，含 15m）
     const u = new URL(window.location.href);
-    if (PERIOD === '15m') u.searchParams.delete('period');
-    else u.searchParams.set('period', PERIOD);
+    u.searchParams.set('period', PERIOD);
     history.replaceState(null, '', u.toString());
     // 重刷依赖周期的图表 + 统计
     load15m();

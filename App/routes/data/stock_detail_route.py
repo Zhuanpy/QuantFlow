@@ -614,13 +614,29 @@ def api_15m(code):
         last_price = records[last['end_idx']]['close']
         change_pct = (round((last_price - start_price) / start_price * 100, 2)
                       if start_price else None)
-        # 趋势振幅：段内最高价与最低价之差，相对段内最高价的百分比
-        # （下跌区间以高点为基准：(high-low)/high*100）
         seg_rows = records[last['start_idx']:last['end_idx'] + 1]
         seg_high = max(r['high'] for r in seg_rows)
         seg_low = min(r['low'] for r in seg_rows)
-        amplitude_pct = (round((seg_high - seg_low) / seg_high * 100, 2)
-                         if seg_high else None)
+
+        # 振幅口径与「周期振幅分布」完全统一 —— 极值口径：
+        #   (本段极值 − 周期起点价) / 周期起点价；上涨取段内最高、下跌取段内最低。
+        # 周期起点价 = 本段 StartPrice 的首个非空值（= flip 行起点，与 cycles 同源）。
+        start_ref = None
+        if 'StartPrice' in df.columns:
+            _sp = pd.to_numeric(
+                df['StartPrice'].iloc[last['start_idx']:last['end_idx'] + 1],
+                errors='coerce').dropna()
+            if len(_sp):
+                start_ref = float(_sp.iloc[0])
+        seg_extreme = seg_high if last['direction'] > 0 else seg_low
+        if start_ref and start_ref != 0:
+            amplitude_pct = round(abs(seg_extreme - start_ref) / start_ref * 100, 2)
+        else:
+            # 无 StartPrice 兜底：退回段内高低口径
+            start_ref = seg_low if last['direction'] > 0 else seg_high
+            amplitude_pct = (round((seg_high - seg_low) / seg_high * 100, 2)
+                             if seg_high else None)
+
         current_trend = {
             'signal_name': last['signal_name'],
             'direction': last['direction'],
@@ -633,6 +649,8 @@ def api_15m(code):
             'high_price': round(seg_high, 2),
             'low_price': round(seg_low, 2),
             'amplitude_pct': amplitude_pct,
+            'amp_start': round(start_ref, 2) if start_ref else None,  # 周期起点价
+            'amp_to': round(seg_extreme, 2),                          # 本段极值
         }
 
     return jsonify({
