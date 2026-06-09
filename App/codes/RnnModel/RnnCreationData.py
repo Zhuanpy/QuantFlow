@@ -91,6 +91,12 @@ class ModelData:
         file_path_x = StockDataPath.train_data_path(self.month, file_x)
         file_path_y = StockDataPath.train_data_path(self.month, file_y)
 
+        # train_data_path 只拼路径不建目录；新月份（如 2026-01）首次训练时
+        # data/RnnData/<month>/train_data/ 还不存在，np.save 会报
+        # "No such file or directory"。保存前确保目录存在。
+        import os
+        os.makedirs(os.path.dirname(file_path_x), exist_ok=True)
+
         np.save(file_path_x, data_x)
         np.save(file_path_y, data_y)
 
@@ -598,8 +604,12 @@ class TrainingDataCalculate(ModelData):
         Returns:
             处理后的数据框
         """
-        self.data_15m[Signal] = self.data_15m[Signal].astype(float)
-        
+        # Signal 列上游（MacdSignalV2）以 pd.NA 初始化，首个 flip 之前的行 ffill 也填不上，
+        # 仍是 pd.NA（object dtype）。.astype(float) 会逐元素 float(pd.NA) 报
+        # "float() argument ... not 'NAType'"。用 to_numeric coerce 成 NaN，
+        # 这些 head 行随后在 column_stand 的 dropna(subset=[Signal]) 被清除，语义不变。
+        self.data_15m[Signal] = pd.to_numeric(self.data_15m[Signal], errors='coerce')
+
         # 处理成交量相关参数
         vol_parser = [
             'volume', Cycle1mVolMax1, Cycle1mVolMax5,

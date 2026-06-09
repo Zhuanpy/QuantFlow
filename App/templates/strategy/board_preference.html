@@ -1,0 +1,245 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container">
+    <div class="page-header">
+        <div>
+            <h1>板块偏好评分</h1>
+            <p>给板块打个人偏好分（1 = 不喜欢，10 = 很喜欢），与交易日无关。点评分条的第 N 格即设 N 分，点 × 清除。可按偏好筛选/排序，挑出你的偏好板块。</p>
+        </div>
+    </div>
+
+    <!-- 四项风格分布图 -->
+    <div class="style-panel">
+        <div class="sp-head">
+            <h3>风格偏好分布（四项）</h3>
+            <span class="sp-meta" id="spMeta">按板块市场风格归类：成长制造 / 消费 / 周期资源 / 金融地产。柱=各档位板块数，折线=该类平均偏好分。</span>
+        </div>
+        <div id="styleChart" class="sp-chart"></div>
+        <div class="sp-note">分类口径：电新链（电力/电源/风光/电池）归「成长制造」；公用/交运/电信运营并入「周期资源」；医药制造·生物·器械归成长，中药·医药商业·医疗服务归消费。想调整归属告诉我即可。</div>
+    </div>
+
+    <div class="filter-bar">
+        <label>偏好≥
+            <select id="filterMinPref" onchange="reload()">
+                <option value="">全部</option>
+                <option value="8">8 分以上</option>
+                <option value="6">6 分以上</option>
+                <option value="4">4 分以上</option>
+            </select>
+        </label>
+        <label><input type="checkbox" id="filterScored" onchange="reload()"> 仅看已打分</label>
+        <label>排序
+            <select id="filterSort" onchange="reload()">
+                <option value="preference_desc">偏好高→低</option>
+                <option value="preference_asc">偏好低→高</option>
+                <option value="board_code">板块代码</option>
+            </select>
+        </label>
+        <input type="text" id="filterCode" placeholder="板块代码" onkeydown="if(event.key==='Enter')reload()">
+        <input type="text" id="filterName" placeholder="板块名称" onkeydown="if(event.key==='Enter')reload()">
+        <button class="btn btn-sm" onclick="reload()">查询</button>
+    </div>
+
+    <div class="table-wrap">
+        <table class="board-table">
+            <thead>
+                <tr><th>板块</th><th>分类</th><th title="日K/1m/15m 是否覆盖到最近交易日">数据</th>
+                    <th>成分股</th><th style="min-width:160px;">个人偏好（1-10）</th></tr>
+            </thead>
+            <tbody id="tbody"><tr><td colspan="5" class="empty">加载中...</td></tr></tbody>
+        </table>
+    </div>
+
+    <div class="pagination-wrap">
+        <span id="pageInfo">共 0 条</span>
+        <div id="pagination"></div>
+    </div>
+</div>
+
+<style>
+    .container { max-width: 1000px; margin: 1rem auto; padding: 0 1rem; }
+    .page-header { background:#fff; padding:1rem 1.25rem; border-radius:.6rem; box-shadow:var(--shadow-sm); margin-bottom:1rem; }
+    .page-header h1 { margin:0 0 .25rem; }
+    .page-header p { margin:0; color:#6b7280; font-size:.9rem; }
+    .btn { padding:.45rem .9rem; border-radius:.4rem; border:1px solid transparent; cursor:pointer; font-size:.85rem; }
+    .btn-sm { padding:.3rem .65rem; font-size:.8rem; background:#2563eb; color:#fff; }
+    .style-panel { background:#fff; border-radius:.6rem; padding:.85rem 1rem .65rem; box-shadow:var(--shadow-sm); margin-bottom:.85rem; }
+    .sp-head { display:flex; align-items:baseline; gap:.6rem; flex-wrap:wrap; margin-bottom:.25rem; }
+    .sp-head h3 { margin:0; font-size:1rem; color:#1f2937; }
+    .sp-meta { font-size:.78rem; color:#6b7280; }
+    .sp-chart { height:320px; }
+    .sp-note { font-size:.74rem; color:#9ca3af; margin-top:.35rem; line-height:1.5; }
+    .filter-bar { display:flex; flex-wrap:wrap; gap:.5rem; align-items:center; background:#fff;
+                  padding:.6rem .75rem; border-radius:.5rem; margin-bottom:.75rem; box-shadow:var(--shadow-sm); font-size:.85rem; }
+    .filter-bar label { display:flex; align-items:center; gap:.3rem; color:#374151; }
+    .filter-bar select, .filter-bar input[type=text] { padding:.3rem .5rem; border:1px solid #d1d5db; border-radius:.3rem; font-size:.85rem; }
+    .table-wrap { background:#fff; border-radius:.5rem; padding:.5rem; box-shadow:var(--shadow-sm); overflow-x:auto; }
+    .board-table { width:100%; border-collapse:collapse; font-size:.83rem; }
+    .board-table th, .board-table td { padding:.5rem .55rem; border-bottom:1px solid #f1f5f9; text-align:right; white-space:nowrap; }
+    .board-table th { background:#f9fafb; color:#374151; font-weight:600; text-align:center; }
+    .board-table td:first-child, .board-table th:first-child { text-align:left; }
+    .board-table tr:hover { background:#f9fafb; }
+    .empty { text-align:center !important; color:#9ca3af; padding:1.5rem; }
+    .board-link { color:inherit; text-decoration:none; }
+    .board-link:hover strong { color:#2563eb; text-decoration:underline; }
+    .cls-tag { display:inline-block; padding:.1rem .45rem; border-radius:.3rem; font-size:.74rem; background:#eef2ff; color:#3730a3; }
+    .ds-cell { display:inline-flex; gap:3px; align-items:center; padding:.1rem .3rem; border-radius:.3rem; cursor:help; }
+    .ds-cell.ok{background:#d1fae5;} .ds-cell.lag{background:#fef3c7;} .ds-cell.stale{background:#fee2e2;} .ds-cell.missing{background:#fecaca;}
+    .ds-dot { width:8px; height:8px; border-radius:50%; }
+    .ds-dot.ok{background:#10b981;} .ds-dot.lag{background:#f59e0b;} .ds-dot.missing{background:#ef4444;}
+    .pref-rate { display:inline-flex; align-items:center; gap:1px; }
+    .pref-seg { width:6px; height:16px; border-radius:1px; background:#e5e7eb; cursor:pointer; transition:background .1s, outline .1s; }
+    .pref-seg:hover { outline:1px solid #93c5fd; }
+    .pref-val { margin-left:6px; font-weight:700; font-size:.85rem; min-width:1.5ch; text-align:center; }
+    .pref-val.pref-none { color:#cbd5e1; font-weight:400; }
+    .pref-clear { margin-left:4px; color:#cbd5e1; cursor:pointer; font-size:1rem; line-height:1; }
+    .pref-clear:hover { color:#ef4444; }
+    .pagination-wrap { display:flex; justify-content:space-between; align-items:center; margin-top:.75rem; font-size:.85rem; color:#6b7280; }
+    .pagination button { padding:.3rem .6rem; border:1px solid #d1d5db; background:#fff; border-radius:.3rem; margin:0 .15rem; cursor:pointer; }
+</style>
+
+<script>
+let currentPage = 1;
+const pageSize = 30;
+
+function renderDataStatus(ds) {
+    if (!ds) return '<span style="color:#9ca3af;">-</span>';
+    const dotColor = (s) => (s === 'ok') ? 'ok' : (s === 'lag') ? 'lag' : 'missing';
+    const tip = `状态：${({ok:'正常',lag:'轻度滞后',stale:'严重滞后',missing:'无数据'})[ds.overall] || ds.overall}`;
+    return `<span class="ds-cell ${ds.overall}" title="${tip}">`
+         + `<span class="ds-dot ${dotColor(ds.daily)}"></span>`
+         + `<span class="ds-dot ${dotColor(ds.min1)}"></span>`
+         + `<span class="ds-dot ${dotColor(ds.min15)}"></span></span>`;
+}
+
+function prefColor(v) {
+    if (v >= 8) return '#dc2626';
+    if (v >= 6) return '#f97316';
+    if (v >= 4) return '#f59e0b';
+    return '#9ca3af';
+}
+function renderPreference(it) {
+    const codeJson = JSON.stringify(it.board_code || '');
+    const nameJson = JSON.stringify(it.board_name || '');
+    const score = (it.preference_score == null) ? 0 : Number(it.preference_score);
+    let segs = '';
+    for (let v = 1; v <= 10; v++) {
+        const on = v <= score;
+        segs += `<span class="pref-seg${on ? ' on' : ''}"`
+              + (on ? ` style="background:${prefColor(score)};"` : '')
+              + ` title="设为 ${v} 分" onclick='setPreference(${codeJson}, ${nameJson}, ${v})'></span>`;
+    }
+    const label = score ? `<span class="pref-val" style="color:${prefColor(score)};">${score}</span>` : `<span class="pref-val pref-none">–</span>`;
+    const clear = score ? `<span class="pref-clear" title="清除打分" onclick='setPreference(${codeJson}, ${nameJson}, 0)'>×</span>` : '';
+    return `<span class="pref-rate">${segs}${label}${clear}</span>`;
+}
+
+async function setPreference(code, name, score) {
+    const r = await fetch('/board_pref/api/set', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ board_code: code, board_name: name, preference_score: score || null }),
+    }).then(r => r.json()).catch(() => ({ success: false, message: '请求失败' }));
+    if (!r.success) { alert('保存偏好失败：' + (r.message || '')); return; }
+    loadList();
+}
+
+function reload() { currentPage = 1; loadList(); }
+
+async function loadList() {
+    const params = new URLSearchParams({
+        page: currentPage, page_size: pageSize,
+        min_preference: document.getElementById('filterMinPref').value,
+        only_scored: document.getElementById('filterScored').checked ? '1' : '',
+        sort_by: document.getElementById('filterSort').value,
+        board_code: document.getElementById('filterCode').value,
+        board_name: document.getElementById('filterName').value,
+    });
+    const r = await fetch('/board_pref/api/list?' + params).then(r => r.json());
+    const tbody = document.getElementById('tbody');
+    if (!r.success) { tbody.innerHTML = `<tr><td colspan="5" class="empty">加载失败：${r.message || ''}</td></tr>`; return; }
+    const items = r.data.items || [];
+    if (!items.length) {
+        tbody.innerHTML = `<tr><td colspan="5" class="empty">暂无板块。请先到「板块数据管理」同步板块清单。</td></tr>`;
+    } else {
+        tbody.innerHTML = items.map(it => `
+            <tr>
+                <td><a href="/board_data/board?code=${it.board_code}" class="board-link"><strong>${it.board_code}</strong><br><span style="color:#6b7280;font-size:.78rem;">${it.board_name || ''}</span></a></td>
+                <td style="text-align:center;"><span class="cls-tag">${it.classification || '-'}</span></td>
+                <td style="text-align:center;">${renderDataStatus(it.data_status)}</td>
+                <td>${it.member_count == null ? '-' : it.member_count}</td>
+                <td style="text-align:center;">${renderPreference(it)}</td>
+            </tr>`).join('');
+    }
+    renderPagination(r.data.pagination);
+    document.getElementById('pageInfo').textContent = `共 ${r.data.pagination.total} 条`;
+}
+
+function renderPagination(p) {
+    const div = document.getElementById('pagination');
+    if (!p || p.pages <= 1) { div.innerHTML = ''; return; }
+    div.innerHTML = `<button ${p.has_prev ? '' : 'disabled'} onclick="goPage(${p.page - 1})">上一页</button>`
+        + `<span style="margin:0 .5rem;">${p.page}/${p.pages}</span>`
+        + `<button ${p.has_next ? '' : 'disabled'} onclick="goPage(${p.page + 1})">下一页</button>`;
+}
+function goPage(p) { currentPage = p; loadList(); }
+
+loadList();
+</script>
+
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<script>
+let _styleChart = null;
+async function loadStyleChart() {
+    if (typeof echarts === 'undefined') return;
+    const r = await fetch('/board_pref/api/style_distribution').then(r => r.json()).catch(() => null);
+    if (!r || !r.success) return;
+    const styles = r.data.styles || [];
+    const cats = styles.map(s => s.label);
+    const series = (key) => styles.map(s => s.tiers[key] || 0);
+    const avg = styles.map(s => s.avg);
+    const overall = r.data.overall_avg;
+    if (overall != null) {
+        document.getElementById('spMeta').textContent =
+            `按板块市场风格归类 · 已打分 ${r.data.total_scored} 个 · 总体均值 ${overall} 分。柱=各档位板块数，折线=该类平均偏好分。`;
+    }
+
+    if (!_styleChart) _styleChart = echarts.init(document.getElementById('styleChart'));
+    const bar = (name, key, color) => ({
+        name, type: 'bar', stack: 'tier', emphasis: { focus: 'series' },
+        data: series(key), itemStyle: { color },
+        barMaxWidth: 60,
+    });
+    _styleChart.setOption({
+        tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+        legend: { data: ['很喜欢(8-10)', '喜欢(6-7)', '中性(4-5)', '回避(1-3)', '平均偏好分'], top: 0 },
+        grid: { left: 45, right: 55, top: 36, bottom: 28 },
+        xAxis: { type: 'category', data: cats, axisLabel: { fontWeight: 600 } },
+        yAxis: [
+            { type: 'value', name: '板块数', minInterval: 1 },
+            { type: 'value', name: '平均分', min: 0, max: 10, position: 'right',
+              splitLine: { show: false }, axisLabel: { formatter: '{value}' } },
+        ],
+        series: [
+            bar('很喜欢(8-10)', 'like', '#dc2626'),
+            bar('喜欢(6-7)', 'fav', '#f97316'),
+            bar('中性(4-5)', 'neutral', '#f59e0b'),
+            bar('回避(1-3)', 'avoid', '#d1d5db'),
+            {
+                name: '平均偏好分', type: 'line', yAxisIndex: 1, data: avg,
+                symbol: 'circle', symbolSize: 9, lineStyle: { width: 2.5, color: '#2563eb' },
+                itemStyle: { color: '#2563eb' },
+                label: { show: true, position: 'top', formatter: '{c}', color: '#2563eb', fontWeight: 700 },
+                markLine: overall == null ? undefined : {
+                    silent: true, symbol: 'none',
+                    lineStyle: { type: 'dashed', color: '#9ca3af' },
+                    data: [{ yAxis: overall, label: { formatter: `总体均值 ${overall}`, position: 'insideEndTop', color: '#6b7280' } }],
+                },
+            },
+        ],
+    });
+}
+window.addEventListener('resize', () => { if (_styleChart) _styleChart.resize(); });
+loadStyleChart();
+</script>
+{% endblock %}

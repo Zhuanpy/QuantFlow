@@ -145,18 +145,45 @@ def get_watching_stocks() -> List[Dict]:
         return []
 
 
+def get_tracked_boards() -> List[Dict]:
+    """纳入持仓跟踪的板块（来自 eval_board_holding）
+
+    Returns:
+        List[{kind:'board', stock_code, stock_name, etf_code, etf_name, note}]，按代码升序
+    """
+    try:
+        from App.models.evaluation.BoardHolding import BoardHolding
+        BoardHolding.ensure_table()
+        rows = BoardHolding.list_all()
+        return [{
+            'kind': 'board',
+            'stock_code': r.board_code,
+            'stock_name': r.board_name or r.board_code,
+            'etf_code': r.etf_code,
+            'etf_name': r.etf_name,
+            'note': r.note,
+        } for r in rows]
+    except Exception as e:
+        logger.exception(f'查询跟踪板块失败: {e}')
+        return []
+
+
 def get_focus_stocks() -> List[Dict]:
-    """关注列表：已持仓 + 等待入场
+    """关注列表：已持仓 + 等待入场 + 跟踪板块
 
     - 已持仓优先：若 trade_plans 里有同代码 planning/pending 计划，仅显示持仓行（避免重复）
     - 仅未持仓的 watching 计划单独显示
-    - 持仓行在前，关注行在后；组内按代码升序
+    - 跟踪板块（BK 代码）追加在最后；与已有持仓/关注同代码则跳过
+    - 持仓行在前，关注行其次，板块行最后；组内按代码升序
     """
     holdings = get_current_holdings()
     watching_all = get_watching_stocks()
     held_codes = {h['stock_code'] for h in holdings}
     watching = [w for w in watching_all if w['stock_code'] not in held_codes]
-    return holdings + watching
+
+    seen = held_codes | {w['stock_code'] for w in watching}
+    boards = [b for b in get_tracked_boards() if b['stock_code'] not in seen]
+    return holdings + watching + boards
 
 
 # ------------------------------------------------------------------

@@ -213,9 +213,170 @@ class BoardDownloader:
 
         return df
 
+    # 板块日 K 直连用的 host / UA 轮换池（https push2his 已验证可直连，
+    # http:80 常被整段 TCP RST，故强制 https）
+    _DAILY_HOSTS = (
+        'push2his.eastmoney.com',
+        '1.push2his.eastmoney.com',
+        '2.push2his.eastmoney.com',
+    )
+    _DAILY_UAS = (
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) '
+        'Chrome/121.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 '
+        '(KHTML, like Gecko) Version/17.0 Safari/605.1.15',
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0',
+    )
+
+    @staticmethod
+    def _parse_daily_klines(source) -> pd.DataFrame:
+        """把 East Money kline 接口返回（JSON 文本或 dict）解析成日 K DataFrame。
+
+        返回列：date / open / close / high / low / volume / money；解析失败返回空表。
+        """
+        if not source:
+            return pd.DataFrame()
+        try:
+            data = json.loads(source) if isinstance(source, str) else source
+        except (json.JSONDecodeError, TypeError):
+            return pd.DataFrame()
+        d = (data or {}).get('data') or {}
+        klines = d.get('klines') or []
+        if not klines:
+            return pd.DataFrame()
+
+        rows = []
+        for line in klines:
+            p = line.split(',')
+            # 日 K kline API 返回 11 列：date,open,close,high,low,volume,money,...
+            if len(p) < 7:
+                continue
+            try:
+                rows.append({
+                    'date': p[0],
+                    'open': float(p[1]),
+                    'close': float(p[2]),
+                    'high': float(p[3]),
+                    'low': float(p[4]),
+                    'volume': int(float(p[5])),
+                    'money': int(float(p[6])),
+                })
+            except (ValueError, IndexError):
+                continue
+        df = pd.DataFrame(rows)
+        if df.empty:
+            return df
+        df['date'] = pd.to_datetime(df['date']).dt.normalize()
+        df = df.drop_duplicates(subset=['date']).sort_values('date').reset_index(drop=True)
+        return df
+
+    @classmethod
+    def _board_daily_via_requests(cls, code: str, lmt: int, retries: int = 3) -> pd.DataFrame:
+        """普通 requests 直连东财日 K（https push2his，多 host/UA 轮换 + 重试）。
+
+        首选源：push2his 可达时 attempt0 即秒回；被 RST 时快速失败，由 15m 兜底接手。
+        重试 backoff 控制在 ~1.5s 内，避免整批板块在限流窗口里空等。
+        """
+        import time
+        import requests
+
+        params = {
+            'secid': f'90.{code}', 'klt': '101', 'fqt': '0',
+            'lmt': str(lmt), 'end': '20500101',
+            'fields1': 'f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13',
+            'fields2': 'f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61',
+        }
+        attempts = []
+        for i in range(retries):
+            host = cls._DAILY_HOSTS[i % len(cls._DAILY_HOSTS)]
+            ua = cls._DAILY_UAS[i % len(cls._DAILY_UAS)]
+            url = f'https://{host}/api/qt/stock/kline/get'
+            try:
+                resp = requests.get(url, params=params, timeout=15, headers={
+                    'User-Agent': ua,
+                    'Referer': 'https://quote.eastmoney.com/',
+                    'Accept': '*/*',
+                })
+                if resp.status_code != 200:
+                    attempts.append(f'{host} HTTP {resp.status_code}')
+                    time.sleep(0.5 * (i + 1))
+                    continue
+                df = cls._parse_daily_klines(resp.text)
+                if not df.empty:
+                    return df
+                attempts.append(f'{host} 空klines')
+            except requests.exceptions.RequestException as e:
+                attempts.append(f'{host} {type(e).__name__}')
+            if i < retries - 1:
+                time.sleep(0.5 * (i + 1))
+        logger.warning(f'[board_daily] {code} requests 直连未取到: {" | ".join(attempts)}')
+        return pd.DataFrame()
+
+    @classmethod
+    def _board_daily_from_15m(cls, code: str) -> pd.DataFrame:
+        """用本地已下载的 15m 数据聚合出日 K（完全绕开 push2his）。
+
+        日 K = 当日首根 15m 的 open、末根 close、最高 high、最低 low、成交量求和。
+        单位换算（已实测校准）：
+          - 15m volume 单位为"股"，日 K（与 push2his 一致）单位为"手"，故 volume/100
+          - money 单位一致，直接求和
+        仅覆盖 15m 文件的跨度（通常最近若干日），用于补日 K 的尾部缺口；
+        历史更早的部分已在 data_stock_daily 里，靠 upsert 不受影响。
+        """
+        try:
+            from App.routes.data.viewer_15m_route import (
+                _get_15m_dir, _find_15m_file, _read_15m_file)
+        except Exception as e:
+            logger.warning(f'[board_daily] 15m 兜底不可用（导入失败）: {e}')
+            return pd.DataFrame()
+        try:
+            fpath = _find_15m_file(_get_15m_dir(), code)
+            if not fpath:
+                logger.info(f'[board_daily] {code} 无 15m 文件，跳过 15m 兜底')
+                return pd.DataFrame()
+            df = _read_15m_file(fpath)
+            if df is None or df.empty or 'date' not in df.columns:
+                return pd.DataFrame()
+
+            df = df.copy()
+            df['date'] = pd.to_datetime(df['date'])
+            df = df.dropna(subset=['open', 'close', 'high', 'low'])
+            df = df.sort_values('date')
+            df['d'] = df['date'].dt.normalize()
+            has_money = 'money' in df.columns
+            df['volume'] = pd.to_numeric(df['volume'], errors='coerce').fillna(0)
+            if has_money:
+                df['money'] = pd.to_numeric(df['money'], errors='coerce').fillna(0)
+
+            rows = []
+            for d, g in df.groupby('d'):
+                rows.append({
+                    'date': d,
+                    'open': float(g['open'].iloc[0]),
+                    'close': float(g['close'].iloc[-1]),
+                    'high': float(g['high'].max()),
+                    'low': float(g['low'].min()),
+                    'volume': int(round(g['volume'].sum() / 100.0)),   # 股 → 手
+                    'money': int(round(g['money'].sum())) if has_money else 0,
+                })
+            out = pd.DataFrame(rows)
+            if out.empty:
+                return out
+            out['date'] = pd.to_datetime(out['date']).dt.normalize()
+            out = out.drop_duplicates(subset=['date']).sort_values('date').reset_index(drop=True)
+            return out
+        except Exception as e:
+            logger.warning(f'[board_daily] {code} 15m 聚合兜底失败: {e}')
+            return pd.DataFrame()
+
     @classmethod
     def board_daily(cls, code: str, days: int = 365) -> pd.DataFrame:
         """下载板块日 K（klt=101，fqt=0 不复权）。
+
+        数据源优先级：
+          1) requests 直连 https push2his（首选，权威全历史）
+          2) 本地 15m 聚合（绕开 push2his，补最近若干日缺口，最稳）
+          3) Selenium 轮换兜底（原路径，应对偶发拦截）
 
         必须从 East Money 走，因为：
           - pytdx get_index_bars 返回的板块指数被某种"成份股复权"算法处理过，
@@ -226,46 +387,33 @@ class BoardDownloader:
             pd.DataFrame 列：date / open / close / high / low / volume / money
         """
         lmt = max(min(int(days), 3000), 30)
+
+        # ---------- 首选：requests 直连 ----------
+        df = cls._board_daily_via_requests(code, lmt)
+        if not df.empty:
+            logger.info(f'[board_daily] {code} requests 成功 {len(df)} 条 (klt=101 fqt=0)')
+            return df
+
+        # ---------- 次选：本地 15m 聚合（绕开 push2his，最稳）----------
+        df = cls._board_daily_from_15m(code)
+        if not df.empty:
+            logger.info(f'[board_daily] {code} 15m 聚合兜底成功 {len(df)} 条（覆盖最近 {len(df)} 日）')
+            return df
+
+        # ---------- 兜底：Selenium 轮换 ----------
+        logger.warning(f'[board_daily] {code} requests 未取到，回退 Selenium')
         try:
             url = my_url('board_daily_kline').format(code, lmt)
-            logger.info(f'[board_daily] {code} URL: {url}')
             source = EastMoneyHttpClient.get_source_with_rotation(
                 url, 'board_daily_kline', force_selenium=True)
-            if not source:
-                logger.warning(f'[board_daily] {code} 无返回')
-                return pd.DataFrame()
-
-            data = json.loads(source) if isinstance(source, str) else source
-            d = (data or {}).get('data') or {}
-            klines = d.get('klines') or []
-            if not klines:
-                logger.warning(f'[board_daily] {code} klines 为空 (rc={data.get("rc")})')
-                return pd.DataFrame()
-
-            rows = []
-            for line in klines:
-                p = line.split(',')
-                # 日 K kline API 返回 11 列：date,open,close,high,low,volume,money,...
-                if len(p) < 7:
-                    continue
-                rows.append({
-                    'date': p[0],
-                    'open': float(p[1]),
-                    'close': float(p[2]),
-                    'high': float(p[3]),
-                    'low': float(p[4]),
-                    'volume': int(float(p[5])),
-                    'money': int(float(p[6])),
-                })
-            df = pd.DataFrame(rows)
-            if df.empty:
-                return df
-            df['date'] = pd.to_datetime(df['date']).dt.normalize()
-            df = df.drop_duplicates(subset=['date']).sort_values('date').reset_index(drop=True)
-            logger.info(f'[board_daily] {code} 成功 {len(df)} 条 (klt=101 fqt=0)')
+            df = cls._parse_daily_klines(source)
+            if not df.empty:
+                logger.info(f'[board_daily] {code} Selenium 兜底成功 {len(df)} 条')
+            else:
+                logger.warning(f'[board_daily] {code} Selenium 兜底也无数据')
             return df
         except Exception as e:
-            logger.exception(f'[board_daily] {code} 异常: {e}')
+            logger.exception(f'[board_daily] {code} Selenium 兜底异常: {e}')
             return pd.DataFrame()
 
     @classmethod

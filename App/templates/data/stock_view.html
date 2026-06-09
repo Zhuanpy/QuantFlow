@@ -499,7 +499,7 @@ async function loadOverview() {
     boardsEl.innerHTML = '<span style="color:#6b7280;font-size:.78rem;">所属板块:</span>' +
       boards.map(b => {
         const t = b.as_of ? `归属日期 ${b.as_of} · 点击查看板块趋势` : '点击查看板块趋势';
-        return `<a href="/board_trend/board/${b.board_code}" target="_blank"
+        return `<a href="/board_data/board?code=${b.board_code}" target="_blank"
                   title="${t}"
                   style="background:#eef2ff;color:#3730a3;padding:.18rem .55rem;border-radius:9999px;
                          font-size:.8rem;text-decoration:none;border:1px solid #c7d2fe;
@@ -861,10 +861,10 @@ async function load15m() {
      hovertemplate:'DEA %{y:.3f}<extra></extra>'},
     ...tradeTraces
   ], {
-    margin:{t:10,r:30,l:60,b:40},
+    margin:{t:10,r:30,l:60,b:18},
     xaxis:{
-      rangeslider:{visible:true, thickness:0.04, bgcolor:'#f9fafb', bordercolor:'#e5e7eb', borderwidth:1},
-      type:'category', tickangle:-45, nticks:12,
+      rangeslider:{visible:true, thickness:0.03, bgcolor:'#f9fafb', bordercolor:'#e5e7eb', borderwidth:1},
+      type:'category', tickangle:-45, nticks:12, tickfont:{size:10},
     },
     yaxis:{domain:[0.48,1.0], title:'价格', rangemode:'normal',
            ...(yRange ? {range: yRange, autorange: false} : {autorange: true})},

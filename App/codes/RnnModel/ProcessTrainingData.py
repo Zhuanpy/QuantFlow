@@ -432,7 +432,9 @@ class TrainingDataCalculate:
     def data_15m_third_calculate(self, data_15m):
 
         """ 第三次处理， 提取前周期信息 """
-        data_15m[Signal] = data_15m[Signal].astype(float)
+        # 上游以 pd.NA 初始化 Signal，残留的 pd.NA 用 to_numeric coerce 成 NaN，
+        # 避免 .astype(float) 逐元素 float(pd.NA) 报 "NAType"
+        data_15m[Signal] = pd.to_numeric(data_15m[Signal], errors='coerce')
 
         # 成交量相关参数的处理
         vol_parser = ['volume', Cycle1mVolMax1, Cycle1mVolMax5,

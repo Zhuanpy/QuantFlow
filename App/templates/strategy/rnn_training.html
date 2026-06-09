@@ -43,6 +43,21 @@
       <button id="btnStop" class="btn btn-danger" disabled>请求停止</button>
       <button id="btnRefresh" class="btn btn-secondary">刷新记录</button>
     </div>
+
+    <!-- 打开本地数据文件夹（仅本机有效） -->
+    <div style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center;margin-top:1rem;padding-top:1rem;border-top:1px dashed #e5e7eb;">
+      <span style="font-size:0.85rem;color:#6b7280;">📁 数据文件夹（按所选月份）：</span>
+      <select id="folderSubSelect" class="form-select" style="min-width:170px;">
+        <option value="root">RnnData/&lt;月份&gt;（根目录）</option>
+        <option value="train_data" selected>train_data（.npy 训练样本）</option>
+        <option value="model">model（.h5 模型）</option>
+        <option value="weight">weight（权重）</option>
+        <option value="json">json（标准化参数）</option>
+        <option value="1m">1m（原始 1 分钟数据）</option>
+      </select>
+      <button id="btnOpenFolder" class="btn btn-secondary">打开文件夹</button>
+      <code id="folderPath" style="font-size:0.78rem;color:#9ca3af;background:#f9fafb;padding:.15rem .4rem;border-radius:4px;word-break:break-all;"></code>
+    </div>
   </div>
 
   <!-- ========== 进度区 ========== -->
@@ -52,6 +67,8 @@
       <div><div style="color:#6b7280;font-size:0.85rem;">任务类型</div><div id="stKind" style="font-weight:600;">-</div></div>
       <div><div style="color:#6b7280;font-size:0.85rem;">状态</div><div id="stStatus" style="font-weight:600;">未开始</div></div>
       <div><div style="color:#6b7280;font-size:0.85rem;">月份</div><div id="stMonth" style="font-weight:600;">-</div></div>
+      <div><div style="color:#6b7280;font-size:0.85rem;">已处理</div><div id="stProcessed" style="font-weight:600;">-</div></div>
+      <div><div style="color:#6b7280;font-size:0.85rem;">已用时</div><div id="stElapsed" style="font-weight:600;">-</div></div>
       <div><div style="color:#6b7280;font-size:0.85rem;">开始时间</div><div id="stStarted" style="font-weight:600;">-</div></div>
       <div><div style="color:#6b7280;font-size:0.85rem;">结束时间</div><div id="stFinished" style="font-weight:600;">-</div></div>
     </div>
@@ -93,13 +110,29 @@
         <tbody id="recordsBody"><tr><td colspan="7" style="text-align:center;padding:1rem;color:#9ca3af;">加载中…</td></tr></tbody>
       </table>
     </div>
-    <div id="recordsCount" style="margin-top:0.5rem;font-size:0.85rem;color:#6b7280;"></div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:0.75rem;flex-wrap:wrap;gap:0.5rem;">
+      <div id="recordsCount" style="font-size:0.85rem;color:#6b7280;"></div>
+      <div style="display:flex;align-items:center;gap:0.4rem;font-size:0.85rem;color:#6b7280;">
+        <label>每页</label>
+        <select id="pageSizeSelect" class="form-select" style="width:80px;">
+          <option value="20" selected>20</option>
+          <option value="50">50</option>
+          <option value="100">100</option>
+          <option value="200">200</option>
+        </select>
+        <button id="btnPrevPage" class="btn btn-secondary" style="padding:.25rem .6rem;" disabled>上一页</button>
+        <span id="pageInfo">第 1 / 1 页</span>
+        <button id="btnNextPage" class="btn btn-secondary" style="padding:.25rem .6rem;" disabled>下一页</button>
+      </div>
+    </div>
   </div>
 </div>
 
 <script>
 const API = '/RnnStrategies/api';
 let pollTimer = null;
+let recPage = 1;
+let recTotalPages = 1;
 
 async function fetchJson(url, opts) {
   const r = await fetch(url, opts);
@@ -130,9 +163,20 @@ async function startTrain(kind) {
   const month = getSelectedMonth();
   if (!month) { alert('请选择/输入月份'); return; }
   const pool_type = document.getElementById('poolTypeSelect').value;
+  const poolLabel = document.getElementById('poolTypeSelect').selectedOptions[0].text;
   const body = { kind, month };
   if (kind === 'data') body.start_date = document.getElementById('startDateInput').value;
   if (pool_type) body.pool_type = pool_type;
+
+  // 重任务，启动前确认，把关键参数摆给用户看
+  const lines = [
+    `即将执行：${KIND_LABEL[kind] || kind}`,
+    `月份：${month}`,
+    `股票范围：${poolLabel}`,
+  ];
+  if (kind === 'data') lines.push(`起始日期：${body.start_date}`);
+  if (kind === 'train') lines.push('注意：训练为重计算任务，期间无法中途打断单只模型，可能耗时较长。');
+  if (!confirm(lines.join('\n'))) return;
 
   const j = await fetchJson(`${API}/start_train`, {
     method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body)
@@ -156,18 +200,39 @@ function stopPolling() {
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
 }
 
+const KIND_LABEL = { data: '① 生成训练数据', train: '② 训练模型', check: '③ 历史检查' };
+const STATUS_COLOR = { '进行中': '#2563eb', '已完成': '#16a34a', '已停止': '#d97706', '失败': '#dc2626', '未开始': '#6b7280' };
+
+function fmtElapsed(startStr, endStr) {
+  if (!startStr) return '-';
+  const start = new Date(startStr.replace(' ', 'T'));
+  if (isNaN(start)) return '-';
+  const end = endStr ? new Date(endStr.replace(' ', 'T')) : new Date();
+  let sec = Math.max(0, Math.floor((end - start) / 1000));
+  const h = Math.floor(sec / 3600); sec -= h * 3600;
+  const m = Math.floor(sec / 60); sec -= m * 60;
+  return (h ? `${h}时` : '') + (h || m ? `${m}分` : '') + `${sec}秒`;
+}
+
 async function refreshStatus() {
   const j = await fetchJson(`${API}/train_status`);
   if (!j.success) return;
   const s = j.data;
-  document.getElementById('stKind').innerText = s.kind || '-';
-  document.getElementById('stStatus').innerText = s.status || '-';
+  document.getElementById('stKind').innerText = KIND_LABEL[s.kind] || s.kind || '-';
+  const stStatus = document.getElementById('stStatus');
+  stStatus.innerText = s.status || '-';
+  stStatus.style.color = STATUS_COLOR[s.status] || '#1f2937';
   document.getElementById('stMonth').innerText = s.month || '-';
+  document.getElementById('stProcessed').innerText = s.total ? `${s.processed} / ${s.total}` : '-';
+  document.getElementById('stElapsed').innerText = fmtElapsed(s.started_at, s.finished_at);
   document.getElementById('stStarted').innerText = s.started_at || '-';
   document.getElementById('stFinished').innerText = s.finished_at || '-';
-  const pct = (s.progress || 0) + '%';
+
+  // 有 total 时按 已处理/总数 算百分比，否则退回后端 progress
+  const ratio = s.total ? (s.processed / s.total * 100) : (s.progress || 0);
+  const pct = Math.round(ratio) + '%';
   document.getElementById('stBar').style.width = pct;
-  document.getElementById('stProgressText').innerText = pct;
+  document.getElementById('stProgressText').innerText = s.total ? `${pct}（${s.processed}/${s.total}）` : pct;
   document.getElementById('stMessage').innerText = s.message || '';
 
   const running = s.status === '进行中';
@@ -176,15 +241,19 @@ async function refreshStatus() {
   document.getElementById('btnTrainStep').disabled = running;
   document.getElementById('btnCheckStep').disabled = running;
 
+  if (running && !pollTimer) startPolling();
   if (!running && pollTimer) { stopPolling(); loadRecords(); }
 }
 
 async function loadRecords() {
   const month = document.getElementById('recordMonthFilter').value;
   const status = document.getElementById('recordStatusFilter').value;
+  const pageSize = document.getElementById('pageSizeSelect').value;
   const params = new URLSearchParams();
   if (month) params.set('month', month);
   if (status) params.set('status', status);
+  params.set('page', recPage);
+  params.set('page_size', pageSize);
   const j = await fetchJson(`${API}/training_records?${params}`);
   const tbody = document.getElementById('recordsBody');
   if (!j.success) { tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;padding:1rem;color:#dc2626;">${j.message||'加载失败'}</td></tr>`; return; }
@@ -202,7 +271,21 @@ async function loadRecords() {
         <td style="padding:.5rem;color:#6b7280;font-size:0.8rem;">${r.model_check_timing || r.model_create_timing || r.model_data_timing || ''}</td>
       </tr>`).join('');
   }
-  document.getElementById('recordsCount').innerText = `共 ${j.count} 条`;
+  // 三步骤成功数汇总（后端在整个过滤集上统计，分页也准确）
+  const sm = j.summary || {};
+  const tot = sm.total ?? j.count;
+  document.getElementById('recordsCount').innerHTML =
+    `共 ${tot} 条　|　数据 <b style="color:#16a34a;">${sm.data_success ?? '-'}</b>/${tot}`
+    + `　建模 <b style="color:#16a34a;">${sm.create_success ?? '-'}</b>/${tot}`
+    + `　检查 <b style="color:#16a34a;">${sm.check_success ?? '-'}</b>/${tot}`;
+
+  // 分页控件
+  const pg = j.pagination || { page: 1, total_pages: 1 };
+  recPage = pg.page || 1;
+  recTotalPages = pg.total_pages || 1;
+  document.getElementById('pageInfo').innerText = `第 ${recPage} / ${recTotalPages} 页`;
+  document.getElementById('btnPrevPage').disabled = recPage <= 1;
+  document.getElementById('btnNextPage').disabled = recPage >= recTotalPages;
 }
 
 function badge(s) {
@@ -216,9 +299,59 @@ document.getElementById('btnDataStep').onclick  = () => startTrain('data');
 document.getElementById('btnTrainStep').onclick = () => startTrain('train');
 document.getElementById('btnCheckStep').onclick = () => startTrain('check');
 document.getElementById('btnStop').onclick = stopTrain;
-document.getElementById('btnRefresh').onclick = loadRecords;
-document.getElementById('recordMonthFilter').onchange = loadRecords;
-document.getElementById('recordStatusFilter').onchange = loadRecords;
+document.getElementById('btnRefresh').onclick = () => { refreshStatus(); loadRecords(); };
+
+// ---- 打开本地数据文件夹 ----
+async function refreshFolderPath() {
+  const month = getSelectedMonth();
+  const sub = document.getElementById('folderSubSelect').value;
+  const el = document.getElementById('folderPath');
+  if (!month) { el.innerText = '（先选月份）'; el.style.color = '#9ca3af'; return; }
+  const j = await fetchJson(`${API}/data_dir?month=${encodeURIComponent(month)}`);
+  if (j.success && j.dirs && j.dirs[sub]) {
+    const d = j.dirs[sub];
+    el.innerText = d.path + (d.exists ? '' : '（未生成）');
+    el.style.color = d.exists ? '#6b7280' : '#dc2626';
+  } else {
+    el.innerText = '';
+  }
+}
+
+async function openFolder() {
+  const month = getSelectedMonth();
+  if (!month) { alert('请先选择/输入月份'); return; }
+  const sub = document.getElementById('folderSubSelect').value;
+  const j = await fetchJson(`${API}/open_folder`, {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ month, sub })
+  });
+  if (!j.success) alert(j.message || '打开失败');
+}
+
+document.getElementById('btnOpenFolder').onclick = openFolder;
+document.getElementById('folderSubSelect').onchange = refreshFolderPath;
+document.getElementById('monthSelect').addEventListener('change', refreshFolderPath);
+document.getElementById('monthInput').addEventListener('input', refreshFolderPath);
+document.getElementById('recordMonthFilter').onchange = () => { recPage = 1; loadRecords(); };
+document.getElementById('recordStatusFilter').onchange = () => { recPage = 1; loadRecords(); };
+document.getElementById('pageSizeSelect').onchange = () => { recPage = 1; loadRecords(); };
+document.getElementById('btnPrevPage').onclick = () => { if (recPage > 1) { recPage--; loadRecords(); } };
+document.getElementById('btnNextPage').onclick = () => { if (recPage < recTotalPages) { recPage++; loadRecords(); } };
+
+// 从 rnn_data_page 分步入口跳转过来时，高亮对应步骤按钮（不自动执行）
+function highlightStepFromHash() {
+  const map = { '#data': 'btnDataStep', '#train': 'btnTrainStep', '#check': 'btnCheckStep' };
+  const id = map[location.hash];
+  if (!id) return;
+  const btn = document.getElementById(id);
+  if (!btn) return;
+  btn.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  const prev = btn.style.boxShadow;
+  btn.style.boxShadow = '0 0 0 3px #fbbf24';
+  btn.style.transition = 'box-shadow .3s';
+  setTimeout(() => { btn.style.boxShadow = prev; }, 2200);
+}
+window.addEventListener('hashchange', highlightStepFromHash);
 
 (async () => {
   await loadMonths();
@@ -227,6 +360,8 @@ document.getElementById('recordStatusFilter').onchange = loadRecords;
   // 启动时如果有正在运行的任务，自动开始轮询
   const j = await fetchJson(`${API}/train_status`);
   if (j.success && j.data.status === '进行中') startPolling();
+  highlightStepFromHash();
+  refreshFolderPath();
 })();
 </script>
 {% endblock %}

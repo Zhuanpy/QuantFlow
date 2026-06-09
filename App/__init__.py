@@ -168,6 +168,24 @@ def register_blueprints(app):
         print(f"警告: 无法导入 BoardTrendScoring 蓝图: {e}")
 
     try:
+        from App.routes.strategy.BoardData import board_data_bp
+        app.register_blueprint(board_data_bp)
+    except ImportError as e:
+        print(f"警告: 无法导入 BoardData 蓝图: {e}")
+
+    try:
+        from App.routes.strategy.BoardPreference import board_pref_bp
+        app.register_blueprint(board_pref_bp)
+    except ImportError as e:
+        print(f"警告: 无法导入 BoardPreference 蓝图: {e}")
+
+    try:
+        from App.routes.strategy.BoardOverview import board_overview_bp
+        app.register_blueprint(board_overview_bp)
+    except ImportError as e:
+        print(f"警告: 无法导入 BoardOverview 蓝图: {e}")
+
+    try:
         from App.routes.strategy.StockTrendScoring import stock_trend_bp
         app.register_blueprint(stock_trend_bp)
     except ImportError as e:

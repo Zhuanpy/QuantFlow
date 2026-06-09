@@ -79,8 +79,29 @@
       <div style="color:#6b7280;font-size:.78rem;margin-bottom:.4rem;">持仓详情</div>
       <div id="holdingBody" style="color:#9ca3af;">—</div>
     </div>
-    <div class="card" id="planPanel" style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:.9rem 1rem;">
-      <div style="color:#6b7280;font-size:.78rem;margin-bottom:.4rem;">买卖标准 vs 现价</div>
+    <div class="card" id="planPanel" style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:.9rem 1rem;position:relative;">
+      <div style="color:#6b7280;font-size:.78rem;margin-bottom:.4rem;display:flex;align-items:center;gap:.35rem;">
+        买卖标准 vs 现价
+        <span onclick="toggleSlTpHelp()" title="点击查看止盈止损规则"
+              style="display:inline-flex;align-items:center;justify-content:center;width:1.05rem;height:1.05rem;border-radius:9999px;background:#4f46e5;color:#fff;font-size:.72rem;font-weight:700;cursor:pointer;user-select:none;">!</span>
+      </div>
+      <!-- 规则说明浮层（默认隐藏，点 ! 切换） -->
+      <div id="slTpHelp" style="display:none;position:absolute;top:2.2rem;left:.5rem;right:.5rem;z-index:30;background:#fff;border:1px solid #c7d2fe;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);padding:.8rem .9rem;font-size:.8rem;line-height:1.6;color:#374151;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.4rem;">
+          <b style="color:#4f46e5;">止盈止损规则</b>
+          <span onclick="toggleSlTpHelp()" style="cursor:pointer;color:#9ca3af;font-size:1rem;line-height:1;">×</span>
+        </div>
+        <div style="margin-bottom:.4rem;"><b>建议口径（按分布建议按钮）</b>：以你的<b>成本价</b>为基准，用该股 15m 历史「周期振幅」分布的<b>中位数</b>：</div>
+        <div style="font-family:monospace;background:#f9fafb;border-radius:.3rem;padding:.4rem .5rem;margin-bottom:.4rem;">
+          止盈 = 成本 × (1 + 上涨振幅中位数)<br>
+          止损 = 成本 × (1 − 下跌振幅中位数)
+        </div>
+        <div style="margin-bottom:.3rem;">• <b>振幅</b>口径 = 周期内极值(上涨 high.max / 下跌 low.min)相对周期起点的摆动幅度，只统计已完成周期。</div>
+        <div style="margin-bottom:.3rem;">• 中位数比均值更稳健，不易被个别极端周期拉偏。</div>
+        <div style="margin-bottom:.3rem;">• 建议值只是<b>起点</b>，可手动改输入框再保存。</div>
+        <div style="margin-bottom:.3rem;">• 现价跨过时显示 <span style="color:#15803d;font-weight:600;">⚠ 触发止损</span> / <span style="color:#b91c1c;font-weight:600;">★ 触发止盈</span>。</div>
+        <div>• 保存后存在该股专属计划里，<b>不会被成交导入清掉</b>。</div>
+      </div>
       <div id="planBody" style="color:#9ca3af;">—</div>
     </div>
   </div>
@@ -237,9 +258,24 @@ async function loadOverview() {
 
   // 交易状态 badge
   renderTradeBadge(d.trade_info);
-  // 焦点面板：持仓 / 计划比对
-  renderHoldingPanel(d.trade_info, d.latest_close);
-  renderPlanPanel(d.trade_info, d.latest_close);
+  // 记录持仓信息 + 日线收盘（作为现价回退值），再用最新可得价重画焦点面板
+  TRADE_INFO = d.trade_info;
+  LATEST_DAILY_CLOSE = d.latest_close;
+  renderTradePanels();
+}
+
+// 持仓/计划面板的"现价"：盘中优先用 live K 线最新一根的 close，没有时回退日线收盘
+let TRADE_INFO = null;
+let LATEST_DAILY_CLOSE = null;
+let LATEST_LIVE_CLOSE = null;
+let UP_AMP_MEDIAN = null;   // 上涨周期振幅中位数（小数，如 0.085）
+let DN_AMP_MEDIAN = null;   // 下跌周期振幅中位数
+function curPrice() {
+  return LATEST_LIVE_CLOSE != null ? LATEST_LIVE_CLOSE : LATEST_DAILY_CLOSE;
+}
+function renderTradePanels() {
+  renderHoldingPanel(TRADE_INFO, curPrice());
+  renderPlanPanel(TRADE_INFO, curPrice());
 }
 
 function renderTradeBadge(t) {
@@ -257,15 +293,21 @@ function renderHoldingPanel(t, latestClose) {
     el.innerHTML = '<span style="color:#9ca3af;font-size:.88rem;">未持仓 — 盘中视角对持仓股最有价值，建议先在 trade_plan 建仓后再用</span>';
     return;
   }
-  const pnl = t.unrealized_pnl;
-  const rate = t.unrealized_return_rate;
+  // 浮盈用当前价(现价)实时重算，保证和"现价"一致；不再用服务端按日线收盘算的旧值
+  const avg = t.avg_cost;
+  let pnl = null, rate = null;
+  if (t.quantity && avg && latestClose != null) {
+    pnl = (latestClose - avg) * t.quantity;
+    rate = (latestClose - avg) / avg;
+  }
   const pnlCol = pnl == null ? '#6b7280' : pnl > 0 ? '#b91c1c' : pnl < 0 ? '#15803d' : '#6b7280';
   const sign = pnl != null && pnl > 0 ? '+' : '';
+  const live = (LATEST_LIVE_CLOSE != null);
   el.innerHTML = `
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:.4rem .75rem;font-size:.86rem;">
       <div><span style="color:#6b7280;">数量</span><br><b style="font-family:monospace;">${t.quantity}</b> 股</div>
-      <div><span style="color:#6b7280;">均价</span><br><b style="font-family:monospace;">${t.avg_cost != null ? t.avg_cost.toFixed(2) : '—'}</b></div>
-      <div><span style="color:#6b7280;">现价</span><br><b style="font-family:monospace;">${latestClose != null ? latestClose.toFixed(2) : '—'}</b></div>
+      <div><span style="color:#6b7280;">均价</span><br><b style="font-family:monospace;">${avg != null ? avg.toFixed(2) : '—'}</b></div>
+      <div><span style="color:#6b7280;">现价 ${live ? '<span style="color:#ea580c;font-size:.7rem;">·盘中</span>' : '<span style="color:#9ca3af;font-size:.7rem;">·日线收盘</span>'}</span><br><b style="font-family:monospace;">${latestClose != null ? latestClose.toFixed(2) : '—'}</b></div>
       <div><span style="color:#6b7280;">浮盈</span><br>
         <b style="color:${pnlCol};font-family:monospace;">${pnl != null ? sign + pnl.toFixed(2) : '—'}</b>
         ${rate != null ? ` <span style="color:${pnlCol};font-size:.78rem;">(${sign}${(rate*100).toFixed(2)}%)</span>` : ''}
@@ -275,38 +317,94 @@ function renderHoldingPanel(t, latestClose) {
 
 function renderPlanPanel(t, latestClose) {
   const el = document.getElementById('planBody');
-  const p = t && t.active_plan;
-  if (!p) {
-    el.innerHTML = '<span style="color:#9ca3af;font-size:.88rem;">无 active TradePlan — 想在盘中比对买卖标准，请先创建 trade_plan</span>';
-    return;
-  }
+  const p = (t && t.active_plan) || {};
   const cur = latestClose;
-  function row(label, target, kind) {
-    if (target == null) return `<div style="display:flex;justify-content:space-between;color:#9ca3af;"><span>${label}</span><span>—</span></div>`;
-    const diff = cur != null ? (cur - target) / target * 100 : null;
-    let stateHtml = '';
-    if (cur != null) {
-      if (kind === 'entry') {
-        // 现价 vs 入场价：低于入场价（更接近触发）显著
-        stateHtml = cur <= target ? '<span style="color:#b91c1c;font-weight:600;">● 已触及/低于</span>' : '';
-      } else if (kind === 'sl') {
-        stateHtml = cur <= target ? '<span style="color:#15803d;font-weight:600;">⚠ 触发止损</span>' : '';
-      } else if (kind === 'tp') {
-        stateHtml = cur >= target ? '<span style="color:#b91c1c;font-weight:600;">★ 触发止盈</span>' : '';
-      }
-    }
-    const sign = diff != null && diff > 0 ? '+' : '';
-    const diffStr = diff != null ? ` <span style="color:#9ca3af;font-size:.76rem;">(现 ${sign}${diff.toFixed(2)}%)</span>` : '';
-    return `<div style="display:flex;justify-content:space-between;align-items:center;font-size:.86rem;padding:.18rem 0;">
-      <span style="color:#6b7280;">${label}</span>
-      <span><b style="font-family:monospace;">${target.toFixed(2)}</b>${diffStr} ${stateHtml}</span>
-    </div>`;
+  const cost = (t && t.avg_cost != null) ? t.avg_cost : p.entry_price;
+
+  // 现价 vs 目标价的对比 + 触发提示
+  function cmp(target, kind) {
+    if (target == null || cur == null) return '';
+    const diff = (cur - target) / target * 100;
+    const sign = diff > 0 ? '+' : '';
+    let state = '';
+    if (kind === 'sl' && cur <= target) state = ' <span style="color:#15803d;font-weight:600;">⚠ 触发止损</span>';
+    if (kind === 'tp' && cur >= target) state = ' <span style="color:#b91c1c;font-weight:600;">★ 触发止盈</span>';
+    return ` <span style="color:#9ca3af;font-size:.74rem;">(现 ${sign}${diff.toFixed(2)}%)</span>${state}`;
   }
+  const slVal = p.stop_loss_price != null ? p.stop_loss_price : '';
+  const tpVal = p.take_profit_price != null ? p.take_profit_price : '';
+  const costStr = cost != null ? Number(cost).toFixed(2) : '—';
+
+  // 建议提示文字
+  const sugTxt = (UP_AMP_MEDIAN != null && DN_AMP_MEDIAN != null && cost != null)
+    ? `分布中位：上涨 ${(UP_AMP_MEDIAN*100).toFixed(1)}% / 下跌 ${(DN_AMP_MEDIAN*100).toFixed(1)}%`
+    : '分布数据加载中…';
+
   el.innerHTML = `
-    <div style="font-size:.78rem;color:#6b7280;margin-bottom:.3rem;">plan #${p.plan_id} · ${p.status} · ${p.trade_mode}</div>
-    ${row('入场价', p.entry_price, 'entry')}
-    ${row('止损价', p.stop_loss_price, 'sl')}
-    ${row('止盈价', p.take_profit_price, 'tp')}`;
+    <div style="font-size:.78rem;color:#6b7280;margin-bottom:.4rem;">成本价 <b style="font-family:monospace;color:#374151;">${costStr}</b>　现价 <b style="font-family:monospace;color:#374151;">${cur != null ? cur.toFixed(2) : '—'}</b></div>
+    <div style="display:flex;align-items:center;gap:.4rem;margin-bottom:.35rem;">
+      <span style="color:#6b7280;font-size:.84rem;width:3.2em;">止损价</span>
+      <input id="slInput" type="number" step="0.01" value="${slVal}" placeholder="—"
+             style="width:5.5em;padding:.2rem .35rem;border:1px solid #d1d5db;border-radius:.3rem;font-family:monospace;font-size:.84rem;">
+      <span id="slCmp" style="font-size:.8rem;">${cmp(p.stop_loss_price, 'sl')}</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:.4rem;margin-bottom:.5rem;">
+      <span style="color:#6b7280;font-size:.84rem;width:3.2em;">止盈价</span>
+      <input id="tpInput" type="number" step="0.01" value="${tpVal}" placeholder="—"
+             style="width:5.5em;padding:.2rem .35rem;border:1px solid #d1d5db;border-radius:.3rem;font-family:monospace;font-size:.84rem;">
+      <span id="tpCmp" style="font-size:.8rem;">${cmp(p.take_profit_price, 'tp')}</span>
+    </div>
+    <div style="display:flex;gap:.4rem;align-items:center;">
+      <button onclick="suggestSlTp()" type="button"
+              style="padding:.25rem .6rem;border:1px solid #4f46e5;background:#eef2ff;color:#4f46e5;border-radius:.3rem;font-size:.78rem;cursor:pointer;">按分布建议</button>
+      <button onclick="saveSlTp()" type="button"
+              style="padding:.25rem .6rem;border:1px solid #2563eb;background:#2563eb;color:#fff;border-radius:.3rem;font-size:.78rem;cursor:pointer;">保存</button>
+      <span id="slTpMsg" style="font-size:.76rem;color:#9ca3af;"></span>
+    </div>
+    <div style="font-size:.72rem;color:#9ca3af;margin-top:.35rem;">${sugTxt}</div>`;
+}
+
+// 止盈止损规则说明浮层开关
+function toggleSlTpHelp() {
+  const el = document.getElementById('slTpHelp');
+  if (el) el.style.display = (el.style.display === 'none' || !el.style.display) ? 'block' : 'none';
+}
+
+// 按分布建议：以成本价为基准，止盈=成本×(1+上涨振幅中位)，止损=成本×(1−下跌振幅中位)
+function suggestSlTp() {
+  const cost = (TRADE_INFO && TRADE_INFO.avg_cost != null)
+    ? TRADE_INFO.avg_cost
+    : (TRADE_INFO && TRADE_INFO.active_plan ? TRADE_INFO.active_plan.entry_price : null);
+  const msg = document.getElementById('slTpMsg');
+  if (cost == null) { if (msg) msg.innerHTML = '<span style="color:#dc2626;">无成本价，无法建议</span>'; return; }
+  if (UP_AMP_MEDIAN == null || DN_AMP_MEDIAN == null) { if (msg) msg.innerHTML = '<span style="color:#dc2626;">分布数据未就绪</span>'; return; }
+  const tp = cost * (1 + UP_AMP_MEDIAN);
+  const sl = cost * (1 - DN_AMP_MEDIAN);
+  document.getElementById('slInput').value = sl.toFixed(2);
+  document.getElementById('tpInput').value = tp.toFixed(2);
+  if (msg) msg.innerHTML = `<span style="color:#4f46e5;">已填建议：止损 ${sl.toFixed(2)} / 止盈 ${tp.toFixed(2)}</span>`;
+}
+
+async function saveSlTp() {
+  const sl = document.getElementById('slInput').value;
+  const tp = document.getElementById('tpInput').value;
+  const msg = document.getElementById('slTpMsg');
+  if (msg) msg.innerText = '保存中…';
+  try {
+    const r = await fetch(`${API}/sl_tp`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ stop_loss_price: sl, take_profit_price: tp }),
+    });
+    const j = await r.json();
+    if (j.success) {
+      if (msg) msg.innerHTML = '<span style="color:#15803d;">✓ 已保存</span>';
+      loadOverview();   // 重新拉取，trade_info.active_plan 会带上新止损止盈
+    } else {
+      if (msg) msg.innerHTML = `<span style="color:#dc2626;">失败：${j.message || ''}</span>`;
+    }
+  } catch (e) {
+    if (msg) msg.innerHTML = `<span style="color:#dc2626;">请求异常：${e.message}</span>`;
+  }
 }
 
 // ---------- 15m K线（与 stock_view 同款，URL 自带 mode=live） ----------
@@ -327,6 +425,10 @@ async function load15m() {
     (segs.length ? `&nbsp;|&nbsp;波段 <span style="color:#dc2626;font-weight:600;">■ 涨 ${up}</span> / <span style="color:#16a34a;font-weight:600;">■ 跌 ${dn}</span>` : '');
 
   renderTrendPanel(j.current_trend);
+
+  // 用 live K 线最新一根 close 作为"现价"，刷新持仓/计划面板（盘中实时价）
+  LATEST_LIVE_CLOSE = data.length ? data[data.length - 1].close : null;
+  renderTradePanels();
 
   const x = data.map(r => r.date);
   const sname = data.map(r => r.signal_name || '—');
@@ -356,6 +458,56 @@ async function load15m() {
     yRange = [lo - pad, hi + pad];
   }
 
+  // ---- 历史买卖标注：吸附到对应 15m K 线，画在蜡线外侧 + 竖虚线（同收盘后页） ----
+  const tradeTraces = [];
+  const tradeShapes = [];
+  const BUY_C = '#2563eb';   // 蓝 = 买入
+  const SELL_C = '#ea580c';  // 橙 = 卖出
+  try {
+    const tj = await fetchJson(`${API}/trades`);
+    if (tj && tj.success && tj.data && tj.data.length && data.length) {
+      const barTs = data.map(r => new Date(r.date.replace(' ', 'T')).getTime());
+      const firstT = barTs[0], lastT = barTs[barTs.length - 1];
+      const span = (yRange ? yRange[1] - yRange[0] : 1);
+      const off = span * 0.045;
+      let yLoMark = Infinity, yHiMark = -Infinity;
+      const mk = () => ({ x: [], y: [], txt: [] });
+      const buy = mk(), sell = mk();
+      tj.data.forEach(t => {
+        if (t.price == null) return;
+        const tt = new Date(t.time.replace(' ', 'T')).getTime();
+        if (isNaN(tt) || tt < firstT - 9e5 || tt > lastT) return;
+        let bi = barTs.findIndex(b => b >= tt);
+        if (bi < 0) bi = barTs.length - 1;
+        const bar = data[bi];
+        const isBuy = t.side === 'buy';
+        const my = isBuy ? (bar.low > 0 ? bar.low : t.price) - off
+                         : (bar.high > 0 ? bar.high : t.price) + off;
+        yLoMark = Math.min(yLoMark, my); yHiMark = Math.max(yHiMark, my);
+        const g = isBuy ? buy : sell;
+        g.x.push(x[bi]);
+        g.y.push(my);
+        g.txt.push(`${isBuy ? '买入' : '卖出'} @ ${t.price}<br>${t.quantity ?? '—'} 股<br>${t.time}`);
+        tradeShapes.push({
+          type: 'line', xref: 'x', yref: 'paper', x0: bi, x1: bi,
+          y0: 0.48, y1: 1.0,
+          line: { color: isBuy ? BUY_C : SELL_C, width: 1, dash: 'dot' },
+          opacity: 0.5, layer: 'below',
+        });
+      });
+      const mkTrace = (g, name, color, sym) => ({
+        type: 'scatter', mode: 'markers', x: g.x, y: g.y, name,
+        xaxis: 'x', yaxis: 'y', text: g.txt, hoverinfo: 'text',
+        marker: { color, size: 16, symbol: sym, line: { color: '#fff', width: 2 } },
+      });
+      if (buy.x.length) tradeTraces.push(mkTrace(buy, '● 买入', BUY_C, 'triangle-up'));
+      if (sell.x.length) tradeTraces.push(mkTrace(sell, '● 卖出', SELL_C, 'triangle-down'));
+      if (yRange && isFinite(yLoMark)) {
+        yRange = [Math.min(yRange[0], yLoMark - off), Math.max(yRange[1], yHiMark + off)];
+      }
+    }
+  } catch (e) { /* 无交易记录或表不存在时静默跳过 */ }
+
   const dif = data.map(r => r.dif), dea = data.map(r => r.dea), macd = data.map(r => r.macd);
   const macdColors = macd.map(v => v == null ? '#cbd5e1' : (v >= 0 ? '#dc2626' : '#16a34a'));
   const emaShort = data.map(r => r.ema_short), emaMid = data.map(r => r.ema_mid), emaLong = data.map(r => r.ema_long);
@@ -375,6 +527,7 @@ async function load15m() {
     {type:'bar', x, y:macd, name:'MACD', xaxis:'x', yaxis:'y3', marker:{color:macdColors}, showlegend:false, hovertemplate:'MACD %{y:.3f}<extra></extra>'},
     {type:'scatter', mode:'lines', x, y:dif, name:'DIF', xaxis:'x', yaxis:'y3', line:{color:'#2563eb', width:1.2}, connectgaps:false, hovertemplate:'DIF %{y:.3f}<extra></extra>'},
     {type:'scatter', mode:'lines', x, y:dea, name:'DEA', xaxis:'x', yaxis:'y3', line:{color:'#f59e0b', width:1.2}, connectgaps:false, hovertemplate:'DEA %{y:.3f}<extra></extra>'},
+    ...tradeTraces
   ], {
     margin:{t:10,r:30,l:60,b:40},
     xaxis:{rangeslider:{visible:true, thickness:0.04, bgcolor:'#fff7ed', bordercolor:'#fed7aa', borderwidth:1}, type:'category', tickangle:-45, nticks:12},
@@ -383,7 +536,7 @@ async function load15m() {
     yaxis3:{domain:[0.0,0.28], title:'MACD', zeroline:true, zerolinecolor:'#9ca3af', zerolinewidth:1},
     showlegend:true,
     legend:{orientation:'h', y:1.02, x:0},
-    shapes,
+    shapes: shapes.concat(tradeShapes),
   }, {responsive:true});
 }
 
@@ -470,6 +623,17 @@ async function loadCycles() {
              ampCur && ampCur.direction > 0 ? ampCur : null, '#dc2626', ampOpt);
   renderDist(ampAll.filter(c => c.direction < 0), ampDnEl, ampDnInfo,
              ampCur && ampCur.direction < 0 ? ampCur : null, '#16a34a', ampOpt);
+
+  // 存上涨/下跌振幅中位数（仅已完成周期）供"按分布建议"用
+  const median = arr => {
+    const s = arr.filter(v => v != null).sort((a, b) => a - b);
+    if (!s.length) return null;
+    const m = Math.floor(s.length / 2);
+    return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+  };
+  UP_AMP_MEDIAN = median(ampAll.filter(c => c.direction > 0 && c.completed === true).map(c => c.amplitude_extreme));
+  DN_AMP_MEDIAN = median(ampAll.filter(c => c.direction < 0 && c.completed === true).map(c => c.amplitude_extreme));
+  renderTradePanels();  // 中位数到位后刷新计划面板（建议值可算了）
 }
 
 // 单方向某指标的正态分布：对 subset 拟合 + 直方图 + 标当前周期

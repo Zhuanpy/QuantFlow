@@ -32,6 +32,7 @@
             font-size: 0.75rem; font-weight: 600; }
 .hr-badge.holding  { background: #fee2e2; color: #991b1b; }
 .hr-badge.watching { background: #dbeafe; color: #1e40af; }
+.hr-badge.board    { background: #dcfce7; color: #166534; }
 .hr-muted { color: #cbd5e1; }
 .hr-section { color: #475569; font-weight: 600; font-size: 0.85rem;
               padding: 0.5rem 0.9rem; background: #f8fafc; }
@@ -95,9 +96,33 @@ function fmtInt(v) {
 }
 function rowHtml(it) {
     const code = it.stock_code;
-    const url  = `/trade/holdings/realtime/${code}`;
+    const isHold  = it.kind === 'holding';
+    const isBoard = it.kind === 'board';
+
+    // 板块：链到板块详情页（已有日K/30m/15m图）；个股：链到实时详情页
+    const url = isBoard ? `/board_data/board?code=${code}` : `/trade/holdings/realtime/${code}`;
+
+    if (isBoard) {
+        const etf = it.etf_code
+            ? `${it.etf_code}${it.etf_name ? ' ' + it.etf_name : ''}`
+            : '<span class="hr-muted">-</span>';
+        return `
+        <tr onclick="location.href='${url}'">
+            <td><span class="hr-badge board">板块</span></td>
+            <td><a href="${url}" onclick="event.stopPropagation();">${code}</a></td>
+            <td>${it.stock_name || '<span class="hr-muted">-</span>'}</td>
+            <td class="hr-num"><span class="hr-muted">-</span></td>
+            <td class="hr-num"><span class="hr-muted">-</span></td>
+            <td class="hr-num" title="登记的对应 ETF">${etf}</td>
+            <td class="hr-num"><span class="hr-muted">-</span></td>
+            <td class="hr-num"><span class="hr-muted">-</span></td>
+            <td><a href="${url}" onclick="event.stopPropagation();">板块图表 →</a></td>
+            <td><a class="hr-row-action" href="${url}"
+                   onclick="event.stopPropagation();" title="去板块详情页（可取消跟踪）">⚙ 板块页</a></td>
+        </tr>`;
+    }
+
     const manageUrl = `/trade/real?mode=real&stock_code=${code}`;
-    const isHold = it.kind === 'holding';
     const badge = isHold
         ? `<span class="hr-badge holding">持仓</span>`
         : `<span class="hr-badge watching">关注</span>`;
@@ -144,7 +169,7 @@ async function loadHoldings() {
             return;
         }
         const items = r.data || [];
-        meta.textContent = `持仓 ${r.holding_count || 0} 只 · 关注 ${r.watching_count || 0} 只 · ${new Date().toLocaleTimeString()}`;
+        meta.textContent = `持仓 ${r.holding_count || 0} 只 · 关注 ${r.watching_count || 0} 只 · 板块 ${r.board_count || 0} 个 · ${new Date().toLocaleTimeString()}`;
         if (items.length === 0) {
             empty.style.display = 'block';
             return;

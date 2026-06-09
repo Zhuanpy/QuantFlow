@@ -44,9 +44,14 @@ logger = logging.getLogger(__name__)
 
 
 # 同花顺列名 → 内部 key（兼容空格、不同分隔符场景）
+# 兼容两种导出：
+#   1) 历史成交：有「发生时间」+「成交日期」
+#   2) 当日成交：只有「成交时间」(时分秒，无日期)，日期由 default_date 补
 _COL_MAP = {
     '发生时间': 'time_s',
+    '成交时间': 'time_s',       # 当日成交：成交时间(HH:MM:SS)，无日期列
     '成交日期': 'date_s',
+    '委托时间': 'order_time_s',  # 当日成交里的委托时间（暂不单独用，保留）
     '证券代码': 'stock_code',
     '证券名称': 'stock_name',
     '操作':     'op',
@@ -180,8 +185,11 @@ def parse_thsexport(file_input) -> list[dict]:
     return rows
 
 
-def _row_to_trade_record(row: dict) -> Optional[TradeRecord]:
-    """单行 → TradeRecord（未 commit）。返回 None 表示跳过（理财/无效）。"""
+def _row_to_trade_record(row: dict, default_date: str = None) -> Optional[TradeRecord]:
+    """单行 → TradeRecord（未 commit）。返回 None 表示跳过（理财/无效）。
+
+    default_date: 'YYYY-MM-DD'，当行内没有「成交日期」列时用它补日期（当日成交场景）。
+    """
     op = (row.get('op') or '').strip()
     trade_type = _OP_TO_TYPE.get(op)
     if trade_type is None:
@@ -196,7 +204,11 @@ def _row_to_trade_record(row: dict) -> Optional[TradeRecord]:
     if not stock_code:
         return None
 
-    dt = _parse_datetime(row.get('date_s'), row.get('time_s'))
+    # 日期：优先行内「成交日期」，缺失则用 default_date（当日成交无日期列）
+    date_s = (str(row.get('date_s')).strip() if row.get('date_s') is not None else '')
+    if not date_s or date_s.lower() == 'nan':
+        date_s = default_date or ''
+    dt = _parse_datetime(date_s, row.get('time_s'))
     if dt is None:
         return None
 
@@ -208,6 +220,10 @@ def _row_to_trade_record(row: dict) -> Optional[TradeRecord]:
     other_fee = _to_decimal(row.get('other_fee'))
     transfer_fee = _to_decimal(row.get('transfer_fee'))
     net_amount = _to_decimal(row.get('occurred_amount'))  # 同花顺"发生金额"（带符号）
+    # 当日成交没有「发生金额」列 → net_amount 会是 0。用成交金额 + 方向推导（忽略费用）：
+    #   买入现金流出(负)、卖出现金流入(正)。保证下游 PnL 统计大致正确。
+    if net_amount == 0 and total_amount != 0:
+        net_amount = -total_amount if trade_type == TradeRecord.TRADE_TYPE_BUY else total_amount
     account_balance = _to_decimal(row.get('account_balance'), default=None)
     contract_no = (row.get('contract_no') or '').strip() or None
     market = (row.get('market') or '').strip() or None
@@ -237,8 +253,42 @@ def _row_to_trade_record(row: dict) -> Optional[TradeRecord]:
     )
 
 
+def parse_thstext(text: str) -> list[dict]:
+    """解析直接粘贴的同花顺成交文本（Tab 或多空格分隔）→ 标准化行 dict。
+
+    适配「当日成交」复制出来的表格：列名行 + 多行数据，列之间 Tab 或连续空格。
+    A 股证券名称无内部空格，所以空格分隔也安全。
+    """
+    lines = [ln for ln in (text or '').splitlines() if ln.strip()]
+    if len(lines) < 2:
+        return []
+    first = lines[0]
+    # 有 Tab 用 Tab；否则按连续空白分列（engine=python 才支持正则 sep）
+    sep = '\t' if '\t' in first else r'\s+'
+    try:
+        df = pd.read_csv(io.StringIO('\n'.join(lines)), sep=sep, dtype=str, engine='python')
+    except Exception as e:
+        logger.warning(f'解析粘贴文本失败: {e}')
+        return []
+    df.columns = [str(c).strip() for c in df.columns]
+    rename = {k: v for k, v in _COL_MAP.items() if k in df.columns}
+    df = df.rename(columns=rename)
+    return df.to_dict('records')
+
+
+def import_from_text(text: str, dry_run: bool = False, default_date: str = None,
+                     auto_infer: bool = True, infer_trade_mode: str = 'real') -> dict:
+    """从粘贴的当日成交文本导入。default_date 缺省取今天。"""
+    if not default_date:
+        default_date = datetime.now().strftime('%Y-%m-%d')
+    rows = parse_thstext(text)
+    return _import_rows(rows, dry_run=dry_run, default_date=default_date,
+                        auto_infer=auto_infer, infer_trade_mode=infer_trade_mode)
+
+
 def import_from_ths(file_input, dry_run: bool = False,
-                    auto_infer: bool = True, infer_trade_mode: str = 'real') -> dict:
+                    auto_infer: bool = True, infer_trade_mode: str = 'real',
+                    default_date: str = None) -> dict:
     """主入口：解析同花顺文件 → 写入 trade_records。
 
     Args:
@@ -247,6 +297,19 @@ def import_from_ths(file_input, dry_run: bool = False,
         auto_infer: 导入成功且确实新增了记录时，自动重新推断该 mode 下的全部持仓。
                    这样新成交立刻反映到 trade_plans 的「持仓中/已完成」状态。
         infer_trade_mode: 自动推断时按哪个 mode 过滤源记录（同花顺导入固定 'real'）
+        default_date: 文件里没有「成交日期」列时用它补（当日成交文件场景），格式 YYYY-MM-DD
+
+    Returns:
+        见 _import_rows 的返回结构
+    """
+    rows = parse_thsexport(file_input)
+    return _import_rows(rows, dry_run=dry_run, default_date=default_date,
+                        auto_infer=auto_infer, infer_trade_mode=infer_trade_mode)
+
+
+def _import_rows(rows: list[dict], dry_run: bool = False, default_date: str = None,
+                 auto_infer: bool = True, infer_trade_mode: str = 'real') -> dict:
+    """把标准化后的行写入 trade_records（file / text 两条入口共用）。
 
     Returns:
         dict: {
@@ -259,8 +322,6 @@ def import_from_ths(file_input, dry_run: bool = False,
             'infer': {...}      # 若 auto_infer 触发，包含推断结果摘要
         }
     """
-    rows = parse_thsexport(file_input)
-
     stats = {
         'parsed': len(rows),
         'skipped_fund': 0,
@@ -278,7 +339,7 @@ def import_from_ths(file_input, dry_run: bool = False,
         if '理财' in op:
             stats['skipped_fund'] += 1
             continue
-        rec = _row_to_trade_record(r)
+        rec = _row_to_trade_record(r, default_date=default_date)
         if rec is None:
             stats['skipped_invalid'] += 1
             continue

@@ -1,0 +1,190 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container">
+    <div class="page-header">
+        <div>
+            <h1>板块整体预览</h1>
+            <p>只读看板：横向汇总每个板块的数据覆盖、成分股数、最新趋势打分与个人偏好分。数据/趋势/偏好的维护分别在对应页面。</p>
+        </div>
+    </div>
+
+    <!-- 汇总卡片 -->
+    <div class="cards" id="cards"></div>
+
+    <div class="filter-bar">
+        <label>分类
+            <select id="filterClass" onchange="reload()">
+                <option value="">全部</option>
+                {% for c in classifications %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
+            </select>
+        </label>
+        <label>阶段
+            <select id="filterStage" onchange="reload()">
+                <option value="">全部</option>
+                {% for s in trend_stages %}<option value="{{ s }}">{{ s }}</option>{% endfor %}
+                <option value="none">无评分</option>
+            </select>
+        </label>
+        <label>偏好≥
+            <select id="filterMinPref" onchange="reload()">
+                <option value="">全部</option>
+                <option value="8">8</option><option value="6">6</option><option value="4">4</option>
+            </select>
+        </label>
+        <label>排序
+            <select id="filterSort" onchange="reload()">
+                <option value="trend_desc">综合分高→低</option>
+                <option value="preference_desc">偏好高→低</option>
+                <option value="member_desc">成分股多→少</option>
+                <option value="board_code">板块代码</option>
+            </select>
+        </label>
+    </div>
+
+    <div class="table-wrap">
+        <table class="board-table">
+            <thead>
+                <tr><th>板块</th><th>分类</th><th>数据</th><th>成分股</th>
+                    <th>阶段</th><th>信号</th><th class="hl">综合分</th><th>偏好</th><th>评分日期</th></tr>
+            </thead>
+            <tbody id="tbody"><tr><td colspan="9" class="empty">加载中...</td></tr></tbody>
+        </table>
+    </div>
+
+    <div class="pagination-wrap">
+        <span id="pageInfo">共 0 条</span>
+        <div id="pagination"></div>
+    </div>
+</div>
+
+<style>
+    .container { max-width: 1200px; margin: 1rem auto; padding: 0 1rem; }
+    .page-header { background:#fff; padding:1rem 1.25rem; border-radius:.6rem; box-shadow:var(--shadow-sm); margin-bottom:1rem; }
+    .page-header h1 { margin:0 0 .25rem; }
+    .page-header p { margin:0; color:#6b7280; font-size:.9rem; }
+    .cards { display:grid; grid-template-columns: repeat(4, 1fr); gap:.6rem; margin-bottom:.85rem; }
+    .card { background:#fff; border-radius:.5rem; padding:.7rem .9rem; box-shadow:var(--shadow-sm); }
+    .card h4 { margin:0 0 .5rem; font-size:.82rem; color:#6b7280; font-weight:600; }
+    .card .rows { display:flex; flex-direction:column; gap:.2rem; font-size:.8rem; }
+    .card .rows div { display:flex; justify-content:space-between; }
+    .card .rows b { color:#1f2937; }
+    .filter-bar { display:flex; flex-wrap:wrap; gap:.5rem; align-items:center; background:#fff;
+                  padding:.6rem .75rem; border-radius:.5rem; margin-bottom:.75rem; box-shadow:var(--shadow-sm); font-size:.85rem; }
+    .filter-bar label { display:flex; align-items:center; gap:.3rem; color:#374151; }
+    .filter-bar select { padding:.3rem .5rem; border:1px solid #d1d5db; border-radius:.3rem; font-size:.85rem; }
+    .table-wrap { background:#fff; border-radius:.5rem; padding:.5rem; box-shadow:var(--shadow-sm); overflow-x:auto; }
+    .board-table { width:100%; border-collapse:collapse; font-size:.83rem; }
+    .board-table th, .board-table td { padding:.5rem .55rem; border-bottom:1px solid #f1f5f9; text-align:right; white-space:nowrap; }
+    .board-table th { background:#f9fafb; color:#374151; font-weight:600; text-align:center; }
+    .board-table td:first-child, .board-table th:first-child { text-align:left; }
+    .board-table td.hl, .board-table th.hl { background:#eff6ff; font-weight:600; }
+    .board-table tr:hover { background:#f9fafb; }
+    .empty { text-align:center !important; color:#9ca3af; padding:1.5rem; }
+    .board-link { color:inherit; text-decoration:none; }
+    .board-link:hover strong { color:#2563eb; text-decoration:underline; }
+    .cls-tag { display:inline-block; padding:.1rem .45rem; border-radius:.3rem; font-size:.74rem; background:#eef2ff; color:#3730a3; }
+    .stage-tag { display:inline-block; padding:.1rem .45rem; border-radius:.3rem; font-size:.75rem; }
+    .stage-tag.up_early{background:#d1fae5;color:#065f46;} .stage-tag.up_late{background:#dcfce7;color:#166534;}
+    .stage-tag.down_early{background:#ffedd5;color:#9a3412;} .stage-tag.down_late{background:#fee2e2;color:#991b1b;}
+    .stage-tag.unknown,.stage-tag.none{background:#f3f4f6;color:#4b5563;}
+    .ds-cell { display:inline-flex; gap:3px; align-items:center; padding:.1rem .3rem; border-radius:.3rem; cursor:help; }
+    .ds-cell.ok{background:#d1fae5;} .ds-cell.lag{background:#fef3c7;} .ds-cell.stale{background:#fee2e2;} .ds-cell.missing{background:#fecaca;}
+    .ds-dot { width:8px; height:8px; border-radius:50%; }
+    .ds-dot.ok{background:#10b981;} .ds-dot.lag{background:#f59e0b;} .ds-dot.missing{background:#ef4444;}
+    .pref-badge { display:inline-block; min-width:1.5ch; padding:.05rem .4rem; border-radius:.3rem; font-weight:700; color:#fff; font-size:.78rem; }
+    .pagination-wrap { display:flex; justify-content:space-between; align-items:center; margin-top:.75rem; font-size:.85rem; color:#6b7280; }
+    .pagination button { padding:.3rem .6rem; border:1px solid #d1d5db; background:#fff; border-radius:.3rem; margin:0 .15rem; cursor:pointer; }
+</style>
+
+<script>
+let currentPage = 1;
+const pageSize = 50;
+const STAGE_LABELS = { up_early:'上涨前期', up_late:'上涨后期', down_early:'下跌前期', down_late:'下跌后期', unknown:'未识别', none:'无评分' };
+
+function fmtNum(v, n=1) { if (v==null||v==='') return '-'; const x=Number(v); return isNaN(x)?'-':x.toFixed(n); }
+
+function renderDataStatus(ds) {
+    if (!ds) return '<span style="color:#9ca3af;">-</span>';
+    const dotColor = (s) => (s === 'ok') ? 'ok' : (s === 'lag') ? 'lag' : 'missing';
+    const tip = `状态：${({ok:'正常',lag:'轻度滞后',stale:'严重滞后',missing:'无数据'})[ds.overall] || ds.overall}`;
+    return `<span class="ds-cell ${ds.overall}" title="${tip}">`
+         + `<span class="ds-dot ${dotColor(ds.daily)}"></span>`
+         + `<span class="ds-dot ${dotColor(ds.min1)}"></span>`
+         + `<span class="ds-dot ${dotColor(ds.min15)}"></span></span>`;
+}
+function prefColor(v) { if (v>=8) return '#dc2626'; if (v>=6) return '#f97316'; if (v>=4) return '#f59e0b'; return '#9ca3af'; }
+function prefBadge(v) { return v==null ? '<span style="color:#cbd5e1;">–</span>' : `<span class="pref-badge" style="background:${prefColor(v)};">${v}</span>`; }
+
+function renderCards(s) {
+    const sc = s.stage_counts || {}, pb = s.preference_buckets || {}, dh = s.data_health || {};
+    const stageRow = (k) => `<div><span>${STAGE_LABELS[k]||k}</span><b>${sc[k]||0}</b></div>`;
+    document.getElementById('cards').innerHTML = `
+        <div class="card"><h4>板块总数</h4><div class="rows"><div><span>主表板块</span><b style="font-size:1.3rem;color:#2563eb;">${s.total_boards||0}</b></div></div></div>
+        <div class="card"><h4>趋势阶段分布</h4><div class="rows">
+            ${stageRow('up_early')}${stageRow('up_late')}${stageRow('down_early')}${stageRow('down_late')}${stageRow('unknown')}${stageRow('none')}
+        </div></div>
+        <div class="card"><h4>偏好分布</h4><div class="rows">
+            <div><span>8-10 喜欢</span><b>${pb['8-10']||0}</b></div>
+            <div><span>6-7</span><b>${pb['6-7']||0}</b></div>
+            <div><span>4-5</span><b>${pb['4-5']||0}</b></div>
+            <div><span>1-3</span><b>${pb['1-3']||0}</b></div>
+            <div><span>未打分</span><b>${pb['unscored']||0}</b></div>
+        </div></div>
+        <div class="card"><h4>数据健康度</h4><div class="rows">
+            <div><span>正常</span><b style="color:#059669;">${dh['ok']||0}</b></div>
+            <div><span>轻度滞后</span><b style="color:#d97706;">${dh['lag']||0}</b></div>
+            <div><span>严重滞后</span><b style="color:#dc2626;">${dh['stale']||0}</b></div>
+            <div><span>无数据</span><b style="color:#9ca3af;">${(dh['missing']||0)+(dh['unknown']||0)}</b></div>
+        </div></div>`;
+}
+
+function reload() { currentPage = 1; loadList(); }
+
+async function loadList() {
+    const params = new URLSearchParams({
+        page: currentPage, page_size: pageSize,
+        classification: document.getElementById('filterClass').value,
+        trend_stage: document.getElementById('filterStage').value,
+        min_preference: document.getElementById('filterMinPref').value,
+        sort_by: document.getElementById('filterSort').value,
+    });
+    const r = await fetch('/board_overview/api/overview?' + params).then(r => r.json());
+    const tbody = document.getElementById('tbody');
+    if (!r.success) { tbody.innerHTML = `<tr><td colspan="9" class="empty">加载失败：${r.message || ''}</td></tr>`; return; }
+    renderCards(r.data.summary || {});
+    const items = r.data.items || [];
+    if (!items.length) {
+        tbody.innerHTML = `<tr><td colspan="9" class="empty">暂无板块。请先到「板块数据管理」同步板块清单。</td></tr>`;
+    } else {
+        tbody.innerHTML = items.map(it => {
+            const stage = it.trend_stage || 'none';
+            return `<tr>
+                <td><a href="/board_data/board?code=${it.board_code}" class="board-link"><strong>${it.board_code}</strong><br><span style="color:#6b7280;font-size:.78rem;">${it.board_name || ''}</span></a></td>
+                <td style="text-align:center;"><span class="cls-tag">${it.classification || '-'}</span></td>
+                <td style="text-align:center;">${renderDataStatus(it.data_status)}</td>
+                <td>${it.member_count == null ? '-' : it.member_count}</td>
+                <td style="text-align:center;"><span class="stage-tag ${stage}">${STAGE_LABELS[stage] || stage}</span></td>
+                <td style="text-align:center;">${it.signal || '-'}</td>
+                <td class="hl">${fmtNum(it.total_score)}</td>
+                <td style="text-align:center;">${prefBadge(it.preference_score)}</td>
+                <td style="text-align:center;color:#6b7280;">${it.score_date || '-'}</td>
+            </tr>`;
+        }).join('');
+    }
+    renderPagination(r.data.pagination);
+    document.getElementById('pageInfo').textContent = `共 ${r.data.pagination.total} 条`;
+}
+
+function renderPagination(p) {
+    const div = document.getElementById('pagination');
+    if (!p || p.pages <= 1) { div.innerHTML = ''; return; }
+    div.innerHTML = `<button ${p.has_prev ? '' : 'disabled'} onclick="goPage(${p.page - 1})">上一页</button>`
+        + `<span style="margin:0 .5rem;">${p.page}/${p.pages}</span>`
+        + `<button ${p.has_next ? '' : 'disabled'} onclick="goPage(${p.page + 1})">下一页</button>`;
+}
+function goPage(p) { currentPage = p; loadList(); }
+
+loadList();
+</script>
+{% endblock %}

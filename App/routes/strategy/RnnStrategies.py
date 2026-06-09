@@ -113,45 +113,63 @@ def _run_train_kind(kind: str, month: str, start_date: Optional[str],
       - 'watching' / 'candidate' / 'trading' / 'archived':
           只对该 StockPool 池里的股票循环执行单股操作
     """
-    # 池子模式：循环单股（精确控制范围）
+    # 池子模式：循环单股（精确控制范围），逐只汇报进度并响应停止
     if pool_type:
         from App.models.strategy.StockPool import StockPool
         stocks = StockPool.get_by_pool_type(pool_type)
         if not stocks:
             logger.warning(f'[TRAIN] 池 {pool_type} 为空，跳过')
+            with train_lock:
+                train_state.message = f'股票池 {pool_type} 为空，无可处理股票'
             return
         codes = [sp.stock_code for sp in stocks]
-        logger.info(f'[TRAIN] 池模式 {pool_type}：{len(codes)} 只股票')
+        total = len(codes)
+        logger.info(f'[TRAIN] 池模式 {pool_type}：{total} 只股票')
+        with train_lock:
+            train_state.total = total
+            train_state.processed = 0
 
+        # 每个 kind 对应一个"处理单只股票"的闭包
         if kind == 'data':
             from App.codes.RnnModel.RnnCreationData import TrainingDataCalculate
-            for code in codes:
-                try:
-                    TrainingDataCalculate(code, month, start_date).calculation_single()
-                except Exception as e:
-                    logger.warning(f'[TRAIN] {code} 数据生成失败: {e}')
+            def _do(code):
+                TrainingDataCalculate(code, month, start_date).calculation_single()
         elif kind == 'train':
             from App.codes.RnnModel.RnnCreationModel import BuiltModel
-            for code in codes:
-                try:
-                    BuiltModel(code, month).model_all()
-                except Exception as e:
-                    logger.warning(f'[TRAIN] {code} 训练失败: {e}')
+            def _do(code):
+                BuiltModel(code, month).model_all()
+        elif kind == 'check':
+            from App.codes.RnnModel.CheckModel import RMHistoryCheck
+            rc = RMHistoryCheck(month_parsers=month)
+            def _do(code):
+                rc.check1stock(code)
+        else:
+            raise ValueError(f'未知 kind: {kind}')
+
+        failed = 0
+        for i, code in enumerate(codes):
+            with train_lock:
+                if train_state.stop:
+                    logger.info('[TRAIN] 收到停止请求，提前结束池循环')
+                    break
+                train_state.message = f'正在处理 {code}（{i + 1}/{total}）'
+            try:
+                _do(code)
+            except Exception as e:
+                failed += 1
+                logger.warning(f'[TRAIN] {code} {kind} 失败: {e}')
+            with train_lock:
+                train_state.processed = i + 1
+                train_state.progress = round((i + 1) / total * 100, 1)
+                if failed:
+                    train_state.message = f'已处理 {i + 1}/{total}，其中失败 {failed} 只'
+
+        if kind == 'train':
             try:
                 from App.codes.RnnModel.model_predictor import clear_model_cache
                 clear_model_cache()
             except Exception:
                 pass
-        elif kind == 'check':
-            from App.codes.RnnModel.CheckModel import RMHistoryCheck
-            rc = RMHistoryCheck(month_parsers=month)
-            for code in codes:
-                try:
-                    rc.check1stock(code)
-                except Exception as e:
-                    logger.warning(f'[TRAIN] {code} 历史检查失败: {e}')
-        else:
-            raise ValueError(f'未知 kind: {kind}')
         return
 
     # 全部模式（原逻辑）
@@ -247,21 +265,49 @@ def api_train_status():
 
 @rnn_strategies_bp.route('/api/training_records', methods=['GET'])
 def api_training_records():
-    """RnnTrainingRecords 表的内容。可按 month / status 过滤。"""
+    """RnnTrainingRecords 表的内容。可按 month / status 过滤，分页返回。"""
     month = request.args.get('month')
     status = request.args.get('status')
     try:
-        limit = max(1, min(int(request.args.get('limit', 200)), 1000))
+        page = max(1, int(request.args.get('page', 1)))
     except ValueError:
-        limit = 200
+        page = 1
+    try:
+        page_size = max(1, min(int(request.args.get('page_size', 20)), 200))
+    except ValueError:
+        page_size = 20
 
     q = RnnTrainingRecords.query
     if month:
         q = q.filter_by(parser_month=month)
     if status:
         q = q.filter_by(model_check=status)
-    records = q.order_by(RnnTrainingRecords.id.desc()).limit(limit).all()
-    return jsonify({'success': True, 'data': [r.to_dict() for r in records], 'count': len(records)})
+
+    pagination = q.order_by(RnnTrainingRecords.id.desc()).paginate(
+        page=page, per_page=page_size, error_out=False)
+    records = pagination.items
+
+    # 三步骤成功数在"整个过滤集"上统计（不只是当前页），分页时仍准确
+    def _success(field):
+        return q.filter(getattr(RnnTrainingRecords, field) == 'success').count()
+
+    return jsonify({
+        'success': True,
+        'data': [r.to_dict() for r in records],
+        'count': len(records),
+        'pagination': {
+            'page': pagination.page,
+            'page_size': page_size,
+            'total_pages': pagination.pages or 1,
+            'total_items': pagination.total,
+        },
+        'summary': {
+            'total': pagination.total,
+            'data_success': _success('model_data'),
+            'create_success': _success('model_create'),
+            'check_success': _success('model_check'),
+        },
+    })
 
 
 @rnn_strategies_bp.route('/api/available_months', methods=['GET'])
@@ -270,6 +316,84 @@ def api_available_months():
     rows = db.session.query(RnnTrainingRecords.parser_month).distinct().all()
     months = sorted({r[0] for r in rows if r and r[0]}, reverse=True)
     return jsonify({'success': True, 'data': months})
+
+
+# 允许打开的子文件夹白名单：键 -> 相对 RnnData/<month> 的子目录
+_OPEN_SUBDIRS = {
+    'root': '',            # data/RnnData/<month>
+    'train_data': 'train_data',
+    'model': 'model',
+    'weight': 'weight',
+    'json': 'json',
+    '1m': '1m',
+}
+
+
+@rnn_strategies_bp.route('/api/data_dir', methods=['GET'])
+def api_data_dir():
+    """返回某月份各数据子目录的绝对路径与是否存在（供 UI 展示/复制）。"""
+    import os
+    from App.codes.RnnDataFile.stock_path import StockDataPath
+
+    month = (request.args.get('month') or '').strip()
+    root = StockDataPath.rnnData_folder_path()
+    base = os.path.join(root, month) if month else root
+    dirs = {}
+    for key, sub in _OPEN_SUBDIRS.items():
+        p = os.path.join(base, sub) if sub else base
+        dirs[key] = {'path': os.path.normpath(p), 'exists': os.path.isdir(p)}
+    return jsonify({'success': True, 'month': month, 'rnn_root': os.path.normpath(root), 'dirs': dirs})
+
+
+@rnn_strategies_bp.route('/api/open_folder', methods=['POST'])
+def api_open_folder():
+    """在服务器（本机）资源管理器里打开生成的数据文件夹。
+
+    仅限本机访问（localhost），且路径必须落在 data/RnnData 下，防越权/穿越。
+    body: { month: '2022-02' (可选), sub: 'train_data'|'model'|... (默认 root) }
+    """
+    import os
+    import sys
+    import subprocess
+    from App.codes.RnnDataFile.stock_path import StockDataPath
+
+    # 仅允许本机触发（避免远程浏览器在服务器上弹窗口）
+    if request.remote_addr not in ('127.0.0.1', '::1', 'localhost'):
+        return jsonify({'success': False, 'message': '仅允许本机（localhost）打开文件夹'}), 403
+
+    data = request.get_json(silent=True) or {}
+    month = (data.get('month') or '').strip()
+    sub_key = (data.get('sub') or 'root').strip()
+    if sub_key not in _OPEN_SUBDIRS:
+        return jsonify({'success': False, 'message': f'未知子目录: {sub_key}'}), 400
+
+    root = os.path.normpath(StockDataPath.rnnData_folder_path())
+    sub = _OPEN_SUBDIRS[sub_key]
+    if month:
+        target = os.path.join(root, month, sub) if sub else os.path.join(root, month)
+    else:
+        target = os.path.join(root, sub) if sub else root
+    target = os.path.normpath(target)
+
+    # 安全校验：目标必须在 RnnData 根目录内
+    if os.path.commonpath([root, target]) != root:
+        return jsonify({'success': False, 'message': '非法路径'}), 400
+
+    if not os.path.isdir(target):
+        return jsonify({'success': False, 'message': f'文件夹不存在（可能尚未生成）：{target}',
+                        'path': target}), 404
+
+    try:
+        if sys.platform.startswith('win'):
+            os.startfile(target)  # noqa: only available on Windows
+        elif sys.platform == 'darwin':
+            subprocess.Popen(['open', target])
+        else:
+            subprocess.Popen(['xdg-open', target])
+        return jsonify({'success': True, 'message': '已打开文件夹', 'path': target})
+    except Exception as e:
+        logger.exception(f'[OPEN_FOLDER] 打开失败: {e}')
+        return jsonify({'success': False, 'message': f'打开失败: {e}', 'path': target}), 500
 
 
 # ==================== 预测 ====================

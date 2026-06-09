@@ -1749,10 +1749,10 @@ async function autoTriggerBoardTrend() {
     try {
         addLog(`板块趋势打分：开始同步板块清单（${today}）...`, 'info');
         setStatus('板块趋势：同步板块清单中...', '#3b82f6');
-        const syncRes = await fetch('/board_trend/api/sync_boards', {
+        const syncRes = await fetch('/board_data/api/sync_boards', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({record_date: today, source: 'all'}),
+            body: JSON.stringify({source: 'all'}),
         }).then(r => r.json()).catch(() => ({success: false, message: '请求失败'}));
         if (!syncRes.success) {
             addLog('板块清单同步失败：' + (syncRes.message || ''), 'error');
@@ -1760,7 +1760,7 @@ async function autoTriggerBoardTrend() {
             return;
         }
         const sd = syncRes.data || {};
-        addLog(`板块清单同步完成：源 ${sd.total_in_source} / 实际 ${sd.total_boards}（新建 ${sd.created} / 跳过 ${sd.skipped}）`, 'success');
+        addLog(`板块清单同步完成：源 ${sd.total_in_source} / 实际 ${sd.total_boards}（新建 ${sd.created} / 更新 ${sd.updated}）`, 'success');
 
         addLog('板块趋势打分：开始 v1 公式计算（scope=manual_skip）...', 'info');
         setStatus('板块趋势：计算打分中...', '#3b82f6');
