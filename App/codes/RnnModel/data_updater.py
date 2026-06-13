@@ -50,20 +50,68 @@ class UpdateData(RnnBase):
         TableStockPool.set_table_to_pool(sql, parser)
 
     def update_RecordRun(self):
-        """更新运行记录"""
-        sql1 = ''' Trends = %s, SignalStartTime = %s, PredictCycleLength = %s, RealCycleLength = %s,
-        PredictCycleChange = %s, PredictCyclePrice = %s, RealCycleChange = %s, PredictBarChange = %s,
-        RealBarChange = %s, PredictBarVolume = %s, RealBarVolume = %s, ScoreTrends = %s,
-        TradePoint = %s, TimeRunBar = %s, RenewDate = %s where id = %s; '''
+        """更新运行记录（迁移到 ORM：strategy_rnn_runs / RnnRunningRecord）。
 
-        parsers = (
-            self.signalValue, self.signalStartTime, self.predict_length, self.real_length,
-            self.predict_CycleChange, self.predict_CyclePrice, self.real_CycleChange, self.predict_bar_change,
-            self.real_bar_change, self.predict_BarVolume, self.real_BarVolume, self.trend_score,
-            self.tradAction, self.trade_timing, self.current, self.stock_id
-        )
+        旧实现 UPDATE 废弃的 rnn_model.RunRecord（本环境无此库，报 Unknown
+        database 'rnn_model'）。现按 code+月份 upsert 最近一行；ORM 模型多列
+        NOT NULL，故所有数值/时间字段做空值兜底（None→0 / now）。写库失败不致命。
+        """
+        from datetime import datetime
+        from App.exts import db
+        from App.models.strategy.RnnRunningRecords import RnnRunningRecord
 
-        LoadRnnModel.set_table_run_record(sql1, parsers)
+        def _f(v, d=0.0):
+            try:
+                return float(v) if v is not None else d
+            except (TypeError, ValueError):
+                return d
+
+        def _i(v, d=0):
+            try:
+                return int(v) if v is not None else d
+            except (TypeError, ValueError):
+                return d
+
+        def _dt(v):
+            if v is None:
+                return None
+            try:
+                return pd.to_datetime(v).to_pydatetime()
+            except Exception:
+                return None
+
+        now = datetime.now()
+        try:
+            db.session.rollback()
+            rec = (RnnRunningRecord.query
+                   .filter_by(code=str(self.stock_code), parser_month=self.month_parsers)
+                   .order_by(RnnRunningRecord.id.desc()).first())
+            if rec is None:
+                rec = RnnRunningRecord(code=str(self.stock_code),
+                                       parser_month=self.month_parsers)
+                db.session.add(rec)
+
+            rec.name = self.stock_name or str(self.stock_code)
+            rec.trends = str(self.signalValue) if self.signalValue is not None else ''
+            rec.signal_start_time = _dt(self.signalStartTime) or now
+            rec.time_15m = _dt(getattr(self, 'record_time_15m', None)) or rec.time_15m or now
+            rec.time_run_bar = _dt(self.trade_timing) or now
+            rec.renew_date = _dt(self.current) or now
+            rec.predict_cycle_length = _i(self.predict_length)
+            rec.real_cycle_length = _i(self.real_length)
+            rec.predict_cycle_change = _f(self.predict_CycleChange)
+            rec.predict_cycle_price = _f(self.predict_CyclePrice)
+            rec.real_cycle_change = _f(self.real_CycleChange)
+            rec.predict_bar_change = _f(self.predict_bar_change)
+            rec.real_bar_change = _f(self.real_bar_change)
+            rec.predict_bar_volume = _f(self.predict_BarVolume)
+            rec.real_bar_volume = _f(self.real_BarVolume)
+            rec.score_trends = _f(self.trend_score)
+            rec.trade_point = _f(self.tradAction)
+            db.session.commit()
+        except Exception as ex:
+            db.session.rollback()
+            print(f'[predict] 写运行记录(ORM)失败 {self.stock_code}: {ex}')
 
     def update_sql_15m_data(self):
         """更新 15 分钟数据"""

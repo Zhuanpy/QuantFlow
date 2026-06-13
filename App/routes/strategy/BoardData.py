@@ -44,6 +44,30 @@ def board_detail_page():
 
 
 # ===================== 主表 CRUD =====================
+@board_data_bp.route('/api/search')
+def api_search():
+    """板块输入框联想：按 q 模糊匹配 board_code 或 board_name（任一命中），返回前 limit 个。"""
+    try:
+        Board.ensure_table()
+        term = (request.args.get('q') or '').strip()
+        try:
+            limit = max(1, min(int(request.args.get('limit', 12)), 50))
+        except ValueError:
+            limit = 12
+        if not term:
+            return jsonify({'success': True, 'data': []})
+        like = f'%{term}%'
+        rows = (Board.query
+                .filter(db.or_(Board.board_code.like(like), Board.board_name.like(like)))
+                .order_by(Board.board_code.asc())
+                .limit(limit).all())
+        return jsonify({'success': True, 'data': [
+            {'board_code': r.board_code, 'board_name': r.board_name} for r in rows]})
+    except Exception as e:
+        logger.exception('板块搜索失败')
+        return jsonify({'success': False, 'message': str(e), 'data': []}), 500
+
+
 @board_data_bp.route('/api/list')
 def api_list():
     """板块主表分页查询。
@@ -371,10 +395,12 @@ def _score_history(df_tf, n=30):
     return rows
 
 
-def _resample_15m_to_30m(df15):
-    """15m DataFrame → 30m：按交易日内顺序两两合并（首open/末close/极值/量和）。
+def _resample_15m_to_60m(df15):
+    """15m DataFrame → 60m(1小时)：按交易日内顺序每 4 根合并（首open/末close/极值/量和）。
 
-    需含 date/open/close/high/low/volume；返回同结构 30m DataFrame（空则空表）。
+    A股每日 16 根 15m（上午8 + 下午8），每 4 根正好一根 1 小时K，且不跨午休
+    （上午/下午各 8 根均可被 4 整除），所以日内顺序 4 根一并即标准 1 小时K。
+    需含 date/open/close/high/low/volume；返回同结构 60m DataFrame（空则空表）。
     """
     if df15 is None or df15.empty:
         return pd.DataFrame()
@@ -387,8 +413,8 @@ def _resample_15m_to_30m(df15):
     rows = []
     for _, g in df.groupby('d'):
         g = g.reset_index(drop=True)
-        for i in range(0, len(g), 2):
-            ck = g.iloc[i:i + 2]
+        for i in range(0, len(g), 4):
+            ck = g.iloc[i:i + 4]
             rows.append({
                 'date': ck['date'].iloc[-1],
                 'open': float(ck['open'].iloc[0]),
@@ -557,14 +583,14 @@ def api_board_chart_15m(code):
         return jsonify({'success': False, 'message': str(e)}), 500
 
 
-@board_data_bp.route('/api/board/<code>/chart_30m')
-def api_board_chart_30m(code):
-    """返回单板块的 30 分钟 K 线 + MA20/MA60 + MACD + 量能。
+@board_data_bp.route('/api/board/<code>/chart_60m')
+def api_board_chart_60m(code):
+    """返回单板块的 1 小时（60 分钟）K 线 + MA20/MA60 + MACD + 量能。
 
-    无独立 30m 数据源：由 15m parquet 按"交易日内顺序两两合并"合成
-    （open=首根、close=末根、high/low=极值、volume=求和），MACD 在 30m 序列上重算。
+    无独立 60m 数据源：由 15m parquet 按"交易日内顺序每 4 根合并"合成
+    （open=首根、close=末根、high/low=极值、volume=求和），MACD 在 60m 序列上重算。
     query:
-      - bars=96                           按根数取末尾 N 根（默认，30m 每日 8 根 ≈ 12 日）
+      - bars=48                           按根数取末尾 N 根（默认，60m 每日 4 根 ≈ 12 日）
       - start_date=YYYY-MM-DD&end_date=YYYY-MM-DD  指定区间（优先于 bars）
     """
     try:
@@ -581,19 +607,19 @@ def api_board_chart_30m(code):
         if df.empty:
             return jsonify({'success': False, 'message': '无法读取 15m 数据（可能需要 pyarrow）'}), 500
 
-        # 15m → 30m：按交易日内顺序两两合并
-        d30 = _resample_15m_to_30m(df)
-        if d30.empty:
-            return jsonify({'success': False, 'message': '30m 合成后无数据'}), 404
+        # 15m → 60m：按交易日内顺序每 4 根合并
+        d60 = _resample_15m_to_60m(df)
+        if d60.empty:
+            return jsonify({'success': False, 'message': '60m 合成后无数据'}), 404
 
-        close = d30['close']
-        d30['ma20'] = close.rolling(20, min_periods=1).mean()
-        d30['ma60'] = close.rolling(60, min_periods=1).mean()
+        close = d60['close']
+        d60['ma20'] = close.rolling(20, min_periods=1).mean()
+        d60['ma60'] = close.rolling(60, min_periods=1).mean()
         ema12 = _ema(close, 12)
         ema26 = _ema(close, 26)
-        d30['dif'] = ema12 - ema26
-        d30['dea'] = _ema(d30['dif'], 9)
-        d30['bar'] = (d30['dif'] - d30['dea']) * 2
+        d60['dif'] = ema12 - ema26
+        d60['dea'] = _ema(d60['dif'], 9)
+        d60['bar'] = (d60['dif'] - d60['dea']) * 2
 
         if use_range:
             try:
@@ -603,13 +629,13 @@ def api_board_chart_30m(code):
                 return jsonify({'success': False, 'message': '日期格式错误'}), 400
             if start_ts > end_ts:
                 return jsonify({'success': False, 'message': '起始日期不能晚于结束日期'}), 400
-            d30 = d30[(d30['date'] >= start_ts) & (d30['date'] <= end_ts)].reset_index(drop=True)
-            if d30.empty:
+            d60 = d60[(d60['date'] >= start_ts) & (d60['date'] <= end_ts)].reset_index(drop=True)
+            if d60.empty:
                 return jsonify({'success': False,
-                                'message': f'区间 {start_date_s} ~ {end_date_s} 内无 30m 数据'}), 404
+                                'message': f'区间 {start_date_s} ~ {end_date_s} 内无 60m 数据'}), 404
         else:
-            bars = max(24, min(int(request.args.get('bars', 96)), 3000))
-            d30 = d30.tail(bars).reset_index(drop=True)
+            bars = max(12, min(int(request.args.get('bars', 48)), 3000))
+            d60 = d60.tail(bars).reset_index(drop=True)
 
         def _r(v, n=4):
             try:
@@ -620,7 +646,7 @@ def api_board_chart_30m(code):
                 return None
 
         rows = []
-        for _, r in d30.iterrows():
+        for _, r in d60.iterrows():
             rows.append({
                 'date': r['date'].strftime('%Y-%m-%d %H:%M'),
                 'open': _r(r['open'], 4),
@@ -638,16 +664,16 @@ def api_board_chart_30m(code):
             'board_code': code, 'count': len(rows), 'rows': rows,
         }})
     except Exception as e:
-        logger.exception('板块 30m 图表数据获取失败')
+        logger.exception('板块 60m 图表数据获取失败')
         return jsonify({'success': False, 'message': str(e)}), 500
 
 
 @board_data_bp.route('/api/board/<code>/multiscore')
 def api_board_multiscore(code):
-    """多周期评分：对 日K / 30m / 15m 三个周期分别用同一套 v1 公式打分。
+    """多周期评分：对 日K / 60m / 15m 三个周期分别用同一套 v1 公式打分。
 
-    日K 取自 data_stock_daily（_load_board_daily）；30m/15m 由 15m parquet 现算。
-    供详情页「日K评分 / 30分K评分 / 15分K评分 / 评分汇总」标签使用。
+    日K 取自 data_stock_daily（_load_board_daily）；60m/15m 由 15m parquet 现算。
+    供详情页「日K评分 / 60分K评分 / 15分K评分 / 评分汇总」标签使用。
     """
     try:
         from datetime import date as _date
@@ -658,12 +684,12 @@ def api_board_multiscore(code):
         daily_df = _load_board_daily(code, _date.today())
         daily = score_dataframe(daily_df)
 
-        # 15m / 30m（来自 parquet）
+        # 15m / 60m（来自 parquet）
         m15 = {'sub_scores': {}, 'total_score': None, 'trend_stage': 'unknown',
                'trend_stage_confidence': 0.0, 'trend_strength': 'none',
                'signal': 'none', 'snapshot': {}, 'bars': 0, 'error': '无 15m 数据文件'}
-        m30 = dict(m15)
-        m30_history, m15_history = [], []
+        m60 = dict(m15)
+        m60_history, m15_history = [], []
         fpath = _find_15m_file(_get_15m_dir(), code)
         if fpath:
             df15 = _read_15m_file(fpath)
@@ -675,15 +701,15 @@ def api_board_multiscore(code):
                             .sort_values('date').reset_index(drop=True))
                 m15 = score_dataframe(base)
                 m15_history = _score_history(base, 30)
-                d30 = _resample_15m_to_30m(base)
-                if not d30.empty:
-                    m30 = score_dataframe(d30)
-                    m30_history = _score_history(d30, 30)
+                d60 = _resample_15m_to_60m(base)
+                if not d60.empty:
+                    m60 = score_dataframe(d60)
+                    m60_history = _score_history(d60, 30)
 
         return jsonify({'success': True, 'data': {
             'board_code': code,
-            'daily': daily, 'm30': m30, 'm15': m15,
-            'm30_history': m30_history, 'm15_history': m15_history,
+            'daily': daily, 'm60': m60, 'm15': m15,
+            'm60_history': m60_history, 'm15_history': m15_history,
         }})
     except Exception as e:
         logger.exception('板块多周期评分失败')

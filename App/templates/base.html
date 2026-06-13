@@ -108,6 +108,23 @@
                 padding: 0.5rem;
             }
         }
+
+        /* RNN 训练/预测页共享的紧凑排版（原内联于 rnn_training.html，抽到此处供两页一致） */
+        .rnn-container { font-size: .95rem; max-width: 1200px; margin: 0 auto; }
+        .rnn-container h2 { font-size: 1.35rem; margin-bottom: .85rem; }
+        .rnn-container h3 { font-size: 1.12rem; }
+        .rnn-container .card { margin-bottom: .75rem !important; }
+        .rnn-container table th, .rnn-container table td { padding: .4rem .55rem !important; }
+        .rnn-container .form-select, .rnn-container .form-input { font-size: .92rem; padding: .35rem .5rem; }
+        .rnn-container .btn { font-size: .9rem; }
+
+        /* 页内 tab 切换条（训练管理/模型预测等）。原样式只内联在 download_fund_data.html，
+           其它页用 class="tab-btn" 却没样式 → 渲染成两个无区分的普通链接。抽到此处共享，
+           带明确的 active 高亮。自带内联同名样式的页面（层叠在后）不受影响。 */
+        .page-tabs { display: flex; gap: .25rem; margin-bottom: 1.25rem; background: var(--card-background, #fff); border-radius: .6rem; padding: .35rem; box-shadow: var(--shadow-sm, 0 1px 2px rgba(0,0,0,.05)); }
+        .tab-btn { padding: .5rem 1.25rem; border: none; background: transparent; color: var(--text-secondary, #6b7280); font-size: .95rem; font-weight: 500; cursor: pointer; border-radius: .45rem; text-decoration: none; transition: all .2s ease; }
+        .tab-btn:hover { background: var(--background-color, #f3f4f6); }
+        .tab-btn.active { background: var(--primary-color, #2563eb); color: #fff; }
     </style>
 </head>
 <body>
@@ -119,7 +136,10 @@
                     <a href="{{ url_for('dl_bp.dl') }}" {% if request.endpoint == 'dl_bp.dl' %}class="active"{% endif %}>数据获取</a>
                 </li>
                 <li class="nav-item">
-                    <a href="{{ url_for('rnn_bp.rnn') }}" {% if request.endpoint == 'rnn_bp.rnn' %}class="active"{% endif %}>RNN模型</a>
+                    <a href="{{ url_for('RnnData.rnn_data_page') }}" {% if request.endpoint == 'RnnData.rnn_data_page' %}class="active"{% endif %}>RNN模型</a>
+                </li>
+                <li class="nav-item">
+                    <a href="{{ url_for('screener.page') }}" {% if request.endpoint == 'screener.page' %}class="active"{% endif %}>个股筛选</a>
                 </li>
                 <li class="nav-item">
                     <a href="{{ url_for('issue_bp.issues') }}" {% if request.endpoint == 'issue_bp.issues' %}class="active"{% endif %}>问题管理</a>

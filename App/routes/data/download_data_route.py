@@ -675,30 +675,44 @@ def download_file():
                             except Exception as merge_err:
                                 logging.warning(f"[STEP3] {stock_code} 合并旧15m失败: {merge_err}")
 
+                        save_ok = False
                         try:
                             if file_path_15m.endswith('.parquet'):
                                 try:
                                     data_15m.to_parquet(file_path_15m, index=False, engine='pyarrow')
+                                    save_ok = True
                                     logging.info(f"[STEP3] {stock_code} parquet保存成功: {len(data_15m)} 条")
                                 except ImportError:
                                     csv_path = file_path_15m.replace('.parquet', '.csv')
                                     data_15m.to_csv(csv_path, index=False)
+                                    save_ok = True
                                     logging.info(f"[STEP3] {stock_code} pyarrow不可用，回退CSV保存: {len(data_15m)} 条")
                             else:
                                 data_15m.to_csv(file_path_15m, index=False)
+                                save_ok = True
                                 logging.info(f"[STEP3] {stock_code} CSV保存成功: {len(data_15m)} 条")
                         except Exception as save_err:
                             logging.error(f"[STEP3] {stock_code} 文件保存失败: {save_err}")
 
-                        try:
-                            trade_dates = data['date'].dt.date.unique()
-                            for d in trade_dates:
-                                DailyTaskStatus.mark_task(stock_code, d, 'is_15m_generated')
-                                if macd_success:
-                                    DailyTaskStatus.mark_task(stock_code, d, 'is_macd_calculated')
-                            logging.info(f"[STEP3] {stock_code} DailyTaskStatus标记成功 (15m=True, macd={macd_success})")
-                        except Exception as mark_err:
-                            logging.error(f"[STEP3] {stock_code} DailyTaskStatus标记失败: {mark_err}")
+                        # 只有"保存成功"且"该交易日确实写进了 data_15m"才标记 is_15m_generated。
+                        # 旧实现无条件按下载到的 1m 日期标记，导致保存失败/读到旧 1m 时
+                        # DB 标志=已生成、parquet 却没有该日数据（曾使补漏 find_stocks_needing_backfill
+                        # 看不到缺口、无法自愈）。现以"实际落库的日期"为准。
+                        if save_ok:
+                            try:
+                                persisted = set(pd.to_datetime(data_15m['date']).dt.date.unique())
+                                dl_dates = set(data['date'].dt.date.unique())
+                                mark_dates = sorted(dl_dates & persisted)
+                                for d in mark_dates:
+                                    DailyTaskStatus.mark_task(stock_code, d, 'is_15m_generated')
+                                    if macd_success:
+                                        DailyTaskStatus.mark_task(stock_code, d, 'is_macd_calculated')
+                                logging.info(f"[STEP3] {stock_code} DailyTaskStatus标记 {len(mark_dates)} 个交易日 (15m=True, macd={macd_success})")
+                            except Exception as mark_err:
+                                logging.error(f"[STEP3] {stock_code} DailyTaskStatus标记失败: {mark_err}")
+                        else:
+                            logging.warning(f"[STEP3] {stock_code} 15m 未成功保存，跳过 is_15m_generated 标记（留给补漏重试）")
+                            _mark_recent_attempts_failed(stock_code, download_max_days, '[STEP3] 15m 保存失败')
 
                         logging.info(f"[STEP3] {stock_code} 15分钟处理完成，{len(data_15m)} 条")
 

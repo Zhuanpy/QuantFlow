@@ -16,7 +16,7 @@ from App.codes.utils.Normal import Useful, count_times, ReadSaveFile
 from App.codes.RnnDataFile.stock_path import StockDataPath
 from App.codes.parsers.RnnParser import (
     SignalTimes, Signal, SignalChoice, EndPrice, StartPrice,
-    CycleLengthPerBar, CycleAmplitudeMax, CycleAmplitudePerBar,
+    CycleLengthPerBar, CycleAmplitudeMax, CycleLengthMax, CycleAmplitudePerBar,
     EndPriceIndex, DailyVolEmaParser
 )
 
@@ -71,6 +71,10 @@ class PredictionCommon(ModelData, DlModel, UpdateData):
         self._limitPrice = None
         self.area = None
 
+        # 趋势分布统计（up/down 的 Amplitude/Vol/Length 均值方差），懒加载缓存。
+        # 旧 json 自带 'models' 块直接用；新流水线不再写该块，按需现算（见 _models_stats）。
+        self._models_cache = None
+
     def report_run(self):
         """输出运行报告"""
         headers = (
@@ -111,10 +115,16 @@ class PredictionCommon(ModelData, DlModel, UpdateData):
 
     def report_trade(self):
         """输出交易点信息"""
-        shapes = self.records[
-            (self.records['RenewDate'] != self.current) &
-            (self.records['TradePoint'] != 0)
-        ].shape[0]
+        # 是否已存在本股票"有交易点"的历史记录（去重，避免重复发信）。
+        # 旧实现基于 self.records(DataFrame)；改为 ORM 计数。
+        try:
+            from App.models.strategy.RnnRunningRecords import RnnRunningRecord
+            shapes = (RnnRunningRecord.query
+                      .filter(RnnRunningRecord.code == str(self.stock_code),
+                              RnnRunningRecord.trade_point != 0)
+                      .count())
+        except Exception:
+            shapes = 0
 
         if not shapes:
             title = f'股票:{self.stock_name},代码：{self.stock_code}; 触发{self.position_action}信号;'
@@ -148,7 +158,8 @@ class PredictionCommon(ModelData, DlModel, UpdateData):
             )
             self.sellAction = True
 
-        if self.trend_score > 4:
+        # 止盈阈值随 trend_score 重标到 [-1,1] 同步下调（原 >4 对应旧 ±6~8 量纲）
+        if self.trend_score > 0.5:
             title = f'持仓股：{self.stock_name}止盈卖出；'
             self.sellAction = True
             message = (
@@ -161,13 +172,15 @@ class PredictionCommon(ModelData, DlModel, UpdateData):
 
     def predict_cycle_values(self):
         """趋势转变点预判"""
-        R_signalStartTime = self.records.iloc[0]['SignalStartTime']
+        # 历史记录改用 ORM 的 last_record；无历史记录（首次预测/无库）则走重算分支。
+        last = self.last_record
+        R_signalStartTime = last.signal_start_time if last is not None else None
 
-        # 判断是否运行转折点模型
-        if self.signalStartTime == R_signalStartTime:
-            self.predict_length = self.records.iloc[0]['PredictCycleLength']
-            self.predict_CycleChange = self.records.iloc[0]['PredictCycleChange']
-            self.predict_CyclePrice = self.records.iloc[0]['PredictCyclePrice']
+        # 判断是否运行转折点模型：与上次同一信号起点 → 复用上次预测值
+        if last is not None and self.signalStartTime == R_signalStartTime:
+            self.predict_length = last.predict_cycle_length
+            self.predict_CycleChange = last.predict_cycle_change
+            self.predict_CyclePrice = last.predict_cycle_price
         else:
             self.predict_data = self.data_15m[
                 self.data_15m[SignalTimes] == self._signalTimes
@@ -270,142 +283,149 @@ class PredictionCommon(ModelData, DlModel, UpdateData):
         self.predict_bar_change = round(self.predict_bar_change, 2)
         self.predict_bar_price = round(_price * (1 + self.predict_bar_change), 2)
 
+    # 4 个维度的权重（和为 1）；缺失维度按剩余权重归一化
+    SCORE_WEIGHTS = {'amp': 0.35, 'len': 0.25, 'vol': 0.20, 'bar': 0.20}
+    # |score| ≥ 此值触发买卖；score 已归一到 [-1,1]
+    TRADE_THRESHOLD = 0.7
+
+    def _trend_pct(self, name: str, x: float) -> float:
+        """实现值 x 在该趋势(up/down)历史分布里的分位 CDF(0~1)。std 无效时退化为 0.5。"""
+        _, _, mean_, std_ = self.get_json_data(self.updown, name)
+        if not std_ or pd.isna(std_):
+            return 0.5
+        p = MyFormula.normal_get_p(x=x, mean=mean_, std=std_)
+        # 数值兜底，限制在 [0,1]
+        return min(max(float(p), 0.0), 1.0)
+
     def trade_point_score(self):
-        """趋势评分"""
-        scoreCycleChange = 0
-        scoreLength = 0
-        scoreBarChange = 0
-        scoreBarVol = 0
+        """趋势评分（重构版，score ∈ [-1, 1]）。
 
-        pCycleChange = 0
-        pLength = 0
-        pBarChange = 0
-        pBarVol = 0
+        思路：在「当前趋势方向」上把 4 个维度各换算成 0~1 的"衰竭/完成度"，加权求和得
+        strength∈[0,1]，再按方向定正负 —— 顶部(signal=1)取正、底部(signal=-1)取负。
+        - 振幅/长度/量：用历史 up/down 分布的分位(CDF)衡量"实现值有多极端"（越极端越衰竭）；
+          下行振幅取 1-CDF（越跌越衰竭），长度/量两个方向都是越大越衰竭。
+        - Bar 振幅：无独立历史分布，改用"实现 / 预测"的完成度(0~1)，且用对的变量
+          real_bar_change（旧实现误用了 real_CycleChange）。
+        - 四维恒计算（双边、上下行对称）；某维数据缺失则其权重剔除后归一化。
+        - trade_boll: |score| ≥ TRADE_THRESHOLD；顶部→卖出，底部→买入。
+        """
+        up = (self.signal == 1)
 
-        if self.signal == 1:
-            if self.real_CycleChange >= self.predict_CycleChange:
-                counts = self.get_json_data(self.updown, 'Amplitude')
-                pCycleChange = 1 - MyFormula.normal_get_p(
-                    x=self.real_CycleChange, mean=counts[2], std=counts[3]
-                )
-                scoreCycleChange = 1 + pCycleChange
+        comps = {}
 
-            if self.real_CycleChange < self.predict_CycleChange:
-                counts = self.get_json_data(self.updown, 'Amplitude')
-                pCycleChange = 1 - MyFormula.normal_get_p(
-                    x=self.real_CycleChange, mean=counts[2], std=counts[3]
-                )
-                scoreCycleChange = self.predict_CycleChange - self.real_CycleChange
+        # 周期振幅：up 用 CDF（越大越衰竭），down 用 1-CDF（越跌越衰竭）
+        amp_cdf = self._trend_pct('Amplitude', self.real_CycleChange)
+        comps['amp'] = amp_cdf if up else (1.0 - amp_cdf)
 
-            if self.real_length >= self.predict_length:
-                counts = self.get_json_data(self.updown, 'Length')
-                pLength = 1 - MyFormula.normal_get_p(
-                    x=self.real_length, mean=counts[2], std=counts[3]
-                )
-                scoreLength = 1 + pLength
+        # 周期长度：越长越衰竭（两方向同向）
+        comps['len'] = self._trend_pct('Length', self.real_length)
 
-            if self.real_length < self.predict_length:
-                counts = self.get_json_data(self.updown, 'Length')
-                pLength = 1 - MyFormula.normal_get_p(
-                    x=self.real_length, mean=counts[2], std=counts[3]
-                )
-                scoreLength = pLength
+        # Bar 成交量：越放量越像高潮/衰竭（两方向同向）
+        comps['vol'] = self._trend_pct('Vol', self.real_BarVolume)
 
-            if self.predict_bar_change != 0:
-                if self.real_bar_change > self.predict_bar_change:
-                    counts = self.get_json_data(self.updown, 'Amplitude')
-                    pBarChange = 1 - MyFormula.normal_get_p(
-                        x=self.real_CycleChange, mean=counts[2], std=counts[3]
-                    )
-                    scoreBarChange = 1 + pBarChange
+        # Bar 振幅：实现/预测 的完成度（同号→比值为正），缺预测则不计入
+        if self.predict_bar_change:
+            ratio = self.real_bar_change / self.predict_bar_change
+            comps['bar'] = min(max(ratio, 0.0), 1.0)
 
-            if self.predict_BarVolume != 0:
-                if self.real_BarVolume > self.predict_BarVolume:
-                    counts = self.get_json_data(self.updown, 'Vol')
-                    pBarVol = 0.5 - MyFormula.normal_get_p(
-                        x=self.real_BarVolume, mean=counts[2], std=counts[3]
-                    )
-                    scoreBarVol = 1 + pBarVol
+        # 加权求和并按有效维度归一化 → strength ∈ [0,1]
+        wsum = sum(self.SCORE_WEIGHTS[k] for k in comps)
+        strength = (sum(self.SCORE_WEIGHTS[k] * v for k, v in comps.items()) / wsum
+                    if wsum else 0.0)
 
-        if self.signal == -1:
-            if self.real_CycleChange <= self.predict_CycleChange:
-                counts = self.get_json_data(self.updown, 'Amplitude')
-                pCycleChange = 1 - MyFormula.normal_get_p(
-                    x=self.real_CycleChange, mean=counts[2], std=counts[3]
-                )
-                scoreCycleChange = -1 - pCycleChange
+        self.ScoreP = round(strength, 3)                 # 衰竭强度 0~1
+        self.trend_score = round((1 if up else -1) * strength, 3)  # [-1, 1]
 
-            if self.real_CycleChange > self.predict_CycleChange:
-                counts = self.get_json_data(self.updown, 'Amplitude')
-                pCycleChange = 1 - MyFormula.normal_get_p(
-                    x=self.real_CycleChange, mean=counts[2], std=counts[3]
-                )
-                scoreCycleChange = self.real_CycleChange - self.predict_CycleChange
-
-            if self.real_length >= self.predict_length:
-                counts = self.get_json_data(self.updown, 'Length')
-                pLength = 1 - MyFormula.normal_get_p(
-                    x=self.real_length, mean=counts[2], std=counts[3]
-                )
-                scoreLength = -1 - pLength
-
-            if self.real_length < self.predict_length:
-                counts = self.get_json_data(self.updown, 'Length')
-                pLength = 0.5 - MyFormula.normal_get_p(
-                    x=self.real_length, mean=counts[2], std=counts[3]
-                )
-                scoreLength = -pLength
-
-            if self.predict_bar_change != 0:
-                if self.real_bar_change < self.predict_bar_change:
-                    counts = self.get_json_data(self.updown, 'Amplitude')
-                    pBarChange = 1 - MyFormula.normal_get_p(
-                        x=self.real_CycleChange, mean=counts[2], std=counts[3]
-                    )
-                    scoreBarChange = -1 - pBarChange
-
-            if self.predict_BarVolume != 0:
-                if self.real_BarVolume > self.predict_BarVolume:
-                    counts = self.get_json_data(self.updown, 'Vol')
-                    pBarVol = 1 - MyFormula.normal_get_p(
-                        x=self.real_BarVolume, mean=counts[2], std=counts[3]
-                    )
-                    scoreBarVol = -1 - pBarVol
-
-        self.trend_score = round(
-            scoreCycleChange + scoreLength + scoreBarChange + scoreBarVol, 2
-        )
-        self.ScoreP = round(pCycleChange + pLength + pBarChange + pBarVol, 2)
-
-        if self.trend_score > 5.5 or self.trend_score < -5.5:
+        if abs(self.trend_score) >= self.TRADE_THRESHOLD:
             self.trade_boll = True
-
-            if self.signal == 1:
+            if up:
                 self.position_action = '卖出'
                 self.tradAction = -1
-
-            if self.signal == -1:
+            else:
                 self.position_action = '买入'
                 self.tradAction = 1
-                self.trade_boll = True
 
     def get_json_data(self, trend: str, name: str) -> tuple:
         """
-        从 JSON 配置获取数据
+        获取某趋势(up/down)下某指标(Amplitude/Vol/Length)的分布统计。
+
+        优先用 json 自带的 'models' 块（旧版数据）；新流水线不再写该块，
+        缺失时回退到按全量 15m 历史现算（见 _models_stats）。
 
         Args:
             trend: 趋势类型 ('up' 或 'down')
-            name: 数据名称
+            name: 指标名称 ('Amplitude' / 'Vol' / 'Length')
 
         Returns:
             tuple: (max, min, mean, std)
         """
-        data = self.jsons['models'][trend]
-        max_ = data[name]['max']
-        min_ = data[name]['min']
-        mean_ = data[name]['mean']
-        std_ = data[name]['std']
-        return (max_, min_, mean_, std_)
+        models = self.jsons.get('models') if isinstance(self.jsons, dict) else None
+        if not models or trend not in models:
+            models = self._models_stats()
+
+        data = models[trend][name]
+        return (data['max'], data['min'], data['mean'], data['std'])
+
+    def _models_stats(self) -> dict:
+        """
+        从全量 15m 历史现算 up/down 的 Amplitude/Vol/Length 分布统计，
+        复刻旧 json 'models' 块的语义（仅 get_json_data 用到 mean/std）。
+
+        数据源：StockData15m 库里的原始(未归一化) 15m 数据，含多年历史，
+        样本量远大于预测期截断后的 data_15m（仅最后 6 个周期），统计更稳。
+
+        口径：
+        - 取 SignalChoice 非空的「每周期一行」标记行，按 Signal(1=up/-1=down) 分组；
+        - Amplitude = CycleAmplitudeMax（带符号，up 正 / down 负）；
+        - Length    = CycleLengthMax（周期 bar 数）；
+        - Vol       = EndDaily1mVolMax5 / 100（换算成「手」，与 bar_volume 预测口径一致）。
+
+        结果按实例缓存一次。
+        """
+        if self._models_cache is not None:
+            return self._models_cache
+
+        empty = {'max': 0.0, 'min': 0.0, 'mean': 0.0, 'std': 1.0}
+
+        def _agg(series):
+            s = pd.to_numeric(series, errors='coerce').dropna()
+            if len(s) == 0:
+                return None
+            std = float(s.std(ddof=0)) if len(s) > 1 else 0.0
+            # std=0/NaN 会让 normal_get_x/normal_get_p 退化或抛错，给一个最小正值兜底
+            if not std or pd.isna(std):
+                std = max(abs(float(s.mean())) * 0.5, 1e-6)
+            return {
+                'max': round(float(s.max()), 5),
+                'min': round(float(s.min()), 5),
+                'mean': round(float(s.mean()), 5),
+                'std': round(std, 5),
+            }
+
+        stats = {'up': {}, 'down': {}}
+        try:
+            from App.codes.MySql.DataBaseStockData15m import StockData15m
+            df = StockData15m.load_15m(self.stock_code)
+
+            df = df[df[SignalChoice].notna() & (df[SignalChoice] != '')].copy()
+            df[Signal] = pd.to_numeric(df[Signal], errors='coerce')
+            df['_Vol_'] = pd.to_numeric(df['EndDaily1mVolMax5'], errors='coerce') / 100.0
+
+            for sig, trend in ((1, 'up'), (-1, 'down')):
+                g = df[df[Signal] == sig]
+                for name, col in (('Amplitude', CycleAmplitudeMax),
+                                  ('Length', CycleLengthMax),
+                                  ('Vol', '_Vol_')):
+                    stats[trend][name] = _agg(g[col]) or dict(empty)
+        except Exception as ex:
+            # 库缺失/列缺失/无数据等：退回安全默认，避免预测主流程因统计失败而中断
+            print(f'[predict] _models_stats 计算失败，使用默认值: {ex}')
+            for trend in ('up', 'down'):
+                for name in ('Amplitude', 'Length', 'Vol'):
+                    stats[trend][name] = dict(empty)
+
+        self._models_cache = stats
+        return stats
 
     def get_bar_real(self):
         """获取 Bar 真实值"""

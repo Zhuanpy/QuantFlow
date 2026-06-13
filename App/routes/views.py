@@ -21,6 +21,8 @@ rnn_bp = Blueprint('rnn_bp', __name__)
 
 @rnn_bp.route('/rnn')
 def rnn():
-    return render_template('rnn.html')
+    # rnn.html 模板早已不存在（旧入口），重定向到 RNN 处理管线总览入口页，
+    # 避免旧书签/外链触发 TemplateNotFound 500。
+    return redirect(url_for('RnnData.rnn_data_page'))
 
 # 注：原 issue_bp 已迁移到 App.routes.issues_route（合并三处重复路由）

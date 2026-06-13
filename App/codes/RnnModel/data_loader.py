@@ -35,6 +35,26 @@ class ModelData(RnnBase):
         self.db_rnn_model = 'rnn_model'
         self.tb_rnn_record = 'RunRecord'
 
+    def _latest_run_record(self):
+        """本股票本月最近一条运行记录（ORM RnnRunningRecord），无则 None。
+
+        取代废弃的 LoadRnnModel.load_run_record()（rnn_model 库已不存在）。
+        用途：1) 无 check_date 时定位上次 15m 锚点；2) 周期复用判断。
+        无 Flask 上下文 / 查询异常时返回 None（退化为"首次预测"重算路径）。
+        """
+        try:
+            from App.exts import db
+            from App.models.strategy.RnnRunningRecords import RnnRunningRecord
+            db.session.rollback()
+            return (RnnRunningRecord.query
+                    .filter_by(code=str(self.stock_code),
+                               parser_month=self.month_parsers)
+                    .order_by(RnnRunningRecord.id.desc())
+                    .first())
+        except Exception as ex:
+            print(f'[predict] 读取运行记录(ORM)失败: {ex}')
+            return None
+
     def read_1m_by_15m_record(self) -> pd.DataFrame:
         """
         根据 15 分钟记录读取 1 分钟数据。
@@ -51,20 +71,17 @@ class ModelData(RnnBase):
             anchor = pd.to_datetime(self.check_date)
 
         self.record_last_15m_time = None
-        if anchor is None:
-            # 没有指定日期，尝试用最近一条预测记录
-            try:
-                self.records = LoadRnnModel.load_run_record()
-                if (self.records is not None and not self.records.empty
-                        and 'code' in self.records.columns):
-                    matched = self.records[self.records['code'] == self.stock_code]
-                    if not matched.empty and 'Time15m' in matched.columns:
-                        ts = matched.iloc[0]['Time15m']
-                        if pd.notna(ts):
-                            self.record_last_15m_time = ts
-                            anchor = pd.to_datetime(ts)
-            except Exception as ex:
-                print(f'[predict] 读取 RnnRunningRecord 失败: {ex}')
+        # 历史运行记录改用 ORM（strategy_rnn_runs / RnnRunningRecord）。
+        # 旧 LoadRnnModel.load_run_record() 连的是已废弃的 rnn_model 库，且在
+        # check_date 路径下根本不会被加载，导致 self.records 为 None →
+        # 后续 predict_cycle_values 里 self.records.iloc[0] 抛 NoneType 错。
+        self.last_record = self._latest_run_record()
+        if anchor is None and self.last_record is not None:
+            # 没有指定日期时，用最近一条预测记录的 15m 时间作为锚点
+            ts = getattr(self.last_record, 'time_15m', None)
+            if ts is not None and pd.notna(ts):
+                self.record_last_15m_time = ts
+                anchor = pd.to_datetime(ts)
 
         if anchor is None:
             anchor = pd.Timestamp('today')
@@ -246,7 +263,13 @@ class ModelData(RnnBase):
 
         max_ = self.jsons[DailyVolEma]
         data['DailyVolEmaParser'] = max_ / data[DailyVolEma]
-        data = data[data['date'] > (self.record_last_15m_time + pd.Timedelta(days=-1))]
+        # record_last_15m_time 为空时（首次预测，或 check_date 路径下本就无历史锚点）
+        # 不做下界过滤——否则 (None/NaT + Timedelta) 的比较会把全部日线行过滤掉，
+        # 导致 join 后 DailyVolEmaParser 全 NaN → bar_volume 除以 NaN 报
+        # "cannot convert float NaN to integer"。与 first_15m 的 None 保护保持一致。
+        if self.record_last_15m_time is not None and pd.notna(self.record_last_15m_time):
+            lower = pd.to_datetime(self.record_last_15m_time) + pd.Timedelta(days=-1)
+            data = data[data['date'] > lower]
         data = data[['date', 'DailyVolEmaParser']].set_index('date', drop=True)
         return data
 
@@ -275,9 +298,8 @@ class ModelData(RnnBase):
 
         t15m = self.data_15m.drop_duplicates(subset=[SignalTimes]).tail(6).iloc[0]['date'].date()
 
-        sql = ''' Time15m = %s where id = %s;'''
-        parser = (t15m, self.stock_id)
-        LoadRnnModel.set_table_run_record(sql, parser)
+        # 旧实现把 Time15m 写进废弃的 rnn_model 库；现暂存，由 update_RecordRun 一并写入 ORM。
+        self.record_time_15m = t15m
 
         self.data_15m = self.data_15m.set_index('date', drop=True)
         self.data_15m = self.data_15m.join([data_daily]).reset_index()

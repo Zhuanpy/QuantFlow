@@ -667,7 +667,8 @@ function renderDist(subset, el, infoEl, current, curColor, opts) {
     xs.push(xv);
     ys.push(Math.exp(-((xv-mean)**2)/(2*sig*sig))/(sig*Math.sqrt(2*Math.PI)));
   }
-  const bins = Math.min(12, Math.max(5, Math.round(Math.sqrt(n))));
+  // bin 数：比 sqrt(n) 默认更细（柱子更瘦）。想更细 → 调大系数/上限；更粗 → 调小。
+  const bins = Math.min(20, Math.max(6, Math.round(Math.sqrt(n) * 1.8)));
   const bw = (maxV - minV) / bins || 1;
   const counts = new Array(bins).fill(0);
   hist.forEach(v => { let k = Math.floor((v-minV)/bw); if(k<0)k=0; if(k>=bins)k=bins-1; counts[k]++; });

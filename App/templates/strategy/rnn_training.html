@@ -1,31 +1,32 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="rnn-container" style="padding: 1.5rem;">
+<div class="rnn-container" style="padding: 1rem 1.25rem;">
 
   <div class="page-tabs" style="margin-bottom: 1rem;">
     <a class="tab-btn active" href="/RnnStrategies/training">训练管理</a>
     <a class="tab-btn" href="/RnnStrategies/prediction">模型预测</a>
+    <a class="tab-btn" href="/RnnData/rnn_data_page" style="margin-left:auto;">← 总览入口</a>
   </div>
 
   <!-- ========== 控制区 ========== -->
-  <div class="card" style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:1.5rem;margin-bottom:1rem;">
+  <div class="card" style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:1.1rem 1.25rem;margin-bottom:1rem;">
     <h2 style="margin-top:0;">RNN 训练管理</h2>
 
-    <div style="display:flex;gap:1rem;flex-wrap:wrap;align-items:end;margin-bottom:1rem;">
+    <div style="display:flex;gap:1.5rem 1.75rem;flex-wrap:wrap;align-items:end;margin-bottom:1.25rem;">
       <div>
-        <label style="display:block;font-size:0.85rem;color:#6b7280;">训练月份（parser_month）</label>
-        <select id="monthSelect" class="form-select" style="min-width:150px;"></select>
+        <label style="display:block;font-size:0.92rem;color:#6b7280;margin-bottom:.3rem;">训练月份（parser_month）</label>
+        <div style="display:flex;gap:.4rem;align-items:center;">
+          <select id="monthSelect" class="form-select" style="min-width:200px;"></select>
+          <span style="color:#9ca3af;font-size:0.88rem;">或</span>
+          <input id="monthInput" class="form-input" placeholder="手动输入 如 2022-02" style="width:160px;">
+        </div>
       </div>
       <div>
-        <label style="display:block;font-size:0.85rem;color:#6b7280;">手动输入月份</label>
-        <input id="monthInput" class="form-input" placeholder="如 2022-02" style="width:140px;">
-      </div>
-      <div>
-        <label style="display:block;font-size:0.85rem;color:#6b7280;">起始日期（生成数据用）</label>
+        <label style="display:block;font-size:0.92rem;color:#6b7280;margin-bottom:.3rem;">起始日期（生成数据用）</label>
         <input id="startDateInput" type="date" class="form-input" value="2018-01-01">
       </div>
       <div>
-        <label style="display:block;font-size:0.85rem;color:#6b7280;">股票范围</label>
+        <label style="display:block;font-size:0.92rem;color:#6b7280;margin-bottom:.3rem;">股票范围</label>
         <select id="poolTypeSelect" class="form-select" style="min-width:160px;">
           <option value="watching" selected>观察池（推荐）</option>
           <option value="">全部 RnnTrainingRecords</option>
@@ -36,17 +37,20 @@
       </div>
     </div>
 
-    <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+    <!-- 执行流程（①②③）与 控制/工具（停止/刷新）分组 -->
+    <div style="display:flex;gap:1.4rem;flex-wrap:wrap;align-items:center;">
+      <span style="font-size:0.88rem;color:#9ca3af;margin-right:.6rem;">执行流程</span>
       <button id="btnDataStep" class="btn btn-primary">① 生成训练数据</button>
       <button id="btnTrainStep" class="btn btn-primary">② 训练模型</button>
       <button id="btnCheckStep" class="btn btn-primary">③ 历史检查</button>
+      <span style="width:1px;height:1.5rem;background:#e5e7eb;margin:0 1rem;"></span>
       <button id="btnStop" class="btn btn-danger" disabled>请求停止</button>
       <button id="btnRefresh" class="btn btn-secondary">刷新记录</button>
     </div>
 
     <!-- 打开本地数据文件夹（仅本机有效） -->
     <div style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center;margin-top:1rem;padding-top:1rem;border-top:1px dashed #e5e7eb;">
-      <span style="font-size:0.85rem;color:#6b7280;">📁 数据文件夹（按所选月份）：</span>
+      <span style="font-size:0.92rem;color:#6b7280;">📁 数据文件夹（按所选月份）：</span>
       <select id="folderSubSelect" class="form-select" style="min-width:170px;">
         <option value="root">RnnData/&lt;月份&gt;（根目录）</option>
         <option value="train_data" selected>train_data（.npy 训练样本）</option>
@@ -56,46 +60,53 @@
         <option value="1m">1m（原始 1 分钟数据）</option>
       </select>
       <button id="btnOpenFolder" class="btn btn-secondary">打开文件夹</button>
-      <code id="folderPath" style="font-size:0.78rem;color:#9ca3af;background:#f9fafb;padding:.15rem .4rem;border-radius:4px;word-break:break-all;"></code>
+      <code id="folderPath" style="font-size:0.86rem;color:#9ca3af;background:#f9fafb;padding:.15rem .4rem;border-radius:4px;word-break:break-all;"></code>
     </div>
   </div>
 
   <!-- ========== 进度区 ========== -->
-  <div class="card" style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:1.5rem;margin-bottom:1rem;">
+  <div class="card" style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:1.1rem 1.25rem;margin-bottom:1rem;">
     <h3 style="margin-top:0;">当前任务</h3>
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:1rem;margin-bottom:1rem;">
-      <div><div style="color:#6b7280;font-size:0.85rem;">任务类型</div><div id="stKind" style="font-weight:600;">-</div></div>
-      <div><div style="color:#6b7280;font-size:0.85rem;">状态</div><div id="stStatus" style="font-weight:600;">未开始</div></div>
-      <div><div style="color:#6b7280;font-size:0.85rem;">月份</div><div id="stMonth" style="font-weight:600;">-</div></div>
-      <div><div style="color:#6b7280;font-size:0.85rem;">已处理</div><div id="stProcessed" style="font-weight:600;">-</div></div>
-      <div><div style="color:#6b7280;font-size:0.85rem;">已用时</div><div id="stElapsed" style="font-weight:600;">-</div></div>
-      <div><div style="color:#6b7280;font-size:0.85rem;">开始时间</div><div id="stStarted" style="font-weight:600;">-</div></div>
-      <div><div style="color:#6b7280;font-size:0.85rem;">结束时间</div><div id="stFinished" style="font-weight:600;">-</div></div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:.55rem 1rem;margin-bottom:.6rem;">
+      <div><div style="color:#6b7280;font-size:0.92rem;">任务类型</div><div id="stKind" style="font-weight:600;">-</div></div>
+      <div><div style="color:#6b7280;font-size:0.92rem;">状态</div><div id="stStatus" style="font-weight:600;">未开始</div></div>
+      <div><div style="color:#6b7280;font-size:0.92rem;">月份</div><div id="stMonth" style="font-weight:600;">-</div></div>
+      <div><div style="color:#6b7280;font-size:0.92rem;">已处理</div><div id="stProcessed" style="font-weight:600;">-</div></div>
+      <div><div style="color:#6b7280;font-size:0.92rem;">已用时</div><div id="stElapsed" style="font-weight:600;">-</div></div>
+      <div><div style="color:#6b7280;font-size:0.92rem;">开始时间</div><div id="stStarted" style="font-weight:600;">-</div></div>
+      <div><div style="color:#6b7280;font-size:0.92rem;">结束时间</div><div id="stFinished" style="font-weight:600;">-</div></div>
     </div>
     <div style="background:#f3f4f6;height:10px;border-radius:5px;overflow:hidden;">
       <div id="stBar" style="background:#2563eb;height:100%;width:0%;transition:width .3s;"></div>
     </div>
-    <div id="stProgressText" style="text-align:right;font-size:0.85rem;color:#6b7280;margin-top:0.25rem;">0%</div>
-    <div id="stMessage" style="color:#dc2626;font-size:0.85rem;margin-top:0.5rem;"></div>
+    <div id="stProgressText" style="text-align:right;font-size:0.92rem;color:#6b7280;margin-top:0.25rem;">0%</div>
+    <div id="stMessage" style="color:#dc2626;font-size:0.92rem;margin-top:0.5rem;"></div>
   </div>
 
   <!-- ========== 训练记录表 ========== -->
-  <div class="card" style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:1.5rem;">
+  <div class="card" style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:1.1rem 1.25rem;">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
       <h3 style="margin:0;">训练记录</h3>
       <div>
         <select id="recordMonthFilter" class="form-select" style="margin-right:0.5rem;"><option value="">全部月份</option></select>
+        <!-- 状态筛选必须指明针对哪一步：数据/建模/检查 是三个独立状态列。
+             选了状态才会按所选步骤过滤；状态留空＝不按状态过滤（步骤无影响）。 -->
+        <select id="recordStepFilter" class="form-select" style="margin-right:0.5rem;" title="状态针对哪一步骤">
+          <option value="model_check" selected>检查</option>
+          <option value="model_data">数据</option>
+          <option value="model_create">建模</option>
+        </select>
         <select id="recordStatusFilter" class="form-select">
           <option value="">全部状态</option>
-          <option value="pending">pending</option>
-          <option value="processing">processing</option>
-          <option value="success">success</option>
-          <option value="failed">failed</option>
+          <option value="success">成功</option>
+          <option value="processing">处理中</option>
+          <option value="pending">待处理</option>
+          <option value="error">失败/错误</option>
         </select>
       </div>
     </div>
     <div style="overflow-x:auto;">
-      <table style="width:100%;border-collapse:collapse;font-size:0.875rem;">
+      <table style="width:100%;border-collapse:collapse;font-size:0.95rem;">
         <thead style="background:#f9fafb;">
           <tr>
             <th style="padding:.5rem;text-align:left;">代码</th>
@@ -111,8 +122,8 @@
       </table>
     </div>
     <div style="display:flex;justify-content:space-between;align-items:center;margin-top:0.75rem;flex-wrap:wrap;gap:0.5rem;">
-      <div id="recordsCount" style="font-size:0.85rem;color:#6b7280;"></div>
-      <div style="display:flex;align-items:center;gap:0.4rem;font-size:0.85rem;color:#6b7280;">
+      <div id="recordsCount" style="font-size:0.92rem;color:#6b7280;"></div>
+      <div style="display:flex;align-items:center;gap:0.4rem;font-size:0.92rem;color:#6b7280;">
         <label>每页</label>
         <select id="pageSizeSelect" class="form-select" style="width:80px;">
           <option value="20" selected>20</option>
@@ -133,6 +144,7 @@ const API = '/RnnStrategies/api';
 let pollTimer = null;
 let recPage = 1;
 let recTotalPages = 1;
+let recRefreshTick = 0;  // 处理中节流刷新记录表的计数
 
 async function fetchJson(url, opts) {
   const r = await fetch(url, opts);
@@ -149,9 +161,13 @@ async function loadMonths() {
   const j = await fetchJson(`${API}/available_months`);
   const sel = document.getElementById('monthSelect');
   const filter = document.getElementById('recordMonthFilter');
-  sel.innerHTML = '<option value="">— 选择月份 —</option>';
+  const hasMonths = j.success && Array.isArray(j.data) && j.data.length > 0;
+  // 下拉只列「已存在的批次」。一个批次都没有时给出引导，避免误以为是 bug。
+  sel.innerHTML = hasMonths
+    ? '<option value="">— 选择月份 —</option>'
+    : '<option value="">暂无批次 → 请在右侧「手动输入月份」新建</option>';
   filter.innerHTML = '<option value="">全部月份</option>';
-  if (j.success) {
+  if (hasMonths) {
     j.data.forEach(m => {
       sel.insertAdjacentHTML('beforeend', `<option value="${m}">${m}</option>`);
       filter.insertAdjacentHTML('beforeend', `<option value="${m}">${m}</option>`);
@@ -242,16 +258,24 @@ async function refreshStatus() {
   document.getElementById('btnCheckStep').disabled = running;
 
   if (running && !pollTimer) startPolling();
-  if (!running && pollTimer) { stopPolling(); loadRecords(); }
+  if (!running && pollTimer) { stopPolling(); recRefreshTick = 0; loadRecords(); }
+
+  // 处理中也实时刷新记录表（每 2 次轮询≈3 秒一刷），让顶部"正在/即将处理 + 刚完成"
+  // 的股票动态滚动。仅在第 1 页时自动刷新，避免打断用户手动翻页。
+  if (running && recPage === 1 && (recRefreshTick++ % 2 === 0)) {
+    loadRecords();
+  }
 }
 
 async function loadRecords() {
   const month = document.getElementById('recordMonthFilter').value;
+  const step = document.getElementById('recordStepFilter').value;
   const status = document.getElementById('recordStatusFilter').value;
   const pageSize = document.getElementById('pageSizeSelect').value;
   const params = new URLSearchParams();
   if (month) params.set('month', month);
-  if (status) params.set('status', status);
+  // 状态过滤必须连带告诉后端针对哪一步骤列；状态留空则步骤无意义、不传
+  if (status) { params.set('status', status); params.set('step', step); }
   params.set('page', recPage);
   params.set('page_size', pageSize);
   const j = await fetchJson(`${API}/training_records?${params}`);
@@ -268,7 +292,7 @@ async function loadRecords() {
         <td style="padding:.5rem;text-align:center;">${badge(r.model_data)}</td>
         <td style="padding:.5rem;text-align:center;">${badge(r.model_create)}</td>
         <td style="padding:.5rem;text-align:center;">${badge(r.model_check)}</td>
-        <td style="padding:.5rem;color:#6b7280;font-size:0.8rem;">${r.model_check_timing || r.model_create_timing || r.model_data_timing || ''}</td>
+        <td style="padding:.5rem;color:#6b7280;font-size:0.88rem;">${r.model_check_timing || r.model_create_timing || r.model_data_timing || ''}</td>
       </tr>`).join('');
   }
   // 三步骤成功数汇总（后端在整个过滤集上统计，分页也准确）
@@ -333,6 +357,7 @@ document.getElementById('folderSubSelect').onchange = refreshFolderPath;
 document.getElementById('monthSelect').addEventListener('change', refreshFolderPath);
 document.getElementById('monthInput').addEventListener('input', refreshFolderPath);
 document.getElementById('recordMonthFilter').onchange = () => { recPage = 1; loadRecords(); };
+document.getElementById('recordStepFilter').onchange = () => { recPage = 1; loadRecords(); };
 document.getElementById('recordStatusFilter').onchange = () => { recPage = 1; loadRecords(); };
 document.getElementById('pageSizeSelect').onchange = () => { recPage = 1; loadRecords(); };
 document.getElementById('btnPrevPage').onclick = () => { if (recPage > 1) { recPage--; loadRecords(); } };

@@ -26,12 +26,68 @@ from datetime import datetime
 from typing import Optional
 
 from flask import Blueprint, current_app, jsonify, render_template, request
+from sqlalchemy import case, text, bindparam, false
 
 from App.exts import db
 from App.models.strategy.RnnRunningRecords import RnnRunningRecord
 from App.models.strategy.RnnTrainingRecords import RnnTrainingRecords
 
 logger = logging.getLogger(__name__)
+
+
+def _boards_for_codes(codes):
+    """批量查一组股票代码所属的东财行业板块名，返回 {code: '板块A / 板块B'}。
+
+    数据源 industry_eastmoney（每个 board_code 取该股最新日期那条）；一股可能属多个板块，
+    名称用 ' / ' 连接。表与 RnnRunningRecord 同在 quanttradingsystem 库（独立 bind）。
+    查询失败/无数据时该 code 不出现在结果里（前端显示 '-'）。
+    """
+    codes = [str(c) for c in {c for c in codes if c}]
+    if not codes:
+        return {}
+    try:
+        eng = db.engines['quanttradingsystem']
+        stmt = text(
+            '''
+            SELECT t.stock_code AS code, t.board_name AS board_name
+              FROM industry_eastmoney t
+              JOIN (SELECT stock_code, board_code, MAX(date) AS mx
+                      FROM industry_eastmoney
+                     WHERE stock_code IN :codes
+                     GROUP BY stock_code, board_code) m
+                ON t.stock_code = m.stock_code
+               AND t.board_code = m.board_code
+               AND t.date = m.mx
+             WHERE t.stock_code IN :codes
+             ORDER BY t.date DESC, t.board_name
+            '''
+        ).bindparams(bindparam('codes', expanding=True))
+        out = {}
+        with eng.connect() as conn:
+            for r in conn.execute(stmt, {'codes': codes}).fetchall():
+                if r.board_name:
+                    out.setdefault(r.code, []).append(r.board_name)
+        # 去重保序后拼接
+        return {c: ' / '.join(dict.fromkeys(names)) for c, names in out.items()}
+    except Exception:
+        logger.exception('查 industry_eastmoney 板块失败')
+        return {}
+
+
+def _codes_in_board(board_name):
+    """某东财行业板块下的全部股票代码（去重）。查询失败返回 []。"""
+    if not board_name:
+        return []
+    try:
+        eng = db.engines['quanttradingsystem']
+        stmt = text(
+            'SELECT DISTINCT stock_code FROM industry_eastmoney WHERE board_name = :b')
+        with eng.connect() as conn:
+            return [r.stock_code for r in conn.execute(stmt, {'b': board_name}).fetchall()
+                    if r.stock_code]
+    except Exception:
+        logger.exception('查板块成分股失败')
+        return []
 
 rnn_strategies_bp = Blueprint(
     'rnn_strategies_bp', __name__, url_prefix='/RnnStrategies'
@@ -113,7 +169,14 @@ def _run_train_kind(kind: str, month: str, start_date: Optional[str],
       - 'watching' / 'candidate' / 'trading' / 'archived':
           只对该 StockPool 池里的股票循环执行单股操作
     """
-    # 池子模式：循环单股（精确控制范围），逐只汇报进度并响应停止
+    # 单股循环模式：精确控制范围，逐只汇报进度、响应停止、回写状态。
+    #   - pool_type 指定 → 只处理该 StockPool 池
+    #   - 否则 kind == 'check'（「全部」历史检查）→ 处理本月 RnnTrainingRecords 全部记录。
+    #     旧的 rc.loop_by_date() 依赖已废弃的 rnn_model MySQL 库（本环境不存在该库，
+    #     会报 Unknown database 'rnn_model'），故改走与此处一致的 SQLAlchemy 单只路径，
+    #     并与 data/train「全部」模式（均按 parser_month 取本月批次）保持一致。
+    codes = None
+    names = {}
     if pool_type:
         from App.models.strategy.StockPool import StockPool
         stocks = StockPool.get_by_pool_type(pool_type)
@@ -123,8 +186,21 @@ def _run_train_kind(kind: str, month: str, start_date: Optional[str],
                 train_state.message = f'股票池 {pool_type} 为空，无可处理股票'
             return
         codes = [sp.stock_code for sp in stocks]
+        names = {sp.stock_code: sp.stock_name for sp in stocks}
+        logger.info(f'[TRAIN] 池模式 {pool_type}：{len(codes)} 只股票')
+    elif kind == 'check':
+        recs = RnnTrainingRecords.query.filter_by(parser_month=month).all()
+        codes = [r.code for r in recs]
+        names = {r.code: r.name for r in recs}
+        if not codes:
+            logger.warning(f'[TRAIN] 本月 {month} 无训练记录，历史检查跳过')
+            with train_lock:
+                train_state.message = f'本月 {month} 无训练记录可检查'
+            return
+        logger.info(f'[TRAIN] 全部历史检查 {month}：{len(codes)} 只股票')
+
+    if codes is not None:
         total = len(codes)
-        logger.info(f'[TRAIN] 池模式 {pool_type}：{total} 只股票')
         with train_lock:
             train_state.total = total
             train_state.processed = 0
@@ -146,23 +222,70 @@ def _run_train_kind(kind: str, month: str, start_date: Optional[str],
         else:
             raise ValueError(f'未知 kind: {kind}')
 
+        # 池模式也回写 RnnTrainingRecords 状态，让记录表实时反映进度。
+        # 按 kind 写对应字段：data→model_data / train→model_create / check→model_check。
+        # 按 code 取/建行并绑定到本月，与全部模式"单行按月复用"语义一致。
+        _FIELD_BY_KIND = {
+            'data': ('model_data', 'model_data_timing'),
+            'train': ('model_create', 'model_create_timing'),
+            'check': ('model_check', 'model_check_timing'),
+        }
+
+        def _pool_set_status(code, status):
+            field, timing = _FIELD_BY_KIND[kind]
+            try:
+                db.session.rollback()
+                rec = (RnnTrainingRecords.query.filter_by(code=str(code))
+                       .order_by(RnnTrainingRecords.id.desc()).first())
+                if rec is None:
+                    rec = RnnTrainingRecords(code=str(code), name=names.get(code),
+                                             parser_month=month)
+                    db.session.add(rec)
+                rec.parser_month = month
+                setattr(rec, field, status)
+                setattr(rec, timing, datetime.now() if status == 'success' else None)
+                db.session.commit()
+            except Exception as e:
+                db.session.rollback()
+                logger.warning(f'[TRAIN] 状态写回失败 {code}/{kind}: {e}')
+
+        # 一次取 BATCH_SIZE 只标成 processing，整批处理完再取下一批
+        BATCH_SIZE = 10
         failed = 0
-        for i, code in enumerate(codes):
+        done = 0
+        stopped = False
+        for start in range(0, total, BATCH_SIZE):
             with train_lock:
                 if train_state.stop:
                     logger.info('[TRAIN] 收到停止请求，提前结束池循环')
                     break
-                train_state.message = f'正在处理 {code}（{i + 1}/{total}）'
-            try:
-                _do(code)
-            except Exception as e:
-                failed += 1
-                logger.warning(f'[TRAIN] {code} {kind} 失败: {e}')
-            with train_lock:
-                train_state.processed = i + 1
-                train_state.progress = round((i + 1) / total * 100, 1)
-                if failed:
-                    train_state.message = f'已处理 {i + 1}/{total}，其中失败 {failed} 只'
+            chunk = codes[start:start + BATCH_SIZE]
+            # 整批先标 processing（列表里这一批一起显示"处理中"）
+            for code in chunk:
+                _pool_set_status(code, 'processing')
+
+            for code in chunk:
+                with train_lock:
+                    if train_state.stop:
+                        logger.info('[TRAIN] 收到停止请求，提前结束池循环')
+                        stopped = True
+                        break
+                    train_state.message = f'正在处理 {code}（{done + 1}/{total}）'
+                try:
+                    _do(code)
+                    _pool_set_status(code, 'success')
+                except Exception as e:
+                    failed += 1
+                    logger.warning(f'[TRAIN] {code} {kind} 失败: {e}')
+                    _pool_set_status(code, 'error')
+                with train_lock:
+                    done += 1
+                    train_state.processed = done
+                    train_state.progress = round(done / total * 100, 1)
+                    if failed:
+                        train_state.message = f'已处理 {done}/{total}，其中失败 {failed} 只'
+            if stopped:
+                break
 
         if kind == 'train':
             try:
@@ -173,24 +296,33 @@ def _run_train_kind(kind: str, month: str, start_date: Optional[str],
         return
 
     # 全部模式（原逻辑）
+    # 进度写进 train_state，前端轮询 /api/train_status 即可实时看到处理到哪只；
+    # data / train 都按 10 只一批、逐只回写状态（见各自的 all_stock）。
+    def _report(processed, total, message):
+        with train_lock:
+            train_state.total = total
+            train_state.processed = processed
+            train_state.progress = round(processed / total * 100, 1) if total else 0
+            train_state.message = message
+
+    def _should_stop():
+        with train_lock:
+            return train_state.stop
+
     if kind == 'data':
         from App.codes.RnnModel.RnnCreationTrainingData import RMTrainingData
-        rt = RMTrainingData(months=month, start_=start_date)
-        rt.all_stock()
+        RMTrainingData(months=month, start_=start_date).all_stock(
+            progress_cb=_report, should_stop=_should_stop)
     elif kind == 'train':
         from App.codes.RnnModel.RnnCreationModel import RMBuiltModel
-        rb = RMBuiltModel(month)
-        rb.train_remaining_models()
+        RMBuiltModel(month).all_stock(progress_cb=_report, should_stop=_should_stop)
         try:
             from App.codes.RnnModel.model_predictor import clear_model_cache
             clear_model_cache()
         except Exception:
             pass
-    elif kind == 'check':
-        from App.codes.RnnModel.CheckModel import RMHistoryCheck
-        rc = RMHistoryCheck(month_parsers=month)
-        rc.loop_by_date()
     else:
+        # kind == 'check' 已在上方「单股循环模式」处理并 return，不会走到这里。
         raise ValueError(f'未知 kind: {kind}')
 
 
@@ -268,6 +400,13 @@ def api_training_records():
     """RnnTrainingRecords 表的内容。可按 month / status 过滤，分页返回。"""
     month = request.args.get('month')
     status = request.args.get('status')
+    # 状态针对哪一步骤列：数据/建模/检查 是三个独立状态列，必须指明过滤哪一列，
+    # 否则（旧实现写死 model_check）会出现"按 success 筛选却滤掉数据/建模已成功但
+    # 未检查的行""跑数据步时按 processing 筛选一条都没有"等不符合直觉的结果。
+    _STEP_COLUMNS = {'model_data', 'model_create', 'model_check'}
+    step = request.args.get('step') or 'model_check'
+    if step not in _STEP_COLUMNS:
+        step = 'model_check'
     try:
         page = max(1, int(request.args.get('page', 1)))
     except ValueError:
@@ -281,10 +420,32 @@ def api_training_records():
     if month:
         q = q.filter_by(parser_month=month)
     if status:
-        q = q.filter_by(model_check=status)
+        q = q.filter(getattr(RnnTrainingRecords, step) == status)
 
-    pagination = q.order_by(RnnTrainingRecords.id.desc()).paginate(
-        page=page, per_page=page_size, error_out=False)
+    # 排序：让处理进度在列表里实时可见。第 1 页优先看到：
+    #   0 正在处理(processing) → 1 处理好的(success，按完成时间倒序) →
+    #   2 即将处理(pending/未开始) → 3 其余(error 等)
+    # 排序字段跟随当前正在运行的步骤：train→建模(model_create) / check→检查(model_check)
+    # / 否则→数据(model_data)，这样跑哪一步，哪一步的"正在处理"就浮到最上。
+    with train_lock:
+        running_kind = train_state.kind if train_state.status == '进行中' else None
+    sort_state, sort_timing = {
+        'train': (RnnTrainingRecords.model_create, RnnTrainingRecords.model_create_timing),
+        'check': (RnnTrainingRecords.model_check, RnnTrainingRecords.model_check_timing),
+    }.get(running_kind,
+          (RnnTrainingRecords.model_data, RnnTrainingRecords.model_data_timing))
+    order_priority = case(
+        (sort_state == 'processing', 0),
+        (sort_state == 'success', 1),
+        (sort_state == 'pending', 2),
+        (sort_state.is_(None), 2),
+        else_=3,
+    )
+    pagination = q.order_by(
+        order_priority,
+        sort_timing.desc(),
+        RnnTrainingRecords.id.desc(),
+    ).paginate(page=page, per_page=page_size, error_out=False)
     records = pagination.items
 
     # 三步骤成功数在"整个过滤集"上统计（不只是当前页），分页时仍准确
@@ -316,6 +477,22 @@ def api_available_months():
     rows = db.session.query(RnnTrainingRecords.parser_month).distinct().all()
     months = sorted({r[0] for r in rows if r and r[0]}, reverse=True)
     return jsonify({'success': True, 'data': months})
+
+
+@rnn_strategies_bp.route('/api/board_names', methods=['GET'])
+def api_board_names():
+    """东财行业板块名列表（去重、排序），供预测记录的板块筛选下拉用。"""
+    try:
+        eng = db.engines['quanttradingsystem']
+        with eng.connect() as conn:
+            rows = conn.execute(text(
+                'SELECT DISTINCT board_name FROM industry_eastmoney '
+                'WHERE board_name IS NOT NULL AND board_name <> "" ORDER BY board_name'
+            )).fetchall()
+        return jsonify({'success': True, 'data': [r.board_name for r in rows]})
+    except Exception as e:
+        logger.exception('查板块名列表失败')
+        return jsonify({'success': False, 'message': str(e), 'data': []})
 
 
 # 允许打开的子文件夹白名单：键 -> 相对 RnnData/<month> 的子目录
@@ -648,18 +825,56 @@ def api_model_health():
 
 @rnn_strategies_bp.route('/api/prediction_records', methods=['GET'])
 def api_prediction_records():
-    """RnnRunningRecord 表的最新记录。可按 month / code 过滤。"""
+    """RnnRunningRecord 表的记录，按 created_at 倒序分页。
+    可按 month / code / trend(趋势) / signal(买卖信号) 过滤。"""
     month = request.args.get('month')
     code = request.args.get('code')
+    trend = request.args.get('trend')          # 上涨 / 下跌
+    signal = request.args.get('signal')        # buy / sell / none（按 trade_point 符号）
+    board = request.args.get('board')          # 东财行业板块名 → 该板块成分股
     try:
-        limit = max(1, min(int(request.args.get('limit', 100)), 500))
+        page = max(1, int(request.args.get('page', 1)))
     except ValueError:
-        limit = 100
+        page = 1
+    try:
+        page_size = max(1, min(int(request.args.get('page_size', 20)), 200))
+    except ValueError:
+        page_size = 20
 
     q = RnnRunningRecord.query
     if month:
         q = q.filter_by(parser_month=month)
     if code:
         q = q.filter_by(code=code)
-    records = q.order_by(RnnRunningRecord.created_at.desc()).limit(limit).all()
-    return jsonify({'success': True, 'data': [r.to_dict() for r in records], 'count': len(records)})
+    if trend:
+        q = q.filter_by(trends=trend)
+    if signal == 'buy':
+        q = q.filter(RnnRunningRecord.trade_point > 0)
+    elif signal == 'sell':
+        q = q.filter(RnnRunningRecord.trade_point < 0)
+    elif signal == 'none':
+        q = q.filter(RnnRunningRecord.trade_point == 0)
+    if board:
+        board_codes = _codes_in_board(board)
+        # 板块无成分股（或查询失败）时返回空集，而不是忽略筛选
+        q = q.filter(RnnRunningRecord.code.in_(board_codes)) if board_codes \
+            else q.filter(false())
+    pagination = q.order_by(RnnRunningRecord.created_at.desc()).paginate(
+        page=page, per_page=page_size, error_out=False)
+    records = pagination.items
+    data = [r.to_dict() for r in records]
+    # 附加每只股票所属板块（东财行业），整页一次批量查询
+    boards = _boards_for_codes([d.get('code') for d in data])
+    for d in data:
+        d['board'] = boards.get(str(d.get('code')), '')
+    return jsonify({
+        'success': True,
+        'data': data,
+        'count': len(records),
+        'pagination': {
+            'page': pagination.page,
+            'page_size': page_size,
+            'total_pages': pagination.pages or 1,
+            'total_items': pagination.total,
+        },
+    })

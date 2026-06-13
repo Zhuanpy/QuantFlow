@@ -432,35 +432,35 @@ def _append_live_15m(historical_df: pd.DataFrame, code: str, day_ts: pd.Timestam
     # 5) 取重算后的 live 行
     live_recomputed = combined.tail(len(live_15m)).reset_index(drop=True)
 
-    # 6) 信任 warmup pipeline 的"更晚 flip"判断：
-    #    pre_today.last 的 SignalStartIndex 来自昨天的离线全量 pipeline；
-    #    它的 filter_invalid_macd_signals 阈值在大窗口里有时会把真实的近期 flip
-    #    判成无效。warmup（100 根小窗口）反而能识别出这些近期 flip。
+    # 6) 用"方向"而非"时间戳"决定是否采纳 warmup 重算的趋势起点。
     #
-    #    规则：逐行比较 —— warmup 算出的 SignalStartIndex 比 pre_today.last 的更晚
-    #    就采纳（warmup 看到了离线漏掉的新 flip 或今天新发生的 flip）；否则继承历史。
+    #    warmup 只有 100 根，看不到 100 根之前就开始的"长趋势"的真实起点 ——
+    #    它会把一段延续中的同方向趋势的起点错误地截断到窗口内
+    #    （例：延续自 5/28 的下跌被 warmup 重新标成 6/3 起点）。原先按时间戳
+    #    "更晚就采纳"的规则恰好把这种被截断的假起点也采纳了，导致 live 当前趋势
+    #    与离线 parquet（after_close）不一致、且被切成一小段。
     #
-    #    这放宽了原来"只采纳今天 flip"的 B 语义 —— 此前那条规则太保守，会让 trader
-    #    在交易页面看到比实际趋势滞后 1-2 天的判定。
-    fresh_starts = pd.to_datetime(live_recomputed.get('SignalStartIndex'), errors='coerce')
+    #    新规则（按最终方向比较）：
+    #      - 今天行重算方向 == 离线 last 方向 → 趋势延续，继承离线起点（更早更完整）
+    #      - 方向不同              → 真的发生了翻转（今天新 flip / 离线漏判的近期 flip），
+    #                                采纳 warmup 重算值（其起点必在近期、落在窗口内，准确）
+    #    这样既消除"长趋势被截断"的 bug，又保留 warmup 发现近期翻转的能力。
     last_hist_signal = pre_today.iloc[-1].get('Signal') if 'Signal' in pre_today.columns else None
     last_hist_start = pre_today.iloc[-1].get('SignalStartIndex') if 'SignalStartIndex' in pre_today.columns else None
-    hist_start_ts = pd.to_datetime(last_hist_start, errors='coerce') if last_hist_start is not None else pd.NaT
+    last_hist_id = pre_today.iloc[-1].get('SignalId') if 'SignalId' in pre_today.columns else None
+    hist_sig_num = pd.to_numeric(pd.Series([last_hist_signal]), errors='coerce').iloc[0]
+    fresh_sig = (pd.to_numeric(live_recomputed.get('Signal'), errors='coerce')
+                 if 'Signal' in live_recomputed.columns else None)
 
-    if fresh_starts is None or not fresh_starts.notna().any():
-        # warmup 完全没找到 flip → 整段继承
-        live_recomputed['Signal'] = last_hist_signal
-        live_recomputed['SignalStartIndex'] = last_hist_start
-    else:
-        for i in range(len(live_recomputed)):
-            fs = fresh_starts.iloc[i] if i < len(fresh_starts) else pd.NaT
-            # warmup 这一行的 flip 比离线 last 更晚 → 用 warmup 的（新发现的 flip）
-            # 否则 → 继承离线 last（warmup 没看到比离线更新的东西）
-            if pd.notna(fs) and (pd.isna(hist_start_ts) or fs > hist_start_ts):
-                pass  # 保留 warmup 算出的 fresh 值
-            else:
-                live_recomputed.at[i, 'Signal'] = last_hist_signal
-                live_recomputed.at[i, 'SignalStartIndex'] = last_hist_start
+    for i in range(len(live_recomputed)):
+        fi = fresh_sig.iloc[i] if (fresh_sig is not None and i < len(fresh_sig)) else None
+        # 同向延续，或今天行没算出方向 → 继承离线（趋势从更早的真实起点延续至今）
+        if fi is None or pd.isna(fi) or (pd.notna(hist_sig_num) and fi == hist_sig_num):
+            live_recomputed.at[i, 'Signal'] = last_hist_signal
+            live_recomputed.at[i, 'SignalStartIndex'] = last_hist_start
+            if last_hist_id is not None and 'SignalId' in live_recomputed.columns:
+                live_recomputed.at[i, 'SignalId'] = last_hist_id
+        # else: 方向翻转 → 保留 warmup 算出的 fresh 值（近期真实翻转）
 
     # 7) 列对齐到 pre_today 的全集（pipeline 不写的列保持 NaN），concat 回去
     for c in pre_today.columns:
@@ -947,20 +947,7 @@ def api_cycles(code):
     # CycleLengthMax / CycleAmplitudeMax 是结束后回填的"最终值"，
     # 直接用会泄漏未来。下面对这些周期单独重算。
     # live 模式：最后一段是"今天进行中"的周期，强制标为 in-progress。
-    inprogress_sidx = set()
-    if as_of_ts is not None:
-        sig_full = df[df['SignalStartIndex'].notna()]
-        for sidx, gg in sig_full.groupby('SignalStartIndex'):
-            if gg['date'].max() > as_of_ts:
-                inprogress_sidx.add(sidx)
-        df = df[df['date'] <= as_of_ts]
-    elif live_merged:
-        # 最后一根 K 线所在的 SignalStartIndex 段 = 还在进行中
-        last_ssi = df['SignalStartIndex'].dropna().iloc[-1] if df['SignalStartIndex'].notna().any() else None
-        if last_ssi is not None:
-            inprogress_sidx.add(last_ssi)
-
-    df = df[df['SignalStartIndex'].notna()].sort_values('date')
+    df = df[df['SignalStartIndex'].notna()].sort_values('date').reset_index(drop=True)
     if df.empty:
         return jsonify({'success': True, 'count': 0,
                         'as_of': as_of_ts.strftime('%Y-%m-%d %H:%M:%S') if as_of_ts is not None else None,
@@ -975,10 +962,38 @@ def api_cycles(code):
     has_high = 'high' in df.columns
     has_low = 'low' in df.columns
 
+    # 按「时间上连续的同 SignalStartIndex」切分成段，而不是 groupby(SSI 值)。
+    # 信号管线在一次反向小周期后可能把新趋势段又赋成旧的 SignalStartIndex（SSI 复用、
+    # 非单调）。groupby(值) 会把两段不连续的趋势合并成一个超长周期，且"最新周期"按 SSI
+    # 值排序会选错——导致详情页"分布图当前周期"方向与"当前趋势"相反。连续段切分保证：
+    # 每段 = 一个真实连续趋势，按时间排序，最后一段 = 当下进行中的周期（与 api_15m 一致）。
+    ssi_key = df['SignalStartIndex'].astype(str)
+    seg_bounds = []
+    s = 0
+    for i in range(1, len(df) + 1):
+        if i == len(df) or ssi_key.iloc[i] != ssi_key.iloc[s]:
+            seg_bounds.append((s, i - 1))
+            s = i
+
+    # 进行中段：as_of 模式下"末根晚于 as_of"的段；live 模式下时间最后一段。
+    inprogress_idx = set()
+    if as_of_ts is not None:
+        for k, (a, b) in enumerate(seg_bounds):
+            if df['date'].iloc[b] > as_of_ts:
+                inprogress_idx.add(k)
+    elif live_merged and seg_bounds:
+        inprogress_idx.add(len(seg_bounds) - 1)
+
     cycles = []
-    for sidx, g in df.groupby('SignalStartIndex', sort=True):
+    for k, (a, b) in enumerate(seg_bounds):
+        g = df.iloc[a:b + 1]
+        if as_of_ts is not None:
+            g = g[g['date'] <= as_of_ts]
+            if g.empty:
+                continue
+        sidx = df['SignalStartIndex'].iloc[a]
         first, last = g['date'].iloc[0], g['date'].iloc[-1]
-        is_inprogress = sidx in inprogress_sidx
+        is_inprogress = k in inprogress_idx
         direction = 0
         if has_signal:
             sv = pd.to_numeric(g['Signal'], errors='coerce').dropna()
@@ -986,8 +1001,7 @@ def api_cycles(code):
                 direction = int(1 if sv.iloc[-1] > 0 else -1 if sv.iloc[-1] < 0 else 0)
 
         # CycleLengthMax 在源数据里是周期结束后回填的最终值。
-        # as-of 模式下，正在进行中的周期得改回"截止当下已走过几根" = len(g) - 1，
-        # 否则前端会拿到一个"提前知道未来"的长度。
+        # as-of / 进行中的周期改回"截止当下已走过几根" = len(g) - 1，避免泄漏未来。
         if is_inprogress:
             clen = max(0, len(g) - 1)
         else:

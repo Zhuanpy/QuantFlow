@@ -2,7 +2,6 @@ from flask import Blueprint, jsonify, render_template, current_app, request
 from datetime import datetime
 import logging
 import traceback
-from sqlalchemy import and_, or_
 from concurrent.futures import ThreadPoolExecutor
 import threading
 import os
@@ -177,13 +176,18 @@ def update_processing_status(stock_code, year, status, message=''):
 
 @RnnData.route('/rnn_data_page', methods=['GET', 'POST'])
 def rnn_data_page():
-    return render_template('strategy/rnn_model_data.html')
+    """RNN 模型数据状态监控页。
 
-# 数据统计页面
-@RnnData.route('/data_statistics')
-def data_statistics_page():
-    """数据统计页面"""
-    return render_template('strategy/data_statistics.html')
+    可选传入个股：?code=<代码>&name=<名称>（GET 查询串或 POST 表单均可），
+    传入后页面只针对该只股票（预填搜索框 + 顶部提示），不传则展示全部记录。
+    """
+    code = (request.values.get('code') or '').strip()
+    name = (request.values.get('name') or '').strip()
+    return render_template('strategy/rnn_model_data.html', stock_code=code, stock_name=name)
+
+# 注：原 /data_statistics 页与 /quarter_stats 接口已移除——整页基于过时的"季度"概念，
+# 数据源 quarter_stats 已失效（恒返回 0）、操作按钮全是未实现的桩。流水线状态统计（数据/
+# 建模/检查 各月成功数）已由 /RnnStrategies/training 的记录表+按月汇总覆盖。
 
 
 @RnnData.route('/api/stock_pool_stats')
@@ -231,90 +235,8 @@ def process_stock_pool_data():
     """已废弃：见 /RnnStrategies/training（按月份处理整个流水线）"""
     return jsonify({'success': False, 'message': _DEPRECATED_MSG}), 501
 
-# 获取统计数据
-@RnnData.route('/statistics', methods=['GET'])
-def get_statistics():
-    """获取RNN训练记录的统计数据"""
-    try:
-        total = RnnTrainingRecords.query.count()
-        success = RnnTrainingRecords.query.filter(
-            RnnTrainingRecords.model_check == RnnTrainingRecords.STATUS_SUCCESS
-        ).count()
-        pending = RnnTrainingRecords.query.filter(
-            RnnTrainingRecords.model_check == RnnTrainingRecords.STATUS_PENDING
-        ).count()
-        failed = RnnTrainingRecords.query.filter(
-            RnnTrainingRecords.model_check == RnnTrainingRecords.STATUS_FAILED
-        ).count()
-        
-        return jsonify({
-            'success': True,
-            'total': total,
-            'success': success,
-            'pending': pending,
-            'failed': failed
-        })
-    except Exception as e:
-        logger.error(f"获取统计数据失败: {e}")
-        return jsonify({
-            'success': False,
-            'message': str(e)
-        }), 500
-
-# 获取记录列表
-@RnnData.route('/records', methods=['GET'])
-def get_records():
-    """获取RNN训练记录列表"""
-    try:
-        page = int(request.args.get('page', 1))
-        page_size = int(request.args.get('page_size', 20))
-        search = request.args.get('search', '')
-        status = request.args.get('status', '')
-        
-        # 构建查询
-        query = RnnTrainingRecords.query
-        
-        # 搜索条件
-        if search:
-            query = query.filter(
-                or_(
-                    RnnTrainingRecords.code.like(f'%{search}%'),
-                    RnnTrainingRecords.name.like(f'%{search}%')
-                )
-            )
-        
-        # 状态筛选
-        if status:
-            query = query.filter(RnnTrainingRecords.model_check == status)
-        
-        # 分页
-        pagination = query.paginate(
-            page=page,
-            per_page=page_size,
-            error_out=False
-        )
-        
-        # 转换为字典格式
-        records = []
-        for record in pagination.items:
-            records.append(record.to_dict())
-        
-        return jsonify({
-            'success': True,
-            'records': records,
-            'pagination': {
-                'current_page': pagination.page,
-                'total_pages': pagination.pages,
-                'total_items': pagination.total,
-                'per_page': pagination.per_page
-            }
-        })
-    except Exception as e:
-        logger.error(f"获取记录列表失败: {e}")
-        return jsonify({
-            'success': False,
-            'message': str(e)
-        }), 500
+# 注：原 /statistics 与 /records 两个只读接口已随 rnn_data_page 瘦身为入口页而移除
+# （记录查看/统计已统一到 /RnnStrategies/training 与其 api/training_records）。
 
 # 初始化年份数据
 @RnnData.route('/init_year/<year>', methods=['POST'])
@@ -361,118 +283,6 @@ def process_quarter_data(year, quarter):
 def process_multiple_quarters(year):
     """已废弃：按年/多季度批量处理数据。改用 /RnnStrategies/training。"""
     return jsonify({'success': False, 'message': _DEPRECATED_MSG}), 501
-
-# 获取季度数据统计
-@RnnData.route('/quarter_stats/<int:year>', methods=['GET'])
-def get_quarter_stats(year):
-    """获取指定年份的季度数据统计"""
-    try:
-        from App.codes.RnnModel.QuarterlyDataProcessor import QuarterlyDataProcessor
-        import os
-        from datetime import datetime
-        
-        processor = QuarterlyDataProcessor()
-        stats = {}
-        
-        for quarter in range(1, 5):
-            quarter_key = f"{year}Q{quarter}"
-            
-            # 检查季度数据目录
-            quarter_path = processor.base_data_path / "quarters" / f"{year}Q{quarter}"
-            csv_files = list(quarter_path.glob("*.csv")) if quarter_path.exists() else []
-            
-            # 检查训练数据目录
-            train_path = processor.base_data_path / "RnnData" / f"{year}-{quarter:02d}" / "train_data"
-            train_files = list(train_path.glob("*_training.csv")) if train_path.exists() else []
-            
-            # 检查15分钟数据目录
-            data_15m_path = processor.base_data_path / "RnnData" / f"{year}-{quarter:02d}" / "15m"
-            data_15m_files = list(data_15m_path.glob("*.csv")) if data_15m_path.exists() else []
-            
-            # 获取文件大小信息
-            raw_data_size = 0
-            if quarter_path.exists():
-                for file in csv_files:
-                    try:
-                        raw_data_size += os.path.getsize(file)
-                    except:
-                        pass
-            
-            training_data_size = 0
-            if train_path.exists():
-                for file in train_files:
-                    try:
-                        training_data_size += os.path.getsize(file)
-                    except:
-                        pass
-            
-            # 获取最后修改时间
-            last_raw_update = None
-            if csv_files:
-                try:
-                    last_raw_update = datetime.fromtimestamp(
-                        max(os.path.getmtime(f) for f in csv_files)
-                    ).strftime('%Y-%m-%d %H:%M:%S')
-                except:
-                    pass
-            
-            last_training_update = None
-            if train_files:
-                try:
-                    last_training_update = datetime.fromtimestamp(
-                        max(os.path.getmtime(f) for f in train_files)
-                    ).strftime('%Y-%m-%d %H:%M:%S')
-                except:
-                    pass
-            
-            # 确定状态
-            raw_status = "有数据" if len(csv_files) > 0 else "无数据"
-            training_status = "已整理" if len(train_files) > 0 else "未整理"
-            data_15m_status = "已处理" if len(data_15m_files) > 0 else "未处理"
-            
-            # 计算完成度
-            completion_rate = 0
-            if len(csv_files) > 0:
-                completion_rate += 25  # 有原始数据
-            if len(data_15m_files) > 0:
-                completion_rate += 25  # 有15分钟数据
-            if len(train_files) > 0:
-                completion_rate += 50  # 有训练数据
-            
-            stats[quarter_key] = {
-                'quarter': quarter,
-                'year': year,
-                'raw_data_files': len(csv_files),
-                'training_files': len(train_files),
-                'data_15m_files': len(data_15m_files),
-                'raw_data_size': raw_data_size,
-                'training_data_size': training_data_size,
-                'raw_data_size_mb': round(raw_data_size / (1024 * 1024), 2),
-                'training_data_size_mb': round(training_data_size / (1024 * 1024), 2),
-                'has_raw_data': len(csv_files) > 0,
-                'has_training_data': len(train_files) > 0,
-                'has_15m_data': len(data_15m_files) > 0,
-                'raw_status': raw_status,
-                'training_status': training_status,
-                'data_15m_status': data_15m_status,
-                'last_raw_update': last_raw_update,
-                'last_training_update': last_training_update,
-                'completion_rate': completion_rate,
-                'status_color': 'success' if completion_rate == 100 else ('warning' if completion_rate >= 50 else 'danger')
-            }
-        
-        return jsonify({
-            'success': True,
-            'year': year,
-            'quarter_stats': stats
-        })
-        
-    except Exception as e:
-        logger.error(f"获取季度统计失败: {e}")
-        return jsonify({
-            'success': False,
-            'message': str(e)
-        }), 500
 
 # 计算15分钟原始数据
 @RnnData.route('/original_15M/<year>', methods=['POST'])
