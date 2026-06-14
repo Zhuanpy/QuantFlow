@@ -5,7 +5,10 @@
     <div class="bd-header">
         <div>
             <a href="{{ url_for('stock_trend.page') }}" class="back-link">← 返回个股趋势打分</a>
-            <h1 id="bdTitle">{{ stock_code }}</h1>
+            <h1 id="bdTitle" style="display:inline-block;margin-right:.6rem;">{{ stock_code }}</h1>
+            <a href="/stock/?code={{ stock_code }}&period=15m" target="_blank"
+               title="查看 {{ stock_code }} 的 15 分钟 K 线趋势/波段分析"
+               style="display:inline-block;font-size:.82rem;color:#2563eb;text-decoration:none;border:1px solid #bfdbfe;background:#eff6ff;padding:.2rem .55rem;border-radius:.35rem;vertical-align:middle;">📈 15分钟K趋势 ↗</a>
             <div class="bd-meta" id="bdMeta">加载中...</div>
         </div>
         <div class="bd-actions">
@@ -54,6 +57,12 @@
         <div class="sc-breakdown" id="scBreakdown"></div>
     </div>
 
+    <!-- 个股统计快照（来自 data_stock_daily 的 ss_*，每日收盘后由 save_daily_stats.py 写入） -->
+    <div class="ss-card" id="ssCard">
+        <div class="ss-head">个股统计快照 <span class="ss-date" id="ssDate"></span></div>
+        <div class="ss-body" id="ssBody"><span style="color:#9ca3af;">加载中…</span></div>
+    </div>
+
     <div class="chart-title">日 K 线 <span class="chart-status" id="kChartStatus"></span></div>
     <div id="kChart" class="chart-box"></div>
 
@@ -82,19 +91,31 @@
     </div>
 
     <div class="history-wrap">
-        <h3>历史评分（最近 120 条）</h3>
+        <h3>历史评分（最近 120 条）<span style="font-weight:400;font-size:.78rem;color:#6b7280;margin-left:.5rem;">每行一个交易日：左为日K趋势打分，右(蓝)为当日 15m 统计快照，便于对照预测与后续走势</span></h3>
+        <div style="overflow-x:auto;">
         <table class="hist-table">
             <thead>
+                <!-- 口径分组标题：左 日K / 右 15m，避免混淆 -->
+                <tr class="hist-group">
+                    <th colspan="12" style="background:#f1f5f9;color:#0f172a;border-bottom:2px solid #cbd5e1;">日K 趋势打分</th>
+                    <th colspan="15" class="ss-sep" style="background:#eef2ff;color:#3730a3;border-bottom:2px solid #c7d2fe;">15m 统计快照（每日收盘统计一次）</th>
+                    <th colspan="1" class="op-sep" style="background:#fef3c7;color:#92400e;border-bottom:2px solid #fcd34d;">交易</th>
+                </tr>
                 <tr><th>日期</th><th>阶段</th><th>置信</th><th>强度</th><th>信号</th>
-                    <th>价格</th><th>均线</th><th>MACD</th><th>量能</th><th>动量</th><th>波动率</th><th class="hl">综合分</th></tr>
+                    <th>价格</th><th>均线</th><th>MACD</th><th>量能</th><th>动量</th><th>波动率</th><th class="hl">综合分</th>
+                    <th class="ss-sep">趋势名</th><th>方向</th><th>长度当</th><th>长度位</th><th>振幅当</th><th>振幅位</th><th>量位</th>
+                    <th>板块趋势</th><th>R趋势</th><th>R信号</th><th>R分</th><th>R预周</th><th>R实周</th><th>R预幅</th><th>R实幅</th>
+                    <th class="op-sep">操作</th></tr>
             </thead>
-            <tbody id="histBody"><tr><td colspan="12" class="empty">加载中...</td></tr></tbody>
+            <tbody id="histBody"><tr><td colspan="28" class="empty">加载中...</td></tr></tbody>
         </table>
+        </div>
     </div>
+
 </div>
 
 <style>
-    .container { max-width:1400px; margin:1rem auto; padding:0 1rem; }
+    .container { margin:1rem auto; padding:0 1rem; }
     .back-link { color:#2563eb; font-size:.85rem; text-decoration:none; }
     .back-link:hover { text-decoration:underline; }
     .bd-header { display:flex; justify-content:space-between; align-items:flex-start;
@@ -170,6 +191,14 @@
     .score-card .val { font-weight:600; font-size:1rem; }
     .sc-total .val { color:#2563eb; font-size:1.4rem; }
     .sc-breakdown { margin-left:auto; font-size:.78rem; color:#4b5563; display:flex; gap:.6rem; flex-wrap:wrap; }
+    /* 个股统计快照卡 */
+    .ss-card { background:#fff; padding:.7rem 1rem; border-radius:.5rem; margin-bottom:.75rem; box-shadow:var(--shadow-sm); border-left:3px solid #6366f1; }
+    .ss-head { font-weight:600; color:#3730a3; font-size:.92rem; margin-bottom:.5rem; }
+    .ss-date { font-weight:400; color:#9ca3af; font-size:.78rem; margin-left:.4rem; }
+    .ss-body { display:flex; flex-wrap:wrap; gap:.4rem 1.1rem; font-size:.84rem; }
+    .ss-body .it { color:#374151; }
+    .ss-body .it b { color:#111827; }
+    .ss-body .grp { color:#6366f1; font-weight:600; margin-right:.2rem; }
     .sc-breakdown span b { color:#1f2937; }
 
     .chart-title { font-size:.95rem; font-weight:600; color:#1f2937; margin:.25rem 0 .4rem;
@@ -209,6 +238,10 @@
     .hist-table th { background:#f9fafb; color:#374151; text-align:center; }
     .hist-table td:first-child, .hist-table th:first-child { text-align:left; }
     .hist-table td.hl, .hist-table th.hl { background:#eff6ff; font-weight:600; }
+    /* 个股统计快照列：左侧加分隔线 + 浅蓝底，与左侧打分区区分 */
+    .hist-table td.ss-sep, .hist-table th.ss-sep { border-left:2px solid #c7d2fe; }
+    .hist-table th.ss-sep { background:#eef2ff; color:#3730a3; }
+    .hist-table td.op-sep, .hist-table th.op-sep { border-left:2px solid #fcd34d; text-align:center; }
     .empty { text-align:center !important; color:#9ca3af; padding:1.5rem; }
     .stage-tag { display:inline-block; padding:.1rem .45rem; border-radius:.3rem; font-size:.75rem; }
     .stage-tag.up_early { background:#d1fae5; color:#065f46; }
@@ -435,7 +468,7 @@ async function loadHistory() {
 
     const tb = document.getElementById('histBody');
     if (rows.length === 0) {
-        tb.innerHTML = `<tr><td colspan="12" class="empty">暂无历史</td></tr>`;
+        tb.innerHTML = `<tr><td colspan="28" class="empty">暂无历史</td></tr>`;
     } else {
         tb.innerHTML = rows.map(it => `
             <tr>
@@ -451,6 +484,22 @@ async function loadHistory() {
                 <td>${fmtNum(it.momentum_score)}</td>
                 <td>${fmtNum(it.volatility_score)}</td>
                 <td class="hl">${fmtNum(it.total_score, 1)}</td>
+                <td class="ss-sep" style="font-family:monospace;">${it.ss_signal_name || '—'}</td>
+                <td>${ssDirTxt(it.ss_direction)}</td>
+                <td>${ssN(it.ss_len_current,0)}</td>
+                <td>${ssPc(it.ss_len_pct)}</td>
+                <td>${ssPc(it.ss_amp_current)}</td>
+                <td>${ssPc(it.ss_amp_pct)}</td>
+                <td>${ssPc(it.ss_v5_pct)}</td>
+                <td>${ssStageTxt(it.ss_board_trend_stage)}</td>
+                <td>${it.ss_rnn_trends || '—'}</td>
+                <td>${ssSigTxt(it.ss_rnn_trade_point)}</td>
+                <td>${ssN(it.ss_rnn_score_trends)}</td>
+                <td>${it.ss_rnn_predict_cycle_length ?? '—'}</td>
+                <td>${it.ss_rnn_real_cycle_length ?? '—'}</td>
+                <td>${ssN(it.ss_rnn_predict_cycle_change,3)}</td>
+                <td>${ssN(it.ss_rnn_real_cycle_change,3)}</td>
+                <td class="op-sep">${opTxt(it.trade_op)}</td>
             </tr>
         `).join('');
     }
@@ -918,6 +967,7 @@ async function enrollStock() {
             loadChart();
             loadChart15m();
             loadBoards();
+            loadSsSnapshot();
         } else {
             status.className = 'enroll-status err';
             status.textContent = `✗ ${r.message || '下载失败'}`;
@@ -931,10 +981,46 @@ async function enrollStock() {
     }
 }
 
+// 个股统计快照卡（data_stock_daily 的 ss_*，最新有数据那天）
+const SS_STAGE = {up_early:'上涨初期', up_late:'上涨末期', down_early:'下跌初期', down_late:'下跌末期'};
+// 历史评分表里 ss_ 列的格式化 helper
+function ssN(v, d=2){ return (v===null||v===undefined)?'—':Number(v).toFixed(d); }
+function ssPc(v){ return (v===null||v===undefined)?'—':(v*100).toFixed(0)+'%'; }
+function ssWan(v){ return (v===null||v===undefined)?'—':(v/1e4).toFixed(1); }
+function ssDirTxt(v){ return v===1?'<span style="color:#b91c1c;">涨</span>':(v===-1?'<span style="color:#15803d;">跌</span>':'—'); }
+function ssSigTxt(v){ return v>0?'<span style="color:#16a34a;">买</span>':(v<0?'<span style="color:#dc2626;">卖</span>':'—'); }
+function ssStageTxt(s){ return s?(SS_STAGE[s]||s):'—'; }
+function opTxt(v){ return v==='buy'?'<b style="color:#b91c1c;">买</b>':v==='sell'?'<b style="color:#15803d;">卖</b>':v==='both'?'<b style="color:#7c3aed;">买/卖</b>':'—'; }
+async function loadSsSnapshot() {
+    const body = document.getElementById('ssBody');
+    const dateEl = document.getElementById('ssDate');
+    let j;
+    try { j = await fetch(`/stock_trend/api/stock/${STOCK_CODE}/ss_snapshot`).then(x => x.json()); }
+    catch (e) { body.innerHTML = `<span style="color:#dc2626;">加载失败</span>`; return; }
+    const d = j && j.data;
+    if (!d) { dateEl.textContent = ''; body.innerHTML = '<span style="color:#9ca3af;">暂无统计快照（收盘后运行 save_daily_stats.py 生成）</span>'; return; }
+    dateEl.textContent = '（' + (d.date || '') + '）';
+    const nz = (v, dec=2) => (v === null || v === undefined) ? '—' : Number(v).toFixed(dec);
+    const pc = v => (v === null || v === undefined) ? '—' : (v * 100).toFixed(0) + '%';
+    const wan = v => (v === null || v === undefined) ? '—' : (v / 1e4).toFixed(1) + '万';
+    const dir = d.ss_direction === 1 ? '<b style="color:#b91c1c;">上涨</b>' : d.ss_direction === -1 ? '<b style="color:#15803d;">下跌</b>' : '—';
+    const bstage = d.ss_board_trend_stage ? `${SS_STAGE[d.ss_board_trend_stage] || d.ss_board_trend_stage}${d.ss_board_trend_score == null ? '' : ' ' + Math.round(d.ss_board_trend_score)}` : '—';
+    const rsig = d.ss_rnn_trade_point > 0 ? '<b style="color:#16a34a;">买入</b>' : d.ss_rnn_trade_point < 0 ? '<b style="color:#dc2626;">卖出</b>' : '—';
+    body.innerHTML = `
+        <span class="it"><span class="grp">趋势</span><b style="font-family:monospace;">${d.ss_signal_name || '—'}</b></span>
+        <span class="it"><span class="grp">方向</span>${dir}</span>
+        <span class="it"><span class="grp">长度</span>当 <b>${nz(d.ss_len_current,0)}</b> / 均 ${nz(d.ss_len_mean,1)} · 分位 <b>${pc(d.ss_len_pct)}</b> · z ${nz(d.ss_len_z)}</span>
+        <span class="it"><span class="grp">振幅</span>当 <b>${pc(d.ss_amp_current)}</b> / 均 ${pc(d.ss_amp_mean)} · 分位 <b>${pc(d.ss_amp_pct)}</b> · z ${nz(d.ss_amp_z)}</span>
+        <span class="it"><span class="grp">量能</span>当 <b>${wan(d.ss_v5_current)}</b> / 均 ${wan(d.ss_v5_mean)} · 分位 <b>${pc(d.ss_v5_pct)}</b></span>
+        <span class="it"><span class="grp">板块</span>${d.ss_board_name || '—'} · ${bstage}</span>
+        <span class="it"><span class="grp">RNN</span>${d.ss_rnn_trends || '—'} · 信号 ${rsig} · 分 <b>${nz(d.ss_rnn_score_trends)}</b> · 预测周期 ${d.ss_rnn_predict_cycle_length ?? '—'}/实 ${d.ss_rnn_real_cycle_length ?? '—'}</span>`;
+}
+
 loadQuote();
 loadHistory();
 loadChart();
 loadChart15m();
 loadBoards();
+loadSsSnapshot();
 </script>
 {% endblock %}

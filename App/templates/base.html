@@ -142,6 +142,9 @@
                     <a href="{{ url_for('screener.page') }}" {% if request.endpoint == 'screener.page' %}class="active"{% endif %}>个股筛选</a>
                 </li>
                 <li class="nav-item">
+                    <a href="{{ url_for('stock_stats.page') }}" {% if request.endpoint == 'stock_stats.page' %}class="active"{% endif %}>个股统计</a>
+                </li>
+                <li class="nav-item">
                     <a href="{{ url_for('issue_bp.issues') }}" {% if request.endpoint == 'issue_bp.issues' %}class="active"{% endif %}>问题管理</a>
                 </li>
             </ul>

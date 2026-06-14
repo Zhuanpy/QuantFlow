@@ -41,8 +41,51 @@ class StockDaily(db.Model):
     fund_holdings_avg_ratio = db.Column(db.Float, nullable=True, default=0, comment='基金平均持仓比例')
     fund_holdings_max_ratio = db.Column(db.Float, nullable=True, default=0, comment='基金最大持仓比例')
 
+    # ==================== 个股统计快照（每日收盘后由 scripts/save_daily_stats.py 写入） ====================
+    # 维持 15m 口径：取当日 stock_dist_snapshot「当前方向」有效值 + 板块趋势 + 最新 RNN 预测。
+    # 历史行为空，仅当天运行后填入；与 /stock_stats 页字段一一对应。
+    ss_direction = db.Column(db.Integer, nullable=True, comment='当前周期方向 1上/-1下/0')
+    ss_signal_name = db.Column(db.String(40), nullable=True, comment='当前周期趋势名 ↑涨/↓跌#YYMMDD-HHMM')
+    ss_len_current = db.Column(db.Float, nullable=True, comment='长度 当前(已走根数)')
+    ss_len_mean = db.Column(db.Float, nullable=True, comment='长度 历史均值')
+    ss_len_z = db.Column(db.Float, nullable=True, comment='长度 z 分数')
+    ss_len_pct = db.Column(db.Float, nullable=True, comment='长度 经验分位')
+    ss_len_n = db.Column(db.Integer, nullable=True, comment='长度 历史样本数')
+    ss_amp_current = db.Column(db.Float, nullable=True, comment='振幅 当前')
+    ss_amp_mean = db.Column(db.Float, nullable=True, comment='振幅 历史均值')
+    ss_amp_z = db.Column(db.Float, nullable=True, comment='振幅 z 分数')
+    ss_amp_pct = db.Column(db.Float, nullable=True, comment='振幅 经验分位')
+    ss_v5_current = db.Column(db.Float, nullable=True, comment='量能 当前(1m量峰值)')
+    ss_v5_mean = db.Column(db.Float, nullable=True, comment='量能 历史均值')
+    ss_v5_z = db.Column(db.Float, nullable=True, comment='量能 z 分数')
+    ss_v5_pct = db.Column(db.Float, nullable=True, comment='量能 经验分位')
+    ss_board_code = db.Column(db.String(20), nullable=True, comment='所属东财行业板块代码')
+    ss_board_name = db.Column(db.String(50), nullable=True, comment='所属板块名称')
+    ss_board_trend_stage = db.Column(db.String(20), nullable=True, comment='板块趋势阶段')
+    ss_board_trend_score = db.Column(db.Float, nullable=True, comment='板块趋势综合分')
+    ss_board_signal = db.Column(db.String(10), nullable=True, comment='板块买卖信号')
+    ss_rnn_trends = db.Column(db.String(20), nullable=True, comment='RNN 趋势')
+    ss_rnn_trade_point = db.Column(db.Float, nullable=True, comment='RNN 买卖点 1买/-1卖/0')
+    ss_rnn_score_trends = db.Column(db.Float, nullable=True, comment='RNN 趋势分数 [-1,1]')
+    ss_rnn_predict_cycle_length = db.Column(db.Integer, nullable=True, comment='RNN 预测周期长度')
+    ss_rnn_real_cycle_length = db.Column(db.Integer, nullable=True, comment='RNN 实际周期长度')
+    ss_rnn_predict_cycle_change = db.Column(db.Float, nullable=True, comment='RNN 预测振幅')
+    ss_rnn_real_cycle_change = db.Column(db.Float, nullable=True, comment='RNN 实际振幅')
+
     def __repr__(self):
         return f'<StockDaily {self.stock_code} {self.date}>'
+
+    # 上面 ss_* 字段名的有序清单，供脚本批量写入/校验复用
+    SS_FIELDS = (
+        'ss_direction', 'ss_signal_name',
+        'ss_len_current', 'ss_len_mean', 'ss_len_z', 'ss_len_pct', 'ss_len_n',
+        'ss_amp_current', 'ss_amp_mean', 'ss_amp_z', 'ss_amp_pct',
+        'ss_v5_current', 'ss_v5_mean', 'ss_v5_z', 'ss_v5_pct',
+        'ss_board_code', 'ss_board_name', 'ss_board_trend_stage', 'ss_board_trend_score', 'ss_board_signal',
+        'ss_rnn_trends', 'ss_rnn_trade_point', 'ss_rnn_score_trends',
+        'ss_rnn_predict_cycle_length', 'ss_rnn_real_cycle_length',
+        'ss_rnn_predict_cycle_change', 'ss_rnn_real_cycle_change',
+    )
 
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典格式"""
@@ -59,6 +102,7 @@ class StockDaily(db.Model):
             'fund_holdings_ratio': self.fund_holdings_ratio,
             'fund_holdings_avg_ratio': self.fund_holdings_avg_ratio,
             'fund_holdings_max_ratio': self.fund_holdings_max_ratio,
+            **{f: getattr(self, f) for f in self.SS_FIELDS},
         }
 
 

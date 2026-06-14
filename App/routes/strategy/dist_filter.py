@@ -53,12 +53,15 @@ def page():
 
 # ---------------- 后台刷新快照（生成今日 snapshot_date）----------------
 _compute_state = {'running': False, 'done': 0, 'total': 0, 'ok': 0,
-                  'empty': 0, 'fail': 0, 'date': None, 'error': None}
+                  'empty': 0, 'fail': 0, 'date': None, 'merge_below': 0, 'error': None}
 _compute_lock = threading.Lock()
 
 
-def _run_compute_all(app, target_date):
-    """后台线程：对 data/15m 下全部个股(排除 BK)算当日分布快照，逐只 upsert。"""
+def _run_compute_all(app, target_date, merge_below=0):
+    """后台线程：对 data/15m 下全部个股(排除 BK)算当日分布快照，逐只 upsert。
+
+    merge_below>0 时按"合并<X%小周期"去噪口径计算，与原始(0)口径分别存行。
+    """
     from pathlib import Path
     from config import Config
     from App.services.dist_snapshot_service import compute_dist_snapshot
@@ -73,7 +76,8 @@ def _run_compute_all(app, target_date):
                 _compute_state['total'] = len(codes)
             for code in codes:
                 try:
-                    row = compute_dist_snapshot(code, snapshot_date=target_date, commit=True)
+                    row = compute_dist_snapshot(code, snapshot_date=target_date,
+                                                commit=True, merge_below=merge_below)
                     with _compute_lock:
                         _compute_state['empty' if row is None else 'ok'] += 1
                 except Exception:
@@ -94,17 +98,27 @@ def _run_compute_all(app, target_date):
 
 @screener_bp.route('/api/snapshots/compute', methods=['POST'])
 def api_compute():
-    """启动后台计算：对全部收集个股生成今日分布快照（同日重跑覆盖）。"""
+    """启动后台计算：对全部收集个股生成今日分布快照（同日同口径重跑覆盖）。
+
+    body/query 可带 merge_below(%)：0=原始口径；>0=合并<X%小周期的去噪口径。
+    """
+    body = request.get_json(silent=True) or {}
+    try:
+        merge_below = float(body.get('merge_below') if body.get('merge_below') is not None
+                            else request.args.get('merge_below') or 0)
+    except (TypeError, ValueError):
+        merge_below = 0.0
     with _compute_lock:
         if _compute_state['running']:
             return jsonify({'success': False, 'message': '已有快照计算在进行中'}), 409
         _compute_state.update({'running': True, 'done': 0, 'total': 0, 'ok': 0,
                                'empty': 0, 'fail': 0, 'date': str(date.today()),
-                               'error': None})
+                               'merge_below': merge_below, 'error': None})
     app = current_app._get_current_object()
-    threading.Thread(target=_run_compute_all, args=(app, date.today()),
+    threading.Thread(target=_run_compute_all, args=(app, date.today(), merge_below),
                      daemon=True).start()
-    return jsonify({'success': True, 'message': '已开始后台计算今日快照'})
+    tag = f'（合并<{merge_below}%小周期口径）' if merge_below > 0 else '（原始口径）'
+    return jsonify({'success': True, 'message': f'已开始后台计算今日快照{tag}'})
 
 
 @screener_bp.route('/api/snapshots/compute_status', methods=['GET'])
@@ -117,8 +131,13 @@ def api_compute_status():
 @screener_bp.route('/api/snapshots/dates', methods=['GET'])
 def api_dates():
     """有快照数据的日期列表（降序），前端下拉用。计数已排除板块。"""
+    try:
+        merge_below = float(request.args.get('merge_below') or 0)
+    except ValueError:
+        merge_below = 0.0
     q = (db.session.query(StockDistSnapshot.snapshot_date,
-                          func.count(StockDistSnapshot.id).label('cnt')))
+                          func.count(StockDistSnapshot.id).label('cnt'))
+         .filter(StockDistSnapshot.merge_below == merge_below))
     q = _exclude_boards(q)
     rows = (q.group_by(StockDistSnapshot.snapshot_date)
              .order_by(StockDistSnapshot.snapshot_date.desc())
@@ -146,6 +165,10 @@ def api_filter():
     """
     # 1) 日期：缺省挑"样本数最多"的那天（同 count 取最新）
     #    Why: 单独 --code 调试会在最新一天写出仅 1 条快照，按 max(date) 会让列表只剩 1 只
+    try:
+        merge_below = float(request.args.get('merge_below') or 0)
+    except ValueError:
+        merge_below = 0.0
     date_str = (request.args.get('date') or '').strip()
     if date_str:
         try:
@@ -155,13 +178,16 @@ def api_filter():
     else:
         cnt_col = func.count(StockDistSnapshot.id)
         row = (_exclude_boards(db.session.query(StockDistSnapshot.snapshot_date,
-                                                cnt_col.label('cnt')))
+                                                cnt_col.label('cnt'))
+                               .filter(StockDistSnapshot.merge_below == merge_below))
                .group_by(StockDistSnapshot.snapshot_date)
                .order_by(cnt_col.desc(), StockDistSnapshot.snapshot_date.desc())
                .first())
         target = row.snapshot_date if row else date.today()
 
-    q = StockDistSnapshot.query.filter(StockDistSnapshot.snapshot_date == target)
+    q = (StockDistSnapshot.query
+         .filter(StockDistSnapshot.snapshot_date == target)
+         .filter(StockDistSnapshot.merge_below == merge_below))
     q = _exclude_boards(q)
 
     # 1.5) 代码 / 名称模糊搜索（可选）
@@ -266,6 +292,7 @@ def api_filter():
     return jsonify({
         'success': True,
         'date': target.isoformat(),
+        'merge_below': merge_below,
         'total': total,
         'count': len(rows),
         'conditions': applied_conditions,

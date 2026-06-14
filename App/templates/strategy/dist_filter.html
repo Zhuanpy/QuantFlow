@@ -5,11 +5,20 @@
   <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem;margin-bottom:.5rem;">
     <h1 style="margin:0;font-size:1.4rem;">分布快照筛选</h1>
     <div style="display:flex;align-items:center;gap:.6rem;flex-wrap:wrap;">
+      <span style="color:#6b7280;font-size:.85rem;">口径:</span>
+      <select id="mergeSel" onchange="onMergeChange()" title="原始=每个信号周期独立统计；合并<X%=把振幅小于阈值的中间小周期与前后同向周期合并成大周期后再统计(去噪)"
+              style="padding:.35rem .55rem;border:1px solid #d1d5db;border-radius:6px;font-size:.85rem;">
+        <option value="0">原始口径</option>
+        <option value="5">合并&lt;5% 小周期</option>
+        <option value="3">合并&lt;3% 小周期</option>
+        <option value="8">合并&lt;8% 小周期</option>
+      </select>
       <span style="color:#6b7280;font-size:.85rem;">快照日期:</span>
       <select id="dateSel" onchange="runFilter()" style="padding:.35rem .55rem;border:1px solid #d1d5db;border-radius:6px;font-size:.85rem;"><option>加载中…</option></select>
       <button id="refreshSnapBtn" onclick="triggerCompute()" title="对全部已收集个股重新计算今日分布快照（后台运行，约 1-2 分钟）"
               style="padding:.35rem .7rem;border:1px solid #2563eb;background:#2563eb;color:#fff;border-radius:6px;font-size:.82rem;cursor:pointer;white-space:nowrap;">↻ 刷新最新快照</button>
       <span id="computeStatus" style="color:#6b7280;font-size:.8rem;"></span>
+      <a href="/stock_stats/" title="整合分布快照+RNN预测+板块趋势的个股统计列表" style="color:#2563eb;text-decoration:none;font-size:.85rem;font-weight:600;">📊 个股统计</a>
       <a href="/stock_pool/" style="color:#2563eb;text-decoration:none;font-size:.85rem;">→ 股票池管理</a>
     </div>
   </div>
@@ -335,8 +344,14 @@ function resetFilter() {
 
 // ---------------- 加载日期下拉 ----------------
 // preselect 可指定要选中的日期（来自 URL 参数）
+function getMerge() { return parseFloat(document.getElementById('mergeSel').value) || 0; }
+async function onMergeChange() {
+  // 切换口径：重载该口径的日期列表后再筛选
+  await loadDates();
+  await runFilter();
+}
 async function loadDates(preselect) {
-  const j = await fetchJson('/screener/api/snapshots/dates');
+  const j = await fetchJson('/screener/api/snapshots/dates?merge_below=' + getMerge());
   const sel = document.getElementById('dateSel');
   if (!j.success || !j.dates.length) {
     sel.innerHTML = '<option value="">无快照</option>';
@@ -360,9 +375,14 @@ async function loadDates(preselect) {
 // ---------------- 刷新快照（后台计算今日 snapshot）----------------
 let _computeTimer = null;
 async function triggerCompute() {
-  if (!confirm('对全部已收集个股重新计算今日分布快照？后台运行，约 1-2 分钟。')) return;
-  const r = await fetch('/screener/api/snapshots/compute', { method: 'POST' })
-                  .then(x => x.json()).catch(e => ({ success: false, message: e.message }));
+  const mb = getMerge();
+  const tag = mb > 0 ? `「合并<${mb}%小周期」口径` : '「原始」口径';
+  if (!confirm(`对全部已收集个股重新计算今日分布快照（${tag}）？后台运行，约 1-2 分钟。`)) return;
+  const r = await fetch('/screener/api/snapshots/compute', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ merge_below: mb }),
+  }).then(x => x.json()).catch(e => ({ success: false, message: e.message }));
   if (!r.success) { alert(r.message || '启动失败'); return; }
   pollCompute();
 }
@@ -450,7 +470,7 @@ async function runFilter(silent) {
   const kw = (document.getElementById('qInput').value || '').trim();
   const boardStage = document.getElementById('boardStage').value;
   if (!date) { alert('选择快照日期'); return; }
-  const parts = [`date=${date}`, 'limit=300'];
+  const parts = [`date=${date}`, 'limit=300', `merge_below=${getMerge()}`];
   if (dir) parts.push(`direction=${dir}`);
   if (pool) parts.push(`pool_type=${pool}`);
   if (kw) parts.push(`q=${encodeURIComponent(kw)}`);

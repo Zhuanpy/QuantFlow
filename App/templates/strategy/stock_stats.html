@@ -1,0 +1,320 @@
+{% extends "base.html" %}
+{% block content %}
+<div style="padding:1.25rem;">
+  <style>
+    .ss-fld { display:flex; flex-direction:column; gap:.2rem; }
+    .ss-lbl { color:#6b7280; font-size:.78rem; }
+    .ss-sel, .ss-inp { padding:.35rem .55rem; border:1px solid #d1d5db; border-radius:6px; font-size:.85rem; background:#fff; }
+    .ss-sel:disabled { background:#f3f4f6; color:#9ca3af; cursor:not-allowed; }
+    .ss-btn { padding:.4rem .9rem; border:1px solid #d1d5db; background:#fff; color:#374151; border-radius:6px; font-size:.85rem; cursor:pointer; }
+    .ss-btn-primary { padding:.4rem 1.1rem; background:#2563eb; color:#fff; border:none; border-radius:6px; font-size:.88rem; cursor:pointer; }
+    #ssTable th { padding:.45rem .5rem; white-space:nowrap; background:#f9fafb; position:sticky; top:0; }
+    #ssTable td { padding:.4rem .5rem; white-space:nowrap; }
+    #ssTable tr { border-top:1px solid #f3f4f6; }
+    .ss-grp-snap { background:#eff6ff; }  /* 分布快照组表头底色 */
+    .ss-grp-rnn  { background:#f0fdf4; }  /* RNN 预测组表头底色 */
+  </style>
+
+  <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem;margin-bottom:.5rem;">
+    <h1 style="margin:0;font-size:1.4rem;">个股统计列表 <span style="font-size:.85rem;color:#9ca3af;font-weight:400;">分布快照 + RNN 预测 + 板块趋势</span></h1>
+    <div style="display:flex;align-items:center;gap:.6rem;flex-wrap:wrap;">
+      <span style="color:#6b7280;font-size:.85rem;">口径:</span>
+      <select id="mergeSel" class="ss-sel" onchange="onMergeChange()"
+              title="原始=每个信号周期独立；合并<X%=把振幅小于阈值的小周期与前后同向周期合并后再统计(去噪)，与 15m 详情页/screener 一致">
+        <option value="0">原始口径</option>
+        <option value="5">合并&lt;5% 小周期</option>
+        <option value="3">合并&lt;3% 小周期</option>
+        <option value="8">合并&lt;8% 小周期</option>
+      </select>
+      <span style="color:#6b7280;font-size:.85rem;">快照日期:</span>
+      <select id="dateSel" class="ss-sel" onchange="runFilter()"><option>加载中…</option></select>
+      <a href="/screener/" style="color:#2563eb;text-decoration:none;font-size:.85rem;">→ 分布筛选</a>
+      <a href="/RnnStrategies/prediction" style="color:#2563eb;text-decoration:none;font-size:.85rem;">→ 模型预测</a>
+      <a href="/board_trend/" style="color:#2563eb;text-decoration:none;font-size:.85rem;">→ 板块趋势打分</a>
+      <a href="/stock_pool/" style="color:#16a34a;text-decoration:none;font-size:.85rem;font-weight:600;">→ 股票池</a>
+    </div>
+  </div>
+
+  <!-- 筛选区 -->
+  <div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:1rem;margin-bottom:1rem;">
+    <div style="display:flex;gap:1rem;align-items:flex-end;flex-wrap:wrap;">
+      <div class="ss-fld"><span class="ss-lbl">方向</span>
+        <select id="dirSel" class="ss-sel" onchange="onDirChange()">
+          <option value="">不限</option><option value="up">↑ 上涨</option><option value="down">↓ 下跌</option>
+        </select></div>
+      <div class="ss-fld"><span class="ss-lbl">长度</span>
+        <select id="fLen" class="ss-sel ss-metric" onchange="runFilter()" disabled>
+          <option value="">不限</option><option value="ge0.7">已走够长(≥70%)</option><option value="ge0.9">接近最长(≥90%)</option><option value="le0.3">偏短(≤30%)</option>
+        </select></div>
+      <div class="ss-fld"><span class="ss-lbl">振幅</span>
+        <select id="fAmp" class="ss-sel ss-metric" onchange="runFilter()" disabled>
+          <option value="">不限</option><option value="ge0.7">已走够大(≥70%)</option><option value="ge0.9">接近最大(≥90%)</option><option value="le0.3">偏小(≤30%)</option>
+        </select></div>
+      <div class="ss-fld"><span class="ss-lbl">能量</span>
+        <select id="fVol" class="ss-sel ss-metric" onchange="runFilter()" disabled>
+          <option value="">不限</option><option value="ge0.7">放量(≥70%)</option><option value="ge0.9">极端放量(≥90%)</option><option value="le0.3">缩量(≤30%)</option>
+        </select></div>
+      <div class="ss-fld"><span class="ss-lbl">板块趋势</span>
+        <select id="fBoardStage" class="ss-sel" onchange="runFilter()">
+          <option value="">不限</option>
+          <option value="up">上涨(初+末)</option><option value="up_early">上涨初期</option><option value="up_late">上涨末期</option>
+          <option value="down">下跌(初+末)</option><option value="down_early">下跌初期</option><option value="down_late">下跌末期</option>
+        </select></div>
+      <div class="ss-fld"><span class="ss-lbl">RNN 信号</span>
+        <select id="fSignal" class="ss-sel" onchange="runFilter()">
+          <option value="">不限</option><option value="buy">买入</option><option value="sell">卖出</option><option value="none">无信号</option>
+        </select></div>
+      <div class="ss-fld"><span class="ss-lbl">趋势分数 ≥</span>
+        <input id="fScoreMin" class="ss-inp" style="width:90px;" type="number" step="0.1" placeholder="如 0.7" onkeydown="if(event.key==='Enter')runFilter()"></div>
+      <div class="ss-fld"><span class="ss-lbl">趋势分数 ≤</span>
+        <input id="fScoreMax" class="ss-inp" style="width:90px;" type="number" step="0.1" placeholder="如 -0.7" onkeydown="if(event.key==='Enter')runFilter()"></div>
+      <div class="ss-fld"><span class="ss-lbl">股票池</span>
+        <select id="fPool" class="ss-sel" onchange="runFilter()">
+          <option value="">全部</option><option value="not_in_pool">⭐ 未在池中</option><option value="in_any_pool">在任意池中</option>
+          <option value="trading">仅交易中</option><option value="watching">仅观察中</option><option value="candidate">仅候选</option>
+        </select></div>
+      <div class="ss-fld"><span class="ss-lbl">代码 / 名称</span>
+        <input id="fQ" class="ss-inp" style="width:150px;" type="search" placeholder="如 600519 / 茅台" onkeydown="if(event.key==='Enter')runFilter()"></div>
+      <button onclick="recPage=1;runFilter()" class="ss-btn-primary">筛选</button>
+      <button onclick="resetFilter()" class="ss-btn">重置</button>
+      <div style="width:1px;height:34px;background:#e5e7eb;margin:0 .2rem;"></div>
+      <div class="ss-fld"><span class="ss-lbl">选择策略</span>
+        <select id="stratSel" class="ss-sel" style="width:150px;" onchange="loadStrategy(this.value)">
+          <option value="">— 已存策略 —</option>
+        </select></div>
+      <button onclick="saveStrategy()" class="ss-btn">💾 保存策略</button>
+      <button onclick="deleteStrategy()" class="ss-btn">删除</button>
+    </div>
+    <div style="color:#9ca3af;font-size:.78rem;margin-top:.5rem;">长度/振幅/能量按「当前方向」历史分位筛选，需先选方向；样本不足 8 自动排除。数据＝最新分布快照 ⨝ 各股最新 RNN 预测。</div>
+  </div>
+
+  <div style="display:flex;align-items:center;gap:.6rem;flex-wrap:wrap;margin:.25rem 0 .6rem;">
+    <div id="resultMeta" style="color:#6b7280;font-size:.85rem;"></div>
+    <div style="flex:1;"></div>
+    <span id="ssSelCount" style="color:#6b7280;font-size:.82rem;">已选 0</span>
+    <select id="poolType" class="ss-sel" style="width:120px;">
+      <option value="watching">观察中</option>
+      <option value="trading">交易中</option>
+      <option value="candidate">候选</option>
+    </select>
+    <button onclick="addSelectedToPool()" class="ss-btn-primary">加入股票池</button>
+  </div>
+
+  <div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:.5rem;overflow-x:auto;">
+    <table id="ssTable" style="width:100%;border-collapse:collapse;font-size:.84rem;">
+      <thead>
+        <tr>
+          <th style="text-align:center;width:28px;"><input type="checkbox" id="ssCheckAll" onclick="toggleAllRows(this)"></th>
+          <th style="text-align:left;">代码</th>
+          <th style="text-align:left;">名称</th>
+          <th style="text-align:left;">板块</th>
+          <th style="text-align:left;">板块趋势</th>
+          <th class="ss-grp-snap" style="text-align:center;">方向</th>
+          <th class="ss-grp-snap" style="text-align:right;">长度 当前/均值</th>
+          <th class="ss-grp-snap" style="text-align:right;">长度 z</th>
+          <th class="ss-grp-snap" style="text-align:right;">长度 分位</th>
+          <th class="ss-grp-snap" style="text-align:right;">振幅 当前/均值</th>
+          <th class="ss-grp-snap" style="text-align:right;">振幅 z</th>
+          <th class="ss-grp-snap" style="text-align:right;">振幅 分位</th>
+          <th class="ss-grp-snap" style="text-align:right;">量能 当前/均值</th>
+          <th class="ss-grp-snap" style="text-align:right;">量能 z</th>
+          <th class="ss-grp-snap" style="text-align:right;">量能 分位</th>
+          <th class="ss-grp-snap" style="text-align:right;">样本 n</th>
+          <th class="ss-grp-rnn" style="text-align:left;">RNN趋势</th>
+          <th class="ss-grp-rnn" style="text-align:center;">信号</th>
+          <th class="ss-grp-rnn" style="text-align:right;">预测周期</th>
+          <th class="ss-grp-rnn" style="text-align:right;">实际周期</th>
+          <th class="ss-grp-rnn" style="text-align:right;">预测振幅</th>
+          <th class="ss-grp-rnn" style="text-align:right;">实际振幅</th>
+          <th class="ss-grp-rnn" style="text-align:right;">趋势分数</th>
+          <th class="ss-grp-rnn" style="text-align:left;">更新</th>
+        </tr>
+      </thead>
+      <tbody id="ssBody"><tr><td colspan="24" style="text-align:center;color:#9ca3af;padding:1rem;">加载中…</td></tr></tbody>
+    </table>
+  </div>
+
+  <div style="display:flex;justify-content:flex-end;align-items:center;gap:.5rem;margin-top:.75rem;font-size:.85rem;color:#6b7280;">
+    <label>每页</label>
+    <select id="pageSize" class="ss-sel" style="width:80px;" onchange="recPage=1;runFilter()">
+      <option value="30" selected>30</option><option value="50">50</option><option value="100">100</option><option value="200">200</option>
+    </select>
+    <button id="prevBtn" class="ss-btn" onclick="if(recPage>1){recPage--;runFilter()}" disabled>上一页</button>
+    <span id="pageInfo">第 1 / 1 页</span>
+    <button id="nextBtn" class="ss-btn" onclick="if(recPage<recTotalPages){recPage++;runFilter()}" disabled>下一页</button>
+  </div>
+</div>
+
+<script>
+let recPage = 1, recTotalPages = 1;
+const API = '/stock_stats/api';
+async function fetchJson(u){ try{const r=await fetch(u);return await r.json();}catch(e){return{success:false,message:e.message};} }
+
+const STAGE_LABEL = {up_early:'上涨初期', up_late:'上涨末期', down_early:'下跌初期', down_late:'下跌末期'};
+const fmtZ = v => v==null ? '—' : `<span style="font-family:monospace;color:${v>0?'#b91c1c':'#15803d'};">${v>0?'+':''}${v.toFixed(2)}</span>`;
+const fmtPct = v => v==null ? '—' : `<span style="font-family:monospace;">${(v*100).toFixed(0)}%</span>`;
+const fmtCM = (c,m) => (c==null&&m==null)?'—':`<span style="font-family:monospace;">${c==null?'—':c.toFixed(c<1?3:0)} / ${m==null?'—':m.toFixed(m<1?3:0)}</span>`;
+const fmtCMpct = (c,m) => (c==null&&m==null)?'—':`<span style="font-family:monospace;">${c==null?'—':(c*100).toFixed(1)+'%'} / ${m==null?'—':(m*100).toFixed(1)+'%'}</span>`;
+const fmtCMwan = (c,m) => (c==null&&m==null)?'—':`<span style="font-family:monospace;">${c==null?'—':(c/1e4).toFixed(1)} / ${m==null?'—':(m/1e4).toFixed(1)}</span>`;
+const f3 = v => v==null||v===''?'—':Number(v).toFixed(3);
+function signalCell(tp){ const v=Number(tp); if(v>0)return '<span style="background:#dcfce7;color:#16a34a;padding:.1rem .45rem;border-radius:9999px;font-size:.74rem;font-weight:600;">买入</span>'; if(v<0)return '<span style="background:#fee2e2;color:#dc2626;padding:.1rem .45rem;border-radius:9999px;font-size:.74rem;font-weight:600;">卖出</span>'; return '<span style="color:#9ca3af;">—</span>'; }
+function scoreCell(s){ const v=Number(s); if(isNaN(v))return '<span style="color:#9ca3af;">—</span>'; const c=v>0?'#16a34a':(v<0?'#dc2626':'#6b7280'); const w=Math.abs(v)>=0.7?'700':'400'; return `<span style="color:${c};font-weight:${w};">${v}</span>`; }
+
+function syncMetricDisabled(){ const d=document.getElementById('dirSel').value; document.querySelectorAll('.ss-metric').forEach(s=>{s.disabled=!d; if(!d)s.value='';}); }
+function onDirChange(){ syncMetricDisabled(); recPage=1; runFilter(); }
+
+function getMerge(){ return parseFloat(document.getElementById('mergeSel').value)||0; }
+async function onMergeChange(){ recPage=1; await loadDates(); await runFilter(); }
+async function loadDates(){
+  const j=await fetchJson(`${API}/snapshot_dates?merge_below=${getMerge()}`);
+  const sel=document.getElementById('dateSel');
+  if(!j.success||!j.dates.length){ sel.innerHTML='<option value="">无快照（该口径尚未计算，请到 /screener/ 按此口径刷新快照）</option>'; return; }
+  let def=0; if(j.dates[0].count<10){ for(let i=1;i<j.dates.length;i++) if(j.dates[i].count>j.dates[def].count) def=i; }
+  sel.innerHTML=j.dates.map((d,i)=>`<option value="${d.date}"${i===def?' selected':''}>${d.date}（${d.count}）</option>`).join('');
+}
+
+function resetFilter(){
+  ['dirSel','fLen','fAmp','fVol','fBoardStage','fSignal','fPool'].forEach(id=>document.getElementById(id).value='');
+  ['fScoreMin','fScoreMax','fQ'].forEach(id=>document.getElementById(id).value='');
+  syncMetricDisabled(); recPage=1; runFilter();
+}
+
+/* ===== 筛选策略（保存到浏览器本地）===== */
+const STRAT_KEY = 'stockStatsStrategies';
+const STRAT_FIELDS = ['dirSel','fLen','fAmp','fVol','fBoardStage','fSignal','fScoreMin','fScoreMax','fPool','fQ'];
+function loadStrategyStore(){ try{ return JSON.parse(localStorage.getItem(STRAT_KEY)||'{}'); }catch(e){ return {}; } }
+function saveStrategyStore(o){ localStorage.setItem(STRAT_KEY, JSON.stringify(o)); }
+function renderStrategyList(selected){
+  const store=loadStrategyStore();
+  const names=Object.keys(store).sort();
+  const sel=document.getElementById('stratSel');
+  sel.innerHTML='<option value="">— 已存策略 —</option>'+
+    names.map(n=>`<option value="${n}"${n===selected?' selected':''}>${n}</option>`).join('');
+}
+function saveStrategy(){
+  const cur=document.getElementById('stratSel').value;
+  const name=(prompt('策略名称：', cur||'')||'').trim();
+  if(!name) return;
+  const store=loadStrategyStore();
+  const cfg={}; STRAT_FIELDS.forEach(id=>cfg[id]=document.getElementById(id).value);
+  store[name]=cfg; saveStrategyStore(store);
+  renderStrategyList(name);
+  alert(`已保存策略「${name}」`);
+}
+function loadStrategy(name){
+  if(!name) return;
+  const cfg=loadStrategyStore()[name]; if(!cfg) return;
+  STRAT_FIELDS.forEach(id=>{ if(cfg[id]!==undefined) document.getElementById(id).value=cfg[id]; });
+  syncMetricDisabled(); recPage=1; runFilter();
+}
+function deleteStrategy(){
+  const name=document.getElementById('stratSel').value;
+  if(!name){ alert('请先在「选择策略」中选中要删除的策略'); return; }
+  if(!confirm(`删除策略「${name}」？`)) return;
+  const store=loadStrategyStore(); delete store[name]; saveStrategyStore(store);
+  renderStrategyList('');
+}
+
+async function runFilter(){
+  const g=id=>document.getElementById(id).value;
+  const p=new URLSearchParams();
+  const date=g('dateSel'); if(date) p.set('date',date);
+  if(g('dirSel')) p.set('direction',g('dirSel'));
+  if(g('fLen')) p.set('len',g('fLen'));
+  if(g('fAmp')) p.set('amp',g('fAmp'));
+  if(g('fVol')) p.set('vol',g('fVol'));
+  if(g('fBoardStage')) p.set('board_stage',g('fBoardStage'));
+  if(g('fSignal')) p.set('rnn_signal',g('fSignal'));
+  if(g('fScoreMin')!=='') p.set('score_min',g('fScoreMin'));
+  if(g('fScoreMax')!=='') p.set('score_max',g('fScoreMax'));
+  if(g('fPool')) p.set('pool_type',g('fPool'));
+  if(g('fQ').trim()) p.set('q',g('fQ').trim());
+  p.set('merge_below',getMerge());
+  p.set('page',recPage); p.set('page_size',g('pageSize'));
+
+  document.getElementById('resultMeta').innerText='查询中…';
+  const j=await fetchJson(`${API}/list?${p}`);
+  const body=document.getElementById('ssBody');
+  if(!j.success){ body.innerHTML=`<tr><td colspan="24" style="text-align:center;color:#dc2626;padding:1rem;">${j.message||'查询失败'}</td></tr>`; return; }
+  const pg=j.pagination||{page:1,total_pages:1,total_items:0};
+  recPage=pg.page; recTotalPages=pg.total_pages;
+  document.getElementById('resultMeta').innerHTML=`快照 <b>${j.date||'—'}</b>　|　命中 <b>${pg.total_items}</b> 只（含分布快照 + RNN 预测 + 板块趋势）`;
+  document.getElementById('pageInfo').innerText=`第 ${recPage} / ${recTotalPages} 页`;
+  document.getElementById('prevBtn').disabled=recPage<=1;
+  document.getElementById('nextBtn').disabled=recPage>=recTotalPages;
+  if(!j.data.length){ body.innerHTML='<tr><td colspan="24" style="text-align:center;color:#9ca3af;padding:1rem;">无符合条件的股票</td></tr>'; return; }
+
+  body.innerHTML=j.data.map(r=>{
+    const up=r.current_direction===1;
+    const dirChip = r.current_direction===1?'<span style="color:#b91c1c;font-weight:600;">↑涨</span>':r.current_direction===-1?'<span style="color:#15803d;font-weight:600;">↓跌</span>':'<span style="color:#9ca3af;">·</span>';
+    const boardCell = r.board_name?`<a href="/board_data/board?code=${r.board_code}" target="_blank" style="color:#2563eb;text-decoration:none;">${r.board_name}</a>`:'<span style="color:#9ca3af;">—</span>';
+    let btCell='<span style="color:#9ca3af;">—</span>';
+    if(r.board_trend_stage){ const u=String(r.board_trend_stage).startsWith('up'); const lbl=STAGE_LABEL[r.board_trend_stage]||r.board_trend_stage; const sc=r.board_trend_score==null?'':' '+Math.round(r.board_trend_score); btCell=`<span style="color:${u?'#b91c1c':'#15803d'};font-weight:600;">${lbl}</span><span style="color:#6b7280;">${sc}</span>`; }
+    const rnn=r.rnn||{};
+    return `<tr>
+      <td style="text-align:center;"><input type="checkbox" class="ss-pick" value="${r.stock_code}" data-name="${r.stock_name||''}" onclick="updateSelCount()"></td>
+      <td style="font-family:monospace;font-weight:600;"><a href="/stock/?code=${r.stock_code}&period=15m" target="_blank" style="color:#2563eb;text-decoration:none;">${r.stock_code}</a></td>
+      <td>${r.stock_name||'—'}</td>
+      <td>${boardCell}</td>
+      <td>${btCell}</td>
+      <td style="text-align:center;">${dirChip}</td>
+      <td style="text-align:right;">${fmtCM(up?r.len_up_current:r.len_dn_current, up?r.len_up_mean:r.len_dn_mean)}</td>
+      <td style="text-align:right;">${fmtZ(up?r.len_up_z:r.len_dn_z)}</td>
+      <td style="text-align:right;">${fmtPct(up?r.len_up_pct:r.len_dn_pct)}</td>
+      <td style="text-align:right;">${fmtCMpct(up?r.amp_up_current:r.amp_dn_current, up?r.amp_up_mean:r.amp_dn_mean)}</td>
+      <td style="text-align:right;">${fmtZ(up?r.amp_up_z:r.amp_dn_z)}</td>
+      <td style="text-align:right;">${fmtPct(up?r.amp_up_pct:r.amp_dn_pct)}</td>
+      <td style="text-align:right;">${fmtCMwan(up?r.v5_up_current:r.v5_dn_current, up?r.v5_up_mean:r.v5_dn_mean)}</td>
+      <td style="text-align:right;">${fmtZ(up?r.v5_up_z:r.v5_dn_z)}</td>
+      <td style="text-align:right;">${fmtPct(up?r.v5_up_pct:r.v5_dn_pct)}</td>
+      <td style="text-align:right;color:#6b7280;">${(up?r.len_up_n:r.len_dn_n)||'—'}</td>
+      <td>${rnn.trends||'—'}</td>
+      <td style="text-align:center;">${rnn.trade_point==null?'<span style="color:#9ca3af;">—</span>':signalCell(rnn.trade_point)}</td>
+      <td style="text-align:right;">${rnn.predict_cycle_length??'—'}</td>
+      <td style="text-align:right;color:#6b7280;">${rnn.real_cycle_length??'—'}</td>
+      <td style="text-align:right;">${f3(rnn.predict_cycle_change)}</td>
+      <td style="text-align:right;color:#6b7280;">${f3(rnn.real_cycle_change)}</td>
+      <td style="text-align:right;">${rnn.score_trends==null?'—':scoreCell(rnn.score_trends)}</td>
+      <td style="color:#6b7280;font-size:.78rem;">${rnn.updated_at||'—'}</td>
+    </tr>`;
+  }).join('');
+  const all=document.getElementById('ssCheckAll'); if(all){ all.checked=false; all.indeterminate=false; }
+  updateSelCount();
+}
+
+function toggleAllRows(cb){
+  document.querySelectorAll('#ssBody .ss-pick').forEach(c=>{c.checked=cb.checked;});
+  updateSelCount();
+}
+function updateSelCount(){
+  const n=document.querySelectorAll('#ssBody .ss-pick:checked').length;
+  const tot=document.querySelectorAll('#ssBody .ss-pick').length;
+  document.getElementById('ssSelCount').textContent=`已选 ${n}`;
+  const all=document.getElementById('ssCheckAll');
+  if(all){ all.checked = tot>0 && n===tot; all.indeterminate = n>0 && n<tot; }
+}
+async function addSelectedToPool(){
+  const picks=[...document.querySelectorAll('#ssBody .ss-pick:checked')];
+  if(!picks.length){ alert('请先勾选股票'); return; }
+  const codes=picks.map(c=>c.value);
+  const poolType=document.getElementById('poolType').value;
+  const label=document.getElementById('poolType').selectedOptions[0].textContent;
+  if(!confirm(`将选中的 ${codes.length} 只股票加入「${label}」池？`)) return;
+  try{
+    const r=await fetch('/stock_stats/api/add_to_pool',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({codes, pool_type:poolType})});
+    const j=await r.json();
+    if(j.success){ alert(`加入「${label}」池完成：新增 ${j.added} 只，已存在跳过 ${j.skipped} 只`); }
+    else{ alert('加入失败：'+(j.message||'未知错误')); }
+  }catch(e){ alert('加入失败：'+e); }
+}
+
+(async function init(){
+  renderStrategyList('');
+  await loadDates();
+  syncMetricDisabled();
+  await runFilter();
+})();
+</script>
+{% endblock %}

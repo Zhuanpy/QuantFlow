@@ -486,6 +486,64 @@ def _signal_name(direction, signal_start_ts):
     return f'{arrow}{word}#{ts.strftime("%y%m%d-%H%M")}'
 
 
+def _seg_amp_dir(df, a, b, has_signal, has_sp, has_high, has_low):
+    """连续段 df[a:b] 的方向 + 极值口径振幅（用于"小周期合并"判断）。"""
+    g = df.iloc[a:b + 1]
+    d = 0
+    if has_signal:
+        sv = pd.to_numeric(g['Signal'], errors='coerce').dropna()
+        if len(sv):
+            d = int(1 if sv.iloc[-1] > 0 else -1 if sv.iloc[-1] < 0 else 0)
+    sp = None
+    if has_sp:
+        _sp = pd.to_numeric(g['StartPrice'], errors='coerce').dropna()
+        if len(_sp):
+            sp = float(_sp.iloc[0])
+    amp = None
+    if sp and sp != 0 and has_high and has_low:
+        hi = float(pd.to_numeric(g['high'], errors='coerce').max())
+        lo = float(pd.to_numeric(g['low'], errors='coerce').min())
+        if d > 0:
+            amp = abs((hi - sp) / sp)
+        elif d < 0:
+            amp = abs((lo - sp) / sp)
+        else:
+            amp = max(abs((hi - sp) / sp), abs((lo - sp) / sp))
+    return d, amp
+
+
+def _merge_small_segments(df, seg_bounds, merge_below,
+                          has_signal, has_sp, has_high, has_low):
+    """把振幅 < merge_below% 的"中间"小段与前后两个相邻同向段三合一，迭代到无可并。
+
+    seg_bounds：按时间排好的连续段 [(a, b), ...]；返回合并后的 seg_bounds。
+    与 api_cycles / dist_snapshot_service 的合并口径完全一致（去噪：去掉无效小周期）。
+    振幅算不出(None，如数据起点无 StartPrice)的段不参与合并，避免误并首部大段。
+    """
+    thr = (merge_below or 0) / 100.0
+    if thr <= 0:
+        return seg_bounds
+    guard = 0
+    while len(seg_bounds) >= 3 and guard < 100000:
+        guard += 1
+        best = None
+        for i in range(1, len(seg_bounds) - 1):
+            _, amp = _seg_amp_dir(df, seg_bounds[i][0], seg_bounds[i][1],
+                                  has_signal, has_sp, has_high, has_low)
+            # 只合并"能算出振幅且 < 阈值"的中间小段。振幅算不出(None，多为数据起点
+            # 无 StartPrice 的大段)不参与合并 —— 否则会把首部大段误判为"无效"，
+            # 连锁合并把整条序列塌成一个趋势（30m 等周期上表现为"全是下跌"）。
+            if amp is not None and amp < thr and (best is None or amp < best[1]):
+                best = (i, amp)
+        if best is None:
+            break
+        i = best[0]
+        seg_bounds = (seg_bounds[:i - 1]
+                      + [(seg_bounds[i - 1][0], seg_bounds[i + 1][1])]
+                      + seg_bounds[i + 2:])
+    return seg_bounds
+
+
 @stock_detail_bp.route('/api/<code>/15m', methods=['GET'])
 def api_15m(code):
     """15m K 线数据，可按时间范围过滤。
@@ -531,10 +589,19 @@ def api_15m(code):
     if period != '15m':
         from App.codes.utils.timeframe_resample import resample_15m
         from App.codes.Signals.MacdSignalV2 import compute_v2_signals_pipeline
+        from App.codes.Signals.StatisticsMacd import StatisticsMACD
         df = resample_15m(df, period)
         if df.empty:
             return jsonify({'success': False, 'message': f'resample 到 {period} 后无数据'}), 404
         df = compute_v2_signals_pipeline(df, n=7)
+        # 补 StartPrice/CycleAmplitude/CycleLength：合并小周期(去噪)与振幅口径都依赖
+        # StartPrice。与 api_cycles 的 resample 路径保持一致，否则 30m 等周期上 K 线
+        # 底色无法按振幅合并（旧逻辑下还会因 amp 全 None 误并成单一趋势）。
+        if 'Daily1mVolMax5' not in df.columns:
+            df['Daily1mVolMax5'] = pd.NA
+        df = StatisticsMACD.s_StartEndIndex(df)
+        df = StatisticsMACD.s_CycleAmplitude(df)
+        df = StatisticsMACD.s_CycleLength(df)
 
     if start:
         df = df[df['date'] >= pd.to_datetime(start)]
@@ -592,25 +659,39 @@ def api_15m(code):
             'ema_long': _f(el_col, i),
         })
 
-    # 把连续同一周期(SignalStartIndex)的 bar 合并成区段，便于在 K 线上画涨跌底色
+    # 把连续同一周期(SignalStartIndex)的 bar 合并成区段，便于在 K 线上画涨跌底色。
+    # 可选 ?merge_below=X：把振幅 <X% 的小周期与前后同向周期合并（与分布/cycles 口径一致），
+    # 让 K 线底色也反映"去噪后的大周期"，不再画零碎小段。
     segments = []
     if has_sidx and len(df):
         key = df['SignalStartIndex'].astype(str).fillna('NA')
-        seg_start = 0
+        seg_bounds = []
+        s = 0
         for i in range(1, len(df) + 1):
-            if i == len(df) or key.iloc[i] != key.iloc[seg_start]:
-                d = records[seg_start]['direction']
-                if d != 0:
-                    segments.append({
-                        'start_idx': seg_start,
-                        'end_idx': i - 1,
-                        'direction': d,
-                        'signal_name': records[seg_start]['signal_name'],
-                        'start_date': records[seg_start]['date'],
-                        'end_date': records[i - 1]['date'],
-                        'bars': i - seg_start,
-                    })
-                seg_start = i
+            if i == len(df) or key.iloc[i] != key.iloc[s]:
+                seg_bounds.append((s, i - 1))
+                s = i
+        try:
+            merge_below = float(request.args.get('merge_below') or 0)
+        except ValueError:
+            merge_below = 0.0
+        if merge_below > 0:
+            seg_bounds = _merge_small_segments(
+                df, seg_bounds, merge_below, has_signal,
+                'StartPrice' in df.columns, 'high' in df.columns, 'low' in df.columns)
+        for a, b in seg_bounds:
+            # 合并后方向以末根为准（与 cycles 一致）；交替结构下首末根同向，等价
+            d = records[b]['direction'] if records[b]['direction'] != 0 else records[a]['direction']
+            if d != 0:
+                segments.append({
+                    'start_idx': a,
+                    'end_idx': b,
+                    'direction': d,
+                    'signal_name': records[a]['signal_name'],
+                    'start_date': records[a]['date'],
+                    'end_date': records[b]['date'],
+                    'bars': b - a + 1,
+                })
 
     # 当前趋势（最后一段）—— 交易时用：趋势没变名字不变，变了就该止盈/止损
     current_trend = None
@@ -975,6 +1056,20 @@ def api_cycles(code):
             seg_bounds.append((s, i - 1))
             s = i
 
+    # ---- 可选：合并 < merge_below% 的小周期（去噪 / 周期归并）----
+    # 规则：某个"中间"周期的振幅 < 阈值（或算不出，视为无效）时，把它与前后两个相邻(必为同向)
+    # 周期并成一个大周期，方向取相邻周期方向。例如 上涨1 / 下跌2(振幅<5%) / 上涨3 → 合并为一个
+    # 上涨段。迭代到没有可合并的中间小周期为止。合并/口径与 api_15m、dist_snapshot 完全一致。
+    # 合并后长度/振幅/能量都按合并后的整段 K 线重新计算（见下方循环）。
+    try:
+        merge_below = float(request.args.get('merge_below') or 0)
+    except ValueError:
+        merge_below = 0.0
+    merged_mode = merge_below > 0
+    if merged_mode:
+        seg_bounds = _merge_small_segments(
+            df, seg_bounds, merge_below, has_signal, has_sp, has_high, has_low)
+
     # 进行中段：as_of 模式下"末根晚于 as_of"的段；live 模式下时间最后一段。
     inprogress_idx = set()
     if as_of_ts is not None:
@@ -1004,6 +1099,10 @@ def api_cycles(code):
         # as-of / 进行中的周期改回"截止当下已走过几根" = len(g) - 1，避免泄漏未来。
         if is_inprogress:
             clen = max(0, len(g) - 1)
+        elif merged_mode:
+            # 合并后周期跨多个原始 SSI 段，CycleLengthMax.max() 只是子段最大值（错），
+            # 用合并后实际 K 线根数作为长度。
+            clen = len(g)
         else:
             clen = pd.to_numeric(g['CycleLengthMax'], errors='coerce').max()
 
@@ -1086,6 +1185,7 @@ def api_cycles(code):
         'as_of': as_of_ts.strftime('%Y-%m-%d %H:%M:%S') if as_of_ts is not None else None,
         'period': period,
         'mode': 'live' if live_merged else 'after_close',
+        'merge_below': merge_below if merged_mode else 0,
         'data': cycles,
     })
 

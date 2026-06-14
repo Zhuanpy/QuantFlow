@@ -249,6 +249,7 @@
                             <th colspan="6" class="group-header gh-predict">预测</th>
                             <th colspan="4" class="group-header gh-real">真实</th>
                             <th colspan="8" class="group-header gh-score">评分</th>
+                            <th colspan="26" class="group-header" style="background:#eef2ff;color:#3730a3;">个股统计(快照 ss)</th>
                         </tr>
                         <!-- 字段标题行 -->
                         <tr class="field-header-row">
@@ -279,10 +280,17 @@
                             <!-- 评分 8 -->
                             <th>RNN</th><th>布林</th><th>资金</th><th>热度</th>
                             <th>基金</th><th>趋势概率</th><th>趋势分</th><th>操作</th>
+                            <!-- 个股统计(快照 ss) 26 -->
+                            <th>趋势名</th><th>方向</th>
+                            <th>长度当</th><th>长度均</th><th>长度z</th><th>长度位</th><th>样本n</th>
+                            <th>振幅当</th><th>振幅均</th><th>振幅z</th><th>振幅位</th>
+                            <th>量当(万)</th><th>量均(万)</th><th>量z</th><th>量位</th>
+                            <th>板块</th><th>板块趋势</th><th>板块分</th><th>板块信号</th>
+                            <th>R趋势</th><th>R信号</th><th>R分</th><th>R预周</th><th>R实周</th><th>R预幅</th><th>R实幅</th>
                         </tr>
                     </thead>
                     <tbody id="dailyTableBody">
-                        <tr><td colspan="48" class="empty-cell">点击左上角菜单按钮选择股票</td></tr>
+                        <tr><td colspan="74" class="empty-cell">点击左上角菜单按钮选择股票</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -900,14 +908,14 @@ function loadDailyData(page) {
     if (endDate) url += `&end_date=${endDate}`;
 
     document.getElementById('dailyTableBody').innerHTML =
-        '<tr><td colspan="48" class="empty-cell">加载中...</td></tr>';
+        '<tr><td colspan="74" class="empty-cell">加载中...</td></tr>';
 
     fetch(url)
         .then(r => r.json())
         .then(d => {
             if (d.error) {
                 document.getElementById('dailyTableBody').innerHTML =
-                    `<tr><td colspan="48" class="empty-cell">加载失败: ${d.error}</td></tr>`;
+                    `<tr><td colspan="74" class="empty-cell">加载失败: ${d.error}</td></tr>`;
                 return;
             }
 
@@ -965,7 +973,7 @@ function loadDailyData(page) {
             totalDataPages = d.total_pages || 1;
             if (d.data.length === 0) {
                 document.getElementById('dailyTableBody').innerHTML =
-                    '<tr><td colspan="48" class="empty-cell">暂无数据</td></tr>';
+                    '<tr><td colspan="74" class="empty-cell">暂无数据</td></tr>';
                 document.getElementById('dataPagination').style.display = 'none';
                 return;
             }
@@ -983,6 +991,13 @@ function loadDailyData(page) {
                 // 数值 helper
                 const n = (v, d=2) => (v !== null && v !== undefined && v !== 0) ? Number(v).toFixed(d) : '-';
                 const ni = v => (v !== null && v !== undefined && v !== 0) ? v.toLocaleString() : '-';
+                // 个股统计(ss) helper：null/undefined → '-'，否则保留（含 0）
+                const sv = (v, d=2) => (v === null || v === undefined) ? '-' : Number(v).toFixed(d);
+                const spc = v => (v === null || v === undefined) ? '-' : (v * 100).toFixed(0) + '%';
+                const swan = v => (v === null || v === undefined) ? '-' : (v / 1e4).toFixed(1);
+                const STG = {up_early:'上涨初期', up_late:'上涨末期', down_early:'下跌初期', down_late:'下跌末期'};
+                const ssDir = r.ss_direction === 1 ? '<span class="trend-up">涨</span>' : (r.ss_direction === -1 ? '<span class="trend-down">跌</span>' : '-');
+                const ssRSig = r.ss_rnn_trade_point > 0 ? '<span class="action-buy">买</span>' : (r.ss_rnn_trade_point < 0 ? '<span class="action-sell">卖</span>' : '-');
 
                 return `<tr>
                     <td>${r.date}</td>
@@ -1014,6 +1029,13 @@ function loadDailyData(page) {
                     <td>${n(r.sc_fund)}</td><td>${n(r.trend_prob)}</td>
                     <td>${n(r.trend_score)}</td>
                     <td class="${actClass}">${actText}</td>
+                    <td style="font-family:monospace;">${r.ss_signal_name || '—'}</td>
+                    <td>${ssDir}</td>
+                    <td>${sv(r.ss_len_current,0)}</td><td>${sv(r.ss_len_mean,1)}</td><td>${sv(r.ss_len_z)}</td><td>${spc(r.ss_len_pct)}</td><td>${r.ss_len_n??'-'}</td>
+                    <td>${spc(r.ss_amp_current)}</td><td>${spc(r.ss_amp_mean)}</td><td>${sv(r.ss_amp_z)}</td><td>${spc(r.ss_amp_pct)}</td>
+                    <td>${swan(r.ss_v5_current)}</td><td>${swan(r.ss_v5_mean)}</td><td>${sv(r.ss_v5_z)}</td><td>${spc(r.ss_v5_pct)}</td>
+                    <td>${r.ss_board_name||'-'}</td><td>${STG[r.ss_board_trend_stage]||r.ss_board_trend_stage||'-'}</td><td>${sv(r.ss_board_trend_score,1)}</td><td>${r.ss_board_signal||'-'}</td>
+                    <td>${r.ss_rnn_trends||'-'}</td><td>${ssRSig}</td><td>${sv(r.ss_rnn_score_trends)}</td><td>${r.ss_rnn_predict_cycle_length??'-'}</td><td>${r.ss_rnn_real_cycle_length??'-'}</td><td>${sv(r.ss_rnn_predict_cycle_change,3)}</td><td>${sv(r.ss_rnn_real_cycle_change,3)}</td>
                 </tr>`;
             }).join('');
 
@@ -1027,7 +1049,7 @@ function loadDailyData(page) {
         .catch(e => {
             console.error('加载日线数据失败:', e);
             document.getElementById('dailyTableBody').innerHTML =
-                '<tr><td colspan="48" class="empty-cell">加载失败</td></tr>';
+                '<tr><td colspan="74" class="empty-cell">加载失败</td></tr>';
         });
 }
 
@@ -1384,7 +1406,7 @@ function backToList() {
     document.getElementById('stockSummary').innerHTML =
         '<div class="summary-placeholder">点击左上角菜单按钮选择股票</div>';
     document.getElementById('dailyTableBody').innerHTML =
-        '<tr><td colspan="48" class="empty-cell">请选择一只股票查看数据</td></tr>';
+        '<tr><td colspan="74" class="empty-cell">请选择一只股票查看数据</td></tr>';
     document.getElementById('dailyChartSection').style.display = 'none';
     document.getElementById('tableSection').style.display = 'none';
     document.getElementById('dataPagination').style.display = 'none';

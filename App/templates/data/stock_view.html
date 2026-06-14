@@ -25,9 +25,13 @@
         <option value="60m">60 分钟</option>
         <option value="daily">日线</option>
       </select>
-      <a id="screenerEntry" href="/screener/" title="进入个股分布筛选列表（按振幅/周期长度/量能等指标筛股）"
+      <a href="/stock_stats/" title="个股统计列表（整合分布快照+RNN预测+板块趋势）"
          style="font-size:.82rem;color:#2563eb;text-decoration:none;white-space:nowrap;font-weight:600;">📋 筛选列表 ↗</a>
+      <a href="/screener/" title="分布快照筛选（按振幅/周期长度/量能分位筛股）"
+         style="font-size:.82rem;color:#2563eb;text-decoration:none;white-space:nowrap;">📈 分布快照筛选 ↗</a>
       {% if stock_code %}
+      <a href="/stock_trend/stock/{{ stock_code }}" title="查看 {{ stock_code }} 的日K趋势打分 / 历史评分"
+         style="font-size:.82rem;color:#2563eb;text-decoration:none;white-space:nowrap;font-weight:600;">📊 日K趋势 ↗</a>
       <a href="/stock/onemin?code={{ stock_code }}" title="1 分钟数据完整性检测（按年份）"
          style="font-size:.82rem;color:#2563eb;text-decoration:none;white-space:nowrap;">1m 完整性 ↗</a>
       {% endif %}
@@ -136,6 +140,13 @@
     <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem;margin-bottom:.75rem;">
       <h2 style="margin:0;font-size:1.125rem;">①‴ 周期振幅分布（上涨 / 下跌 分开正态拟合 + 当前位置）</h2>
       <div style="display:flex;align-items:center;gap:.75rem;flex-wrap:wrap;">
+        <label title="把振幅小于阈值的中间周期与前后相邻同向周期合并成一个大周期，再统计长度/振幅/能量（去噪）"
+               style="display:flex;align-items:center;gap:.3rem;font-size:.82rem;color:#374151;cursor:pointer;background:#f8fafc;border:1px solid #e5e7eb;border-radius:6px;padding:.2rem .5rem;">
+          <input type="checkbox" id="mergeCyclesToggle" onchange="onMergeToggle()" style="cursor:pointer;" checked>
+          合并 <input id="mergeThr" type="number" value="5" min="0.5" step="0.5"
+                 style="width:46px;padding:.1rem .25rem;border:1px solid #d1d5db;border-radius:4px;"
+                 onchange="if(document.getElementById('mergeCyclesToggle').checked)onMergeToggle()"> % 以下小周期
+        </label>
         <span style="color:#6b7280;font-size:.78rem;">口径：(本周期内极值 − 周期起点价) / 周期起点价</span>
         <a id="ampScreenerLink" href="/screener/" target="_blank"
            title="跳到全市场正态统计表，按周期振幅筛选其它股票" style="font-size:.82rem;color:#2563eb;text-decoration:none;">
@@ -711,7 +722,9 @@ async function quickAddPool(poolType) {
 // ---------- ① 15m ----------
 async function load15m() {
   const limit = document.getElementById('kRange').value;
-  const j = await fetchJson(withAsOf(`${API}/15m?limit=${limit}`));
+  let u15 = withAsOf(`${API}/15m?limit=${limit}`);
+  if (typeof MERGE_BELOW !== 'undefined' && MERGE_BELOW > 0) u15 += `&merge_below=${MERGE_BELOW}`;
+  const j = await fetchJson(u15);
   if (!j.success) { document.getElementById('kChart15m').innerText = j.message || '加载失败'; return; }
   if (typeof Plotly === 'undefined') {
     document.getElementById('kChart15m').innerText = 'Plotly 未加载（检查 /static/js/plotly.min.js）';
@@ -1055,8 +1068,17 @@ async function loadCycles() {
     if (body) body.innerHTML = `<tr><td colspan="9" style="text-align:center;color:#dc2626;padding:1rem;">渲染失败：${(e && e.message) || e}</td></tr>`;
   }
 }
+let MERGE_BELOW = 5;   // 默认开启合并(去噪)：合并振幅 < 5% 的小周期；取消勾选 → 0 看原始
+function onMergeToggle() {
+  const on = document.getElementById('mergeCyclesToggle').checked;
+  MERGE_BELOW = on ? (parseFloat(document.getElementById('mergeThr').value) || 5) : 0;
+  loadCycles();
+  load15m();   // K 线底色也按同口径重画
+}
 async function _loadCyclesImpl() {
-  const j = await fetchJsonT(withAsOf(`${API}/cycles`), 20000);
+  let cyclesUrl = withAsOf(`${API}/cycles`);
+  if (MERGE_BELOW > 0) cyclesUrl += (cyclesUrl.includes('?') ? '&' : '?') + 'merge_below=' + MERGE_BELOW;
+  const j = await fetchJsonT(cyclesUrl, 20000);
   const body = document.getElementById('cycleBody');
   const statsEl = document.getElementById('cycleStats');
   const distUpEl = document.getElementById('cycleDistChartUp');
@@ -1098,7 +1120,8 @@ async function _loadCyclesImpl() {
     return;
   }
   const s = j.stats || {};
-  statsEl.innerText = `共 ${j.count} 个周期｜长度 min ${s.min} / 中位 ${s.median} / 均值 ${s.mean} / max ${s.max}`;
+  const mergeTag = (j.merge_below ? `　🔗 已合并 <${j.merge_below}% 的小周期` : '');
+  statsEl.innerText = `共 ${j.count} 个周期｜长度 min ${s.min} / 中位 ${s.median} / 均值 ${s.mean} / max ${s.max}${mergeTag}`;
 
   const d = j.data;
 
