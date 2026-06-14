@@ -21,9 +21,11 @@ class RMMonitor:
                        (pool['Trends'] == -1) &
                        pool['ReTrend'] == 1]
 
+        # RnnModel(=trend_score) 已重标到 [-1,1]，强买入阈值 -5.5 → -0.7；
+        # 顺手补上缺失的括号（原 & 与 < 优先级写错，条件本就不成立）
         trading = pool[(pool['RecordDate'] == pd.Timestamp.now().date()) &
                        (pool['Trends'] == -1) &
-                       pool['RnnModel'] < -5.5]
+                       (pool['RnnModel'] < -0.7)]
 
         results = pd.concat([positions, reTrend, trading], ignore_index=True)
         print(results)

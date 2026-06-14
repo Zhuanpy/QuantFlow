@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import re
 import sys
 import time
 from datetime import date, datetime
@@ -73,7 +74,10 @@ def main():
         else:
             # 默认：扫 data/15m/*.parquet —— 这是"我收集的"股票集合的 ground truth
             d15 = Path(Config.get_project_root()) / 'data' / '15m'
-            all_codes = sorted(p.stem for p in d15.glob('*.parquet'))
+            # 只认 6 位数字个股代码 或 BK 板块代码；排除 *.v1.bak 之类备份文件
+            # （其 stem 形如 000063.v1.bak，非真实代码、且会撑爆 stock_code 列）
+            all_codes = sorted(p.stem for p in d15.glob('*.parquet')
+                               if re.fullmatch(r'\d{6}', p.stem) or p.stem.upper().startswith('BK'))
             # 默认过滤掉 BK 开头的板块代码 —— 它们和个股一起存在同目录但语义不同
             if not args.include_boards:
                 codes = [c for c in all_codes if not c.upper().startswith('BK')]

@@ -260,6 +260,29 @@ def api_name_history():
 
 
 # ----------------- 个股所属板块（含板块最新评分） -----------------
+@stock_trend_bp.route('/api/stock/<code>/ss_snapshot')
+def api_ss_snapshot(code):
+    """个股统计快照：取 data_stock_daily 中该股「最新有 ss_ 数据」那天的统计字段。
+
+    ss_* 由 scripts/save_daily_stats.py 每日收盘后写入（15m 口径 + 板块趋势 + 最新 RNN）。
+    没有任何 ss_ 数据时返回 data=None（前端提示未生成）。
+    """
+    try:
+        from App.models.data.StockDaily import StockDaily
+        row = (StockDaily.query
+               .filter(StockDaily.stock_code == code,
+                       StockDaily.ss_direction.isnot(None))
+               .order_by(StockDaily.date.desc()).first())
+        if row is None:
+            return jsonify({'success': True, 'data': None})
+        d = {f: getattr(row, f) for f in StockDaily.SS_FIELDS}
+        d['date'] = row.date.isoformat() if row.date else None
+        return jsonify({'success': True, 'data': d})
+    except Exception as e:
+        logger.exception('查个股统计快照失败')
+        return jsonify({'success': False, 'message': str(e), 'data': None}), 500
+
+
 @stock_trend_bp.route('/api/stock/<code>/boards')
 def api_stock_boards(code):
     """返回个股所属的板块列表 + 每个板块的最新趋势打分。
@@ -606,13 +629,50 @@ def api_stock_history(code):
             # 没有历史评分时，从 data_stock_info 拿真名；拿不到就返回 None（让前端只显示代码）
             info = StockInfo.query.filter_by(code=code).first()
             stock_name = info.name if info else None
+
+        out = [r.to_dict() for r in rows]
+        # 按 record_date 连 data_stock_daily 的个股统计 ss_*（两者都是按日，日期可对齐），
+        # 便于在同一行对照「当天的 15m 口径预测/分布」与「后续走势/评分」。
+        try:
+            from App.models.data.StockDaily import StockDaily
+            dates = [r.record_date for r in rows if r.record_date]
+            ss_map = {}
+            if dates:
+                for dr in (StockDaily.query
+                           .filter(StockDaily.stock_code == code,
+                                   StockDaily.date.in_(dates)).all()):
+                    ss_map[dr.date.isoformat()] = {f: getattr(dr, f) for f in StockDaily.SS_FIELDS}
+            for d in out:
+                d.update(ss_map.get(d.get('record_date'), {}))
+        except Exception:
+            logger.exception('历史评分合并 ss_ 失败')
+
+        # 当天是否有交易操作（买/卖），从 trade_records 按日期匹配
+        try:
+            from App.models.trade.trade_records import TradeRecord
+            op_map = {}  # 'YYYY-MM-DD' -> {'buy','sell'}
+            for t in TradeRecord.query.filter_by(stock_code=code).all():
+                ts = t.execute_time or t.order_time
+                if not ts:
+                    continue
+                op = ('buy' if t.trade_type in ('buy', 'buy_back')
+                      else 'sell' if t.trade_type in ('sell', 'short', 'cover') else None)
+                if op:
+                    op_map.setdefault(ts.date().isoformat(), set()).add(op)
+            for d in out:
+                ops = op_map.get(d.get('record_date'))
+                d['trade_op'] = ('both' if ops and len(ops) > 1
+                                 else (next(iter(ops)) if ops else None))
+        except Exception:
+            logger.exception('历史评分合并交易操作失败')
+
         return jsonify({
             'success': True,
             'data': {
                 'stock_code': code,
                 'stock_name': stock_name,
                 'count': len(rows),
-                'rows': [r.to_dict() for r in rows],
+                'rows': out,
             }
         })
     except Exception as e:

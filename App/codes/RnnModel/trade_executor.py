@@ -65,7 +65,7 @@ class TradingAction(RnnBase):
             return False
         return current_price < stop_loss_price
 
-    def check_take_profit(self, trend_score: float, threshold: float = 4.0) -> bool:
+    def check_take_profit(self, trend_score: float, threshold: float = 0.5) -> bool:
         """
         检查是否触发止盈
 

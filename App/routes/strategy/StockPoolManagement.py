@@ -341,9 +341,26 @@ def update_score(stock_id):
         return jsonify({'success': False, 'message': f'更新评分失败: {str(e)}'}), 500
 
 
+@stock_pool_bp.route('/api/remove/<int:stock_id>', methods=['PUT', 'POST'])
+def remove_stock(stock_id):
+    """移出股票池：软删除（is_active=False），保留记录与历史，可重新添加恢复。
+
+    与「归档」区别：归档仍在池内(归档 Tab 可见)，移出后不出现在任何 Tab。
+    """
+    try:
+        stock = StockPool.query.get_or_404(stock_id)
+        stock.is_active = False
+        db.session.commit()
+        return jsonify({'success': True, 'message': f'已移出股票池：{stock.stock_code}'})
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"移出股票池失败: {e}")
+        return jsonify({'success': False, 'message': f'移出失败: {str(e)}'}), 500
+
+
 @stock_pool_bp.route('/api/delete/<int:stock_id>', methods=['DELETE'])
 def delete_stock(stock_id):
-    """删除股票池条目"""
+    """彻底删除股票池条目（硬删除，保留供批量/特殊场景使用）"""
     try:
         stock = StockPool.query.get_or_404(stock_id)
         db.session.delete(stock)

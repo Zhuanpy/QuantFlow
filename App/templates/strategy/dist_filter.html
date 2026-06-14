@@ -5,8 +5,20 @@
   <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem;margin-bottom:.5rem;">
     <h1 style="margin:0;font-size:1.4rem;">分布快照筛选</h1>
     <div style="display:flex;align-items:center;gap:.6rem;flex-wrap:wrap;">
+      <span style="color:#6b7280;font-size:.85rem;">口径:</span>
+      <select id="mergeSel" onchange="onMergeChange()" title="原始=每个信号周期独立统计；合并<X%=把振幅小于阈值的中间小周期与前后同向周期合并成大周期后再统计(去噪)"
+              style="padding:.35rem .55rem;border:1px solid #d1d5db;border-radius:6px;font-size:.85rem;">
+        <option value="0">原始口径</option>
+        <option value="5">合并&lt;5% 小周期</option>
+        <option value="3">合并&lt;3% 小周期</option>
+        <option value="8">合并&lt;8% 小周期</option>
+      </select>
       <span style="color:#6b7280;font-size:.85rem;">快照日期:</span>
-      <select id="dateSel" style="padding:.35rem .55rem;border:1px solid #d1d5db;border-radius:6px;font-size:.85rem;"><option>加载中…</option></select>
+      <select id="dateSel" onchange="runFilter()" style="padding:.35rem .55rem;border:1px solid #d1d5db;border-radius:6px;font-size:.85rem;"><option>加载中…</option></select>
+      <button id="refreshSnapBtn" onclick="triggerCompute()" title="对全部已收集个股重新计算今日分布快照（后台运行，约 1-2 分钟）"
+              style="padding:.35rem .7rem;border:1px solid #2563eb;background:#2563eb;color:#fff;border-radius:6px;font-size:.82rem;cursor:pointer;white-space:nowrap;">↻ 刷新最新快照</button>
+      <span id="computeStatus" style="color:#6b7280;font-size:.8rem;"></span>
+      <a href="/stock_stats/" title="整合分布快照+RNN预测+板块趋势的个股统计列表" style="color:#2563eb;text-decoration:none;font-size:.85rem;font-weight:600;">📊 个股统计</a>
       <a href="/stock_pool/" style="color:#2563eb;text-decoration:none;font-size:.85rem;">→ 股票池管理</a>
     </div>
   </div>
@@ -17,50 +29,108 @@
 
   <!-- ========== 筛选条件 ========== -->
   <div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:1rem;margin-bottom:1rem;">
+    <style>
+      .scr-fld { display:flex; flex-direction:column; gap:.2rem; }
+      .scr-lbl { color:#6b7280; font-size:.78rem; }
+      .scr-sel, .scr-inp { padding:.35rem .55rem; border:1px solid #d1d5db; border-radius:6px; font-size:.85rem; background:#fff; }
+      .scr-sel:disabled { background:#f3f4f6; color:#9ca3af; cursor:not-allowed; }
+      .scr-btn { padding:.4rem .9rem; border:1px solid #d1d5db; background:#fff; color:#374151; border-radius:6px; font-size:.85rem; cursor:pointer; }
+      .scr-btn-primary { padding:.4rem 1.1rem; background:#2563eb; color:#fff; border:none; border-radius:6px; font-size:.88rem; cursor:pointer; }
+      .scr-adv-btn { padding:.25rem .65rem; border:1px dashed #9ca3af; background:#fff; color:#374151; border-radius:6px; font-size:.8rem; cursor:pointer; }
+    </style>
     <div style="display:flex;gap:1rem;align-items:flex-end;flex-wrap:wrap;">
 
-      <div>
-        <div style="color:#6b7280;font-size:.78rem;margin-bottom:.2rem;">当前周期方向</div>
-        <select id="dirSel" style="padding:.35rem .55rem;border:1px solid #d1d5db;border-radius:6px;font-size:.85rem;">
+      <div class="scr-fld">
+        <span class="scr-lbl">方向</span>
+        <select id="dirSel" class="scr-sel" onchange="onDirChange()">
           <option value="">不限</option>
           <option value="up">↑ 上涨</option>
           <option value="down">↓ 下跌</option>
         </select>
       </div>
 
-      <div>
-        <div style="color:#6b7280;font-size:.78rem;margin-bottom:.2rem;">代码 / 名称搜索</div>
-        <input id="qInput" type="search" placeholder="如 600519 或 茅台" autocomplete="off"
-               style="padding:.35rem .55rem;border:1px solid #d1d5db;border-radius:6px;font-size:.85rem;width:180px;">
+      <div class="scr-fld">
+        <span class="scr-lbl">长度</span>
+        <select id="simpleLen" class="scr-sel scr-metric" onchange="runFilter()" disabled>
+          <option value="">不限</option>
+          <option value="ge0.7">已走够长（分位≥70%）</option>
+          <option value="ge0.9">接近最长（≥90%）</option>
+          <option value="le0.3">偏短/早期（≤30%）</option>
+        </select>
       </div>
 
-      <div>
-        <div style="color:#6b7280;font-size:.78rem;margin-bottom:.2rem;">股票池范围</div>
-        <select id="poolSel" style="padding:.35rem .55rem;border:1px solid #d1d5db;border-radius:6px;font-size:.85rem;">
-          <option value="">全部（默认，~290 只全市场）</option>
-          <option value="not_in_pool">⭐ 未在池中（新发现候选）</option>
-          <option value="in_any_pool">在任意我的池子里</option>
+      <div class="scr-fld">
+        <span class="scr-lbl">振幅</span>
+        <select id="simpleAmp" class="scr-sel scr-metric" onchange="runFilter()" disabled>
+          <option value="">不限</option>
+          <option value="ge0.7">已走够大（≥70%）</option>
+          <option value="ge0.9">接近最大（≥90%）</option>
+          <option value="le0.3">偏小（≤30%）</option>
+        </select>
+      </div>
+
+      <div class="scr-fld">
+        <span class="scr-lbl">能量</span>
+        <select id="simpleVol" class="scr-sel scr-metric" onchange="runFilter()" disabled>
+          <option value="">不限</option>
+          <option value="ge0.7">放量（分位≥70%）</option>
+          <option value="ge0.9">极端放量（≥90%）</option>
+          <option value="le0.3">缩量（≤30%）</option>
+        </select>
+      </div>
+
+      <div class="scr-fld">
+        <span class="scr-lbl">板块趋势</span>
+        <select id="boardStage" class="scr-sel" onchange="runFilter()" title="按个股所属板块的最新趋势阶段筛选">
+          <option value="">不限</option>
+          <option value="up">上涨（初期+末期）</option>
+          <option value="up_early">上涨初期</option>
+          <option value="up_late">上涨末期</option>
+          <option value="down">下跌（初期+末期）</option>
+          <option value="down_early">下跌初期</option>
+          <option value="down_late">下跌末期</option>
+        </select>
+      </div>
+
+      <div class="scr-fld">
+        <span class="scr-lbl">代码 / 名称</span>
+        <input id="qInput" type="search" placeholder="如 600519 或 茅台" autocomplete="off"
+               class="scr-inp" style="width:150px;">
+      </div>
+
+      <div class="scr-fld">
+        <span class="scr-lbl">股票池</span>
+        <select id="poolSel" class="scr-sel" onchange="runFilter()">
+          <option value="">全部（~290 只）</option>
+          <option value="not_in_pool">⭐ 未在池中</option>
+          <option value="in_any_pool">在任意池中</option>
           <option value="trading">仅交易中</option>
           <option value="watching">仅观察中</option>
           <option value="candidate">仅候选</option>
         </select>
       </div>
 
-      <div style="flex:1 1 100%;border-top:1px dashed #e5e7eb;margin-top:.4rem;padding-top:.5rem;">
-        <div style="color:#374151;font-size:.85rem;font-weight:600;margin-bottom:.4rem;">数值条件（可加多组 AND）</div>
-        <div id="condList" style="display:flex;flex-direction:column;gap:.4rem;"></div>
-        <button onclick="addCond()" style="margin-top:.4rem;padding:.25rem .65rem;border:1px dashed #9ca3af;background:#fff;color:#374151;border-radius:6px;font-size:.8rem;cursor:pointer;">+ 加一组条件</button>
-      </div>
-
-      <div style="flex:1 1 100%;display:flex;gap:.5rem;align-items:center;margin-top:.3rem;">
-        <button onclick="runFilter()" style="padding:.4rem 1rem;background:#2563eb;color:#fff;border:none;border-radius:6px;font-size:.88rem;cursor:pointer;">筛选</button>
-        <button onclick="loadPreset('down_long')" style="padding:.4rem .8rem;background:#fff;border:1px solid #d1d5db;border-radius:6px;font-size:.8rem;cursor:pointer;color:#374151;">预设：下跌已走够长 (pct≥0.7)</button>
-        <button onclick="loadPreset('up_continue')" style="padding:.4rem .8rem;background:#fff;border:1px solid #d1d5db;border-radius:6px;font-size:.8rem;cursor:pointer;color:#374151;">预设：上涨仍有空间 (z≤0)</button>
-        <button onclick="loadPreset('vol_breakout')" style="padding:.4rem .8rem;background:#fff;border:1px solid #d1d5db;border-radius:6px;font-size:.8rem;cursor:pointer;color:#374151;">预设：量能放大 (v5_z≥1)</button>
-        <button onclick="clearConds()" style="padding:.4rem .8rem;background:#f3f4f6;border:1px solid #d1d5db;border-radius:6px;font-size:.8rem;cursor:pointer;color:#6b7280;">清空</button>
-        <span id="resultMeta" style="margin-left:auto;color:#6b7280;font-size:.85rem;"></span>
-      </div>
+      <button onclick="runFilter()" class="scr-btn-primary">筛选</button>
+      <button onclick="resetFilter()" class="scr-btn">重置</button>
     </div>
+
+    <div style="color:#9ca3af;font-size:.78rem;margin-top:.5rem;">
+      长度 / 振幅 / 能量 按「当前方向」的历史分位筛选，需<b>先选方向</b>；样本不足 8 个自动排除。
+    </div>
+
+    <details style="margin-top:.6rem;">
+      <summary style="cursor:pointer;font-size:.82rem;color:#2563eb;user-select:none;">高级：自定义字段 AND 条件 / 预设</summary>
+      <div style="margin-top:.55rem;">
+        <div id="condList" style="display:flex;flex-direction:column;gap:.4rem;"></div>
+        <div style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;margin-top:.5rem;">
+          <button onclick="addCond()" class="scr-adv-btn">+ 加一组条件</button>
+          <button onclick="loadPreset('down_long')" class="scr-btn">下跌已走够长</button>
+          <button onclick="loadPreset('up_continue')" class="scr-btn">上涨仍有空间</button>
+          <button onclick="loadPreset('vol_breakout')" class="scr-btn">量能放大</button>
+          <button onclick="clearConds()" class="scr-btn">清空条件</button>
+        </div>
+      </div>
+    </details>
   </div>
 
   <!-- 字段说明已移动到结果右侧 sticky 侧栏 -->
@@ -112,8 +182,11 @@
     </div>
   </template>
 
-  <!-- ========== 结果区：左表 + 右侧 sticky 字段说明卡 ========== -->
-  <div style="display:flex;gap:1rem;align-items:flex-start;" id="resultFlex">
+  <!-- 结果信息栏（紧贴结果表上方）-->
+  <div id="resultMeta" style="color:#6b7280;font-size:.85rem;margin:.25rem 0 .6rem;"></div>
+
+  <!-- ========== 结果区：结果表（整宽）+ 下方可折叠字段说明 ========== -->
+  <div id="resultFlex">
 
     <!-- 左：结果表 -->
     <div style="flex:1 1 auto;min-width:0;background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:.5rem;overflow-x:auto;">
@@ -126,25 +199,25 @@
           <th style="padding:.5rem;text-align:right;" title="长度：当前已走根数 / 历史均值（同方向已完成周期）">长度 当前/均值</th>
           <th style="padding:.5rem;text-align:right;" title="长度 z 分数：(当前−均值)/标准差。正=比平均长，负=比平均短">长度 z</th>
           <th style="padding:.5rem;text-align:right;" title="长度经验分位：历史中 ≤ 当前 的占比。100% = 历史最长">长度 分位</th>
+          <th style="padding:.5rem;text-align:right;" title="振幅：当前周期已涨跌幅 / 历史均值（同方向已完成周期）">振幅 当前/均值</th>
           <th style="padding:.5rem;text-align:right;" title="振幅 z 分数：(当前涨跌幅−历史均值)/标准差">振幅 z</th>
           <th style="padding:.5rem;text-align:right;" title="振幅经验分位：100% = 历史最大涨跌幅">振幅 分位</th>
+          <th style="padding:.5rem;text-align:right;" title="量能：当前周期 1m 量峰值 / 历史均值（万）">量能 当前/均值</th>
           <th style="padding:.5rem;text-align:right;" title="量能 z 分数：周期内 1m 成交量峰值，偏离历史均值的标准差倍数">量能 z</th>
           <th style="padding:.5rem;text-align:right;" title="量能经验分位：100% = 历史最大放量">量能 分位</th>
           <th style="padding:.5rem;text-align:right;" title="参与拟合的历史已完成同向周期样本数；&lt;8 不算 z/分位">样本 n</th>
+          <th style="padding:.5rem;text-align:left;" title="该股所属东财行业板块">板块</th>
+          <th style="padding:.5rem;text-align:left;" title="所属板块的最新趋势阶段 / 综合分（来自板块趋势打分）">板块趋势</th>
         </tr>
       </thead>
-      <tbody id="resultBody"><tr><td colspan="11" style="text-align:center;color:#9ca3af;padding:1rem;">点击"筛选"开始</td></tr></tbody>
+      <tbody id="resultBody"><tr><td colspan="15" style="text-align:center;color:#9ca3af;padding:1rem;">点击"筛选"开始</td></tr></tbody>
     </table>
     </div><!-- /左：结果表 -->
 
-    <!-- 右：字段说明侧栏（sticky 跟随滚动；窄屏自动堆到下方） -->
-    <aside id="fieldsHelp" style="flex:0 0 300px;background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:.85rem 1rem;font-size:.82rem;color:#374151;line-height:1.55;position:sticky;top:.5rem;max-height:calc(100vh - 1rem);overflow-y:auto;">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.5rem;">
-        <span style="font-weight:600;color:#374151;">📖 字段说明</span>
-        <span onclick="document.getElementById('fieldsHelpBody').classList.toggle('hidden');this.innerText=this.innerText.startsWith('收起')?'展开 ▾':'收起 ▴'"
-              style="cursor:pointer;color:#9ca3af;font-size:.78rem;user-select:none;">收起 ▴</span>
-      </div>
-      <div id="fieldsHelpBody">
+    <!-- 字段说明：折叠在结果表下方，默认收起，不再占用右侧整列空间 -->
+    <details id="fieldsHelp" style="margin-top:1rem;background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:.6rem 1rem;font-size:.82rem;color:#374151;line-height:1.55;">
+      <summary style="cursor:pointer;font-weight:600;color:#374151;user-select:none;">📖 字段说明 / 用法（点击展开）</summary>
+      <div style="margin-top:.55rem;">
         <div style="font-weight:600;color:#0369a1;margin:.4rem 0 .2rem;">3 个原始指标</div>
         <div style="background:#f9fafb;padding:.45rem .55rem;border-radius:6px;margin-bottom:.45rem;">
           <div style="margin-bottom:.35rem;"><b>len</b>（长度）<br>
@@ -186,7 +259,7 @@
             配合方向 → 放量信号</div>
         </div>
       </div>
-    </aside>
+    </details>
 
   </div><!-- /resultFlex -->
 
@@ -218,26 +291,119 @@ async function fetchJson(url) {
   catch (e) { return { success:false, message:e.message }; }
 }
 
+// ---------------- 简易筛选：方向 + 长度/振幅/能量 下拉 ----------------
+const SIMPLE_METRICS = [['simpleLen', 'len'], ['simpleAmp', 'amp'], ['simpleVol', 'v5']];
+
+// 指标下拉只在选了方向后可用（分位是按 up/dn 分组的）
+function syncMetricDisabled() {
+  const dir = document.getElementById('dirSel').value;
+  document.querySelectorAll('.scr-metric').forEach(s => {
+    s.disabled = !dir;
+    if (!dir) s.value = '';
+  });
+}
+
+function onDirChange() { syncMetricDisabled(); runFilter(); }
+
+// 3 个指标下拉 + 方向 → 后端字段条件（分位口径 + 自动排除小样本 n<8）
+function simpleConds() {
+  const dir = document.getElementById('dirSel').value;
+  if (!dir) return [];
+  const d = dir === 'up' ? 'up' : 'dn';
+  const out = [];
+  SIMPLE_METRICS.forEach(([selId, metric]) => {
+    const v = document.getElementById(selId).value;   // '' | geX | leX
+    if (!v) return;
+    const op = v.startsWith('ge') ? 'min' : 'max';
+    out.push(`${metric}_${d}_pct_${op}=${v.slice(2)}`);
+    out.push(`${metric}_${d}_n_min=8`);
+  });
+  return out;
+}
+
+// 简易筛选写进 URL 的可读编码（len/amp/vol = geX|leX），便于分享/刷新
+function simpleUrlParts() {
+  const out = [];
+  [['simpleLen', 'len'], ['simpleAmp', 'amp'], ['simpleVol', 'vol']].forEach(([selId, key]) => {
+    const v = document.getElementById(selId).value;
+    if (v) out.push(`${key}=${v}`);
+  });
+  return out;
+}
+
+function resetFilter() {
+  document.getElementById('dirSel').value = '';
+  document.getElementById('qInput').value = '';
+  document.getElementById('poolSel').value = '';
+  document.getElementById('boardStage').value = '';
+  document.querySelectorAll('.scr-metric').forEach(s => s.value = '');
+  clearConds();
+  syncMetricDisabled();
+  runFilter();
+}
+
 // ---------------- 加载日期下拉 ----------------
 // preselect 可指定要选中的日期（来自 URL 参数）
+function getMerge() { return parseFloat(document.getElementById('mergeSel').value) || 0; }
+async function onMergeChange() {
+  // 切换口径：重载该口径的日期列表后再筛选
+  await loadDates();
+  await runFilter();
+}
 async function loadDates(preselect) {
-  const j = await fetchJson('/screener/api/snapshots/dates');
+  const j = await fetchJson('/screener/api/snapshots/dates?merge_below=' + getMerge());
   const sel = document.getElementById('dateSel');
   if (!j.success || !j.dates.length) {
     sel.innerHTML = '<option value="">无快照</option>';
     document.getElementById('resultMeta').innerText = '尚未跑过快照，先执行 python scripts/compute_dist_snapshots.py';
     return false;
   }
-  // 默认选样本数最多的那天（同 count 取最新——dates 已按日期降序，所以遇到 > 才换）
-  // Why: 偶尔单独 --code 跑会让最新一天只有 1 只，直接选最新会让列表"看起来空"
+  // 默认选「最新一天」（dates 已按日期降序，idx 0 = 最新）。
+  // 但若最新一天样本很少(<10，多是单只 --code 测试跑)，回退到样本最多的那天，避免列表"看起来空"。
   let defaultIdx = 0;
-  for (let i = 1; i < j.dates.length; i++) {
-    if (j.dates[i].count > j.dates[defaultIdx].count) defaultIdx = i;
+  if (j.dates[0].count < 10) {
+    for (let i = 1; i < j.dates.length; i++) {
+      if (j.dates[i].count > j.dates[defaultIdx].count) defaultIdx = i;
+    }
   }
   sel.innerHTML = j.dates.map((d, i) =>
     `<option value="${d.date}"${(preselect ? d.date===preselect : i===defaultIdx) ? ' selected' : ''}>${d.date}（${d.count} 只）</option>`
   ).join('');
   return true;
+}
+
+// ---------------- 刷新快照（后台计算今日 snapshot）----------------
+let _computeTimer = null;
+async function triggerCompute() {
+  const mb = getMerge();
+  const tag = mb > 0 ? `「合并<${mb}%小周期」口径` : '「原始」口径';
+  if (!confirm(`对全部已收集个股重新计算今日分布快照（${tag}）？后台运行，约 1-2 分钟。`)) return;
+  const r = await fetch('/screener/api/snapshots/compute', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ merge_below: mb }),
+  }).then(x => x.json()).catch(e => ({ success: false, message: e.message }));
+  if (!r.success) { alert(r.message || '启动失败'); return; }
+  pollCompute();
+}
+function pollCompute() {
+  const btn = document.getElementById('refreshSnapBtn');
+  const st = document.getElementById('computeStatus');
+  btn.disabled = true;
+  clearInterval(_computeTimer);
+  _computeTimer = setInterval(async () => {
+    const j = await fetchJson('/screener/api/snapshots/compute_status');
+    if (!j.success) return;
+    const s = j.data;
+    st.innerText = s.running
+      ? `计算中… ${s.done}/${s.total}（成功 ${s.ok}）`
+      : (s.error ? `失败：${s.error}` : (s.total ? `完成：${s.ok} 成功 / ${s.empty} 空 / ${s.fail} 失败` : ''));
+    if (!s.running) {
+      clearInterval(_computeTimer);
+      btn.disabled = false;
+      if (!s.error && s.total) { await loadDates(); await runFilter(); }  // 重载日期(今日成最新)并刷新
+    }
+  }, 1500);
 }
 
 // ---------------- 条件行 ----------------
@@ -276,6 +442,7 @@ function readConds() {
 // ---------------- 预设 ----------------
 function loadPreset(name) {
   clearConds();
+  document.querySelectorAll('.scr-metric').forEach(s => s.value = '');  // 预设走高级条件，清掉简易指标避免叠加
   document.getElementById('dirSel').value = '';
   if (name === 'down_long') {
     document.getElementById('dirSel').value = 'down';
@@ -290,6 +457,7 @@ function loadPreset(name) {
     addCond('v5_up_z', '_min', 1);
     addCond('v5_up_n', '_min', 8);
   }
+  syncMetricDisabled();
   runFilter();
 }
 
@@ -300,12 +468,15 @@ async function runFilter(silent) {
   const dir = document.getElementById('dirSel').value;
   const pool = document.getElementById('poolSel').value;
   const kw = (document.getElementById('qInput').value || '').trim();
+  const boardStage = document.getElementById('boardStage').value;
   if (!date) { alert('选择快照日期'); return; }
-  const parts = [`date=${date}`, 'limit=300'];
+  const parts = [`date=${date}`, 'limit=300', `merge_below=${getMerge()}`];
   if (dir) parts.push(`direction=${dir}`);
   if (pool) parts.push(`pool_type=${pool}`);
   if (kw) parts.push(`q=${encodeURIComponent(kw)}`);
-  parts.push(...readConds());
+  if (boardStage) parts.push(`board_stage=${boardStage}`);
+  parts.push(...simpleConds());      // 简易筛选（方向 × 长度/振幅/能量）
+  parts.push(...readConds());        // 高级自定义条件
 
   // 同步 URL（不创建新历史条目，方便后退一次回到上一页）
   // URL 里只放可读的筛选条件 —— date 默认最新一天，不写进 URL 避免分享后日期"卡死"
@@ -314,6 +485,8 @@ async function runFilter(silent) {
     if (dir) urlParts.push(`direction=${dir}`);
     if (pool) urlParts.push(`pool_type=${pool}`);
     if (kw) urlParts.push(`q=${encodeURIComponent(kw)}`);
+    if (boardStage) urlParts.push(`board_stage=${boardStage}`);
+    urlParts.push(...simpleUrlParts());
     urlParts.push(...readConds());
     const newUrl = urlParts.length ? '?' + urlParts.join('&') : window.location.pathname;
     history.replaceState(null, '', newUrl);
@@ -325,14 +498,19 @@ async function runFilter(silent) {
   const j = await fetchJson(url);
   const body = document.getElementById('resultBody');
   if (!j.success) {
-    body.innerHTML = `<tr><td colspan="11" style="text-align:center;color:#dc2626;padding:1rem;">${j.message || '查询失败'}</td></tr>`;
+    body.innerHTML = `<tr><td colspan="15" style="text-align:center;color:#dc2626;padding:1rem;">${j.message || '查询失败'}</td></tr>`;
     document.getElementById('resultMeta').innerText = '';
     return;
   }
+  // 条件展示：隐藏内部的 *_n 样本守卫（自动加的 n≥8，非用户选择），字段名换中文标签
+  const shownConds = (j.conditions || [])
+    .filter(c => !c.field.endsWith('_n'))
+    .map(c => `${FIELD_LABELS[c.field] || c.field} ${c.op === '>=' ? '≥' : '≤'} ${c.value}`);
   document.getElementById('resultMeta').innerHTML =
-    `快照 <b>${j.date}</b>　|　命中 <b>${j.count}</b> / <b>${j.total}</b>${j.conditions.length ? '　|　条件：' + j.conditions.map(c => `${c.field}${c.op==='>='?'≥':'≤'}${c.value}`).join('，') : ''}`;
+    `快照 <b>${j.date}</b>　|　命中 <b>${j.count}</b> / ${j.total}`
+    + (shownConds.length ? `　|　条件：${shownConds.join('；')}` : '');
   if (!j.data.length) {
-    body.innerHTML = '<tr><td colspan="11" style="text-align:center;color:#9ca3af;padding:1rem;">无符合条件的股票</td></tr>';
+    body.innerHTML = '<tr><td colspan="15" style="text-align:center;color:#9ca3af;padding:1rem;">无符合条件的股票</td></tr>';
     return;
   }
   body.innerHTML = j.data.map(r => {
@@ -347,8 +525,12 @@ async function runFilter(silent) {
     const lenMean = isUp ? r.len_up_mean : r.len_dn_mean;
     const lenZ = isUp ? r.len_up_z : r.len_dn_z;
     const lenPct = isUp ? r.len_up_pct : r.len_dn_pct;
+    const ampCur = isUp ? r.amp_up_current : r.amp_dn_current;
+    const ampMean = isUp ? r.amp_up_mean : r.amp_dn_mean;
     const ampZ = isUp ? r.amp_up_z : r.amp_dn_z;
     const ampPct = isUp ? r.amp_up_pct : r.amp_dn_pct;
+    const v5Cur = isUp ? r.v5_up_current : r.v5_dn_current;
+    const v5Mean = isUp ? r.v5_up_mean : r.v5_dn_mean;
     const v5Z = isUp ? r.v5_up_z : r.v5_dn_z;
     const v5Pct = isUp ? r.v5_up_pct : r.v5_dn_pct;
     const n = isUp ? r.len_up_n : r.len_dn_n;
@@ -356,6 +538,23 @@ async function runFilter(silent) {
     const fmtPct = v => v == null ? '—' : `<span style="font-family:monospace;">${(v*100).toFixed(0)}%</span>`;
     const fmtCM = (c, m) => (c==null && m==null) ? '—'
         : `<span style="font-family:monospace;">${c==null?'—':c.toFixed(c<1?3:0)} / ${m==null?'—':m.toFixed(m<1?3:0)}</span>`;
+    // 振幅按 % 显示，量能按「万」显示
+    const fmtCMpct = (c, m) => (c==null && m==null) ? '—'
+        : `<span style="font-family:monospace;">${c==null?'—':(c*100).toFixed(1)+'%'} / ${m==null?'—':(m*100).toFixed(1)+'%'}</span>`;
+    const fmtCMwan = (c, m) => (c==null && m==null) ? '—'
+        : `<span style="font-family:monospace;">${c==null?'—':(c/1e4).toFixed(1)} / ${m==null?'—':(m/1e4).toFixed(1)}</span>`;
+    // 板块 + 板块趋势（涨红跌绿，与方向列一致）
+    const STAGE_LABEL = {up_early:'上涨初期', up_late:'上涨末期', down_early:'下跌初期', down_late:'下跌末期'};
+    const boardCell = r.board_name
+      ? `<a href="/board_data/board?code=${r.board_code}" target="_blank" style="color:#2563eb;text-decoration:none;">${r.board_name}</a>`
+      : '<span style="color:#9ca3af;">—</span>';
+    let boardTrendCell = '<span style="color:#9ca3af;">—</span>';
+    if (r.board_trend_stage) {
+      const up = String(r.board_trend_stage).startsWith('up');
+      const lbl = STAGE_LABEL[r.board_trend_stage] || r.board_trend_stage;
+      const sc = r.board_trend_score == null ? '' : ' ' + Math.round(r.board_trend_score);
+      boardTrendCell = `<span style="color:${up?'#b91c1c':'#15803d'};font-weight:600;">${lbl}</span><span style="color:#6b7280;">${sc}</span>`;
+    }
     return `<tr style="border-top:1px solid #f3f4f6;">
       <td style="padding:.4rem .5rem;font-family:monospace;font-weight:600;">
         <a href="/stock/?code=${r.stock_code}" target="_blank" style="color:#2563eb;text-decoration:none;">${r.stock_code}</a></td>
@@ -364,11 +563,15 @@ async function runFilter(silent) {
       <td style="padding:.4rem .5rem;text-align:right;">${fmtCM(lenCur, lenMean)}</td>
       <td style="padding:.4rem .5rem;text-align:right;">${fmtZ(lenZ)}</td>
       <td style="padding:.4rem .5rem;text-align:right;">${fmtPct(lenPct)}</td>
+      <td style="padding:.4rem .5rem;text-align:right;">${fmtCMpct(ampCur, ampMean)}</td>
       <td style="padding:.4rem .5rem;text-align:right;">${fmtZ(ampZ)}</td>
       <td style="padding:.4rem .5rem;text-align:right;">${fmtPct(ampPct)}</td>
+      <td style="padding:.4rem .5rem;text-align:right;">${fmtCMwan(v5Cur, v5Mean)}</td>
       <td style="padding:.4rem .5rem;text-align:right;">${fmtZ(v5Z)}</td>
       <td style="padding:.4rem .5rem;text-align:right;">${fmtPct(v5Pct)}</td>
       <td style="padding:.4rem .5rem;text-align:right;color:#6b7280;">${n || '—'}</td>
+      <td style="padding:.4rem .5rem;">${boardCell}</td>
+      <td style="padding:.4rem .5rem;">${boardTrendCell}</td>
     </tr>`;
   }).join('');
 }
@@ -392,7 +595,14 @@ function applyUrlState() {
   if (p.has('q')) {
     document.getElementById('qInput').value = p.get('q'); hasAny = true;
   }
-  // 数值条件：所有 <field>_min/_max= 参数都加成条件行
+  if (p.has('board_stage')) {
+    document.getElementById('boardStage').value = p.get('board_stage'); hasAny = true;
+  }
+  // 简易筛选编码（len/amp/vol = geX|leX）→ 还原指标下拉
+  [['len', 'simpleLen'], ['amp', 'simpleAmp'], ['vol', 'simpleVol']].forEach(([key, id]) => {
+    if (p.has(key)) { document.getElementById(id).value = p.get(key); hasAny = true; }
+  });
+  // 数值条件：所有 <field>_min/_max= 参数都加成条件行（兼容旧链接）
   let condAdded = 0;
   for (const [k, v] of p.entries()) {
     if (k === 'direction' || k === 'pool_type' || k === 'date' || k === 'limit') continue;
@@ -409,12 +619,9 @@ function applyUrlState() {
 // ---------------- 入口 ----------------
 (async function init() {
   const urlState = applyUrlState();
+  syncMetricDisabled();                    // 据方向启用/禁用 长度/振幅/能量 下拉
   const ok = await loadDates(urlState.date);
   if (!ok) return;
-  // 如果用户没指定任何条件，给一个空条件占位，方便他添加
-  if (!urlState.hasConditions) {
-    addCond('len_dn_pct', '_min', '');   // 默认空值，不强制 0.7
-  }
   // 搜索框回车即筛选，免得每次都要去点按钮
   document.getElementById('qInput').addEventListener('keydown', e => {
     if (e.key === 'Enter') { e.preventDefault(); runFilter(); }

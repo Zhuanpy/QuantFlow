@@ -3,52 +3,68 @@
 {% block content %}
 <div class="container">
     <div class="bd-header">
-        <div>
-            <a href="{{ url_for('board_trend.page') }}" class="back-link">← 返回板块趋势打分</a>
-            <div class="bd-title-row">
-                <h1 id="bdTitle">{{ board_code }}</h1>
-                {% if board_code %}
-                <a class="em-link" href="https://quote.eastmoney.com/bk/90.{{ board_code }}.html?jump_to_web=true"
-                   target="_blank" rel="noopener" title="在东方财富查看 {{ board_code }} 行情">东方财富 ↗</a>
-                <button id="trackBtn" class="track-btn" onclick="onTrackClick()" title="纳入持仓盘中跟踪列表">…</button>
-                {% endif %}
+        <div class="bd-titlebar">
+            <div class="bd-titlebar-left">
+                <a href="{{ url_for('board_trend.page') }}" class="back-link">← 返回板块趋势打分</a>
+                <div class="bd-title-row">
+                    <h1 id="bdTitle">{{ board_code }}</h1>
+                    {% if board_code %}
+                    <a class="em-link" href="https://quote.eastmoney.com/bk/90.{{ board_code }}.html?jump_to_web=true"
+                       target="_blank" rel="noopener" title="在东方财富查看 {{ board_code }} 行情">东方财富 ↗</a>
+                    <button id="trackBtn" class="track-btn" onclick="onTrackClick()" title="纳入持仓盘中跟踪列表">…</button>
+                    {% endif %}
+                </div>
+                <div class="bd-meta" id="bdMeta">加载中...</div>
             </div>
-            <div class="bd-meta" id="bdMeta">加载中...</div>
+            <div class="bd-switch">
+                <div class="bd-switch-box">
+                    <input id="boardCodeInput" type="text" autocomplete="off"
+                           placeholder="输入板块代码或名称，如 BK1036 / 半导体"
+                           oninput="onBoardSearchInput()"
+                           onkeydown="onBoardSearchKey(event)">
+                    <div id="boardSuggest" class="bd-suggest" style="display:none;"></div>
+                </div>
+                <button class="btn-apply" onclick="switchBoard()">切换</button>
+            </div>
         </div>
         <div class="bd-actions">
-            <label>日 K
-                <select id="daysSel" onchange="loadChart()">
-                    <option value="60">60 日</option>
-                    <option value="120" selected>120 日</option>
-                    <option value="250">250 日</option>
-                    <option value="500">500 日</option>
-                </select>
-            </label>
-            <label>30m
-                <select id="barsSel30" onchange="loadChart30m()">
-                    <option value="48">48 根 (6日)</option>
-                    <option value="96" selected>96 根 (12日)</option>
-                    <option value="240">240 根 (30日)</option>
-                    <option value="480">480 根 (60日)</option>
-                </select>
-            </label>
-            <label>15m
-                <select id="barsSel" onchange="loadChart15m()">
-                    <option value="96">96 根 (5日)</option>
-                    <option value="192" selected>192 根 (10日)</option>
-                    <option value="480">480 根 (25日)</option>
-                    <option value="960">960 根 (50日)</option>
-                </select>
-            </label>
-            <label class="range-label">
-                区间
-                <input type="date" id="startDate">
-                <span>~</span>
-                <input type="date" id="endDate">
+            <div class="bd-tf">
+                <label>日 K
+                    <select id="daysSel" onchange="loadChart()">
+                        <option value="60">60 日</option>
+                        <option value="120" selected>120 日</option>
+                        <option value="250">250 日</option>
+                        <option value="500">500 日</option>
+                    </select>
+                </label>
+                <label>1h
+                    <select id="barsSel60" onchange="loadChart60m()">
+                        <option value="24">24 根 (6日)</option>
+                        <option value="48" selected>48 根 (12日)</option>
+                        <option value="120">120 根 (30日)</option>
+                        <option value="240">240 根 (60日)</option>
+                    </select>
+                </label>
+                <label>15m
+                    <select id="barsSel" onchange="loadChart15m()">
+                        <option value="96">96 根 (5日)</option>
+                        <option value="192" selected>192 根 (10日)</option>
+                        <option value="480">480 根 (25日)</option>
+                        <option value="960">960 根 (50日)</option>
+                    </select>
+                </label>
+            </div>
+            <div class="bd-range">
+                <label class="range-label">
+                    区间
+                    <input type="date" id="startDate">
+                    <span>~</span>
+                    <input type="date" id="endDate">
+                </label>
                 <button class="btn-apply" onclick="applyDateRange()">应用</button>
                 <button class="btn-clear" onclick="clearDateRange()">清除</button>
-            </label>
-            <span class="range-hint" id="rangeHint"></span>
+                <span class="range-hint" id="rangeHint"></span>
+            </div>
         </div>
     </div>
 
@@ -66,17 +82,17 @@
     <div class="chart-title">日 K 线 <span class="chart-status" id="kChartStatus"></span></div>
     <div id="kChart" class="chart-box"></div>
 
-    <div class="chart-title">30 分钟 K 线 <span class="chart-status" id="kChart30mStatus"></span></div>
-    <div id="kChart30m" class="chart-box"></div>
+    <div class="chart-title">1 小时 K 线 <span class="chart-status" id="kChart60mStatus"></span></div>
+    <div id="kChart60m" class="chart-box"></div>
 
     <div class="chart-title">15 分钟 K 线（交易主周期）<span class="chart-status" id="kChart15mStatus"></span></div>
     <div id="kChart15m" class="chart-box"></div>
 
-    <!-- 评分（四标签：日K / 30分 / 15分 / 汇总）-->
+    <!-- 评分（四标签：日K / 60分 / 15分 / 汇总）-->
     <div class="history-wrap">
         <div class="score-tabs">
             <button class="score-tab active" data-tab="daily" onclick="switchScoreTab('daily')">日K评分</button>
-            <button class="score-tab" data-tab="m30" onclick="switchScoreTab('m30')">30分K评分</button>
+            <button class="score-tab" data-tab="m60" onclick="switchScoreTab('m60')">60分K评分</button>
             <button class="score-tab" data-tab="m15" onclick="switchScoreTab('m15')">15分K评分</button>
             <button class="score-tab" data-tab="summary" onclick="switchScoreTab('summary')">评分汇总</button>
         </div>
@@ -94,8 +110,8 @@
             <div class="hist-pager" id="histPager"></div>
         </div>
 
-        <!-- 30分 / 15分：当前周期评分卡（现算）-->
-        <div class="score-pane" id="pane-m30" style="display:none;"><div id="card-m30"><div class="empty" style="padding:1.5rem;">加载中...</div></div></div>
+        <!-- 60分 / 15分：当前周期评分卡（现算）-->
+        <div class="score-pane" id="pane-m60" style="display:none;"><div id="card-m60"><div class="empty" style="padding:1.5rem;">加载中...</div></div></div>
         <div class="score-pane" id="pane-m15" style="display:none;"><div id="card-m15"><div class="empty" style="padding:1.5rem;">加载中...</div></div></div>
 
         <!-- 汇总 -->
@@ -164,11 +180,11 @@
     .track-modal input { padding:.4rem .55rem; border:1px solid #d1d5db; border-radius:.35rem; font-size:.88rem; }
     .track-modal .ft { padding:.75rem 1rem; border-top:1px solid #f1f5f9; display:flex; justify-content:flex-end; gap:.5rem; }
     .track-modal .x { background:none; border:none; font-size:1.3rem; cursor:pointer; color:#6b7280; }
-    .bd-header { display:flex; justify-content:space-between; align-items:flex-start;
+    .bd-header { display:flex; flex-direction:column;
                  background:#fff; padding:1rem 1.25rem; border-radius:.6rem; box-shadow:var(--shadow-sm); margin-bottom:1rem; }
     .bd-header h1 { margin:.25rem 0 0; }
     .bd-meta { color:#6b7280; font-size:.85rem; margin-top:.25rem; }
-    .bd-actions select { padding:.3rem .5rem; border:1px solid #d1d5db; border-radius:.3rem; }
+    .bd-actions select { padding:.3rem .5rem; border:1px solid #d1d5db; border-radius:.3rem; min-width:116px; }
 
     .score-card { display:flex; align-items:center; gap:1rem; flex-wrap:wrap;
                   background:#fff; padding:.85rem 1rem; border-radius:.5rem; margin-bottom:.75rem; box-shadow:var(--shadow-sm); }
@@ -189,9 +205,29 @@
     .chart-status.stale { color:#dc2626; font-weight:500; }
     .chart-box { background:#fff; border-radius:.5rem; box-shadow:var(--shadow-sm);
                  padding:.5rem; height:560px; margin-bottom:1rem; }
-    .bd-actions { display:flex; gap:.75rem; flex-wrap:wrap; align-items:center; }
-    .bd-actions label { font-size:.85rem; color:#374151; display:inline-flex; align-items:center; gap:.35rem; }
+    /* 日K(周期选择) 与 区间 同处一行；空间不足时整块换行 */
+    .bd-actions { display:flex; flex-direction:row; flex-wrap:wrap; align-items:center;
+                  gap:.55rem 1.5rem;
+                  border-top:1px solid #eef2f7; margin-top:.85rem; padding-top:.85rem; }
+    /* 三个周期筛选选择器不换行，始终一行 */
+    .bd-tf { display:flex; flex-wrap:nowrap; align-items:center; gap:.45rem .85rem; }
+    .bd-range { display:flex; flex-wrap:wrap; align-items:center; gap:.45rem .85rem; }
+    .bd-actions label { font-size:.85rem; color:#374151; display:inline-flex; align-items:center; gap:.35rem; white-space:nowrap; }
+    .range-label { gap:.4rem; }
     .bd-actions input[type=date] { padding:.25rem .4rem; border:1px solid #d1d5db; border-radius:.3rem; font-size:.85rem; }
+    /* 标题栏：左侧标题/元信息，右侧板块切换框（不再单独占一行） */
+    .bd-titlebar { display:flex; justify-content:space-between; align-items:flex-start; gap:1rem; flex-wrap:wrap; }
+    .bd-switch { display:flex; align-items:center; gap:.4rem; }
+    .bd-switch-box { position:relative; }
+    .bd-switch input { padding:.3rem .5rem; border:1px solid #d1d5db; border-radius:.3rem; font-size:.85rem; width:240px; }
+    .bd-switch input:focus { outline:none; border-color:#2563eb; box-shadow:0 0 0 2px rgba(37,99,235,.12); }
+    .bd-suggest { position:absolute; top:100%; left:0; z-index:60; min-width:260px; max-height:280px;
+                  overflow-y:auto; background:#fff; border:1px solid #d1d5db; border-radius:.35rem;
+                  box-shadow:0 4px 14px rgba(0,0,0,.12); margin-top:2px; }
+    .bd-suggest-item { padding:.35rem .6rem; font-size:.85rem; cursor:pointer; white-space:nowrap; }
+    .bd-suggest-item:hover { background:#eff6ff; }
+    .bd-suggest-item b { color:#2563eb; font-family:monospace; margin-right:.45rem; }
+    .bd-suggest-empty { padding:.4rem .6rem; font-size:.82rem; color:#9ca3af; }
     .btn-apply, .btn-clear { padding:.3rem .65rem; border-radius:.3rem; border:1px solid #d1d5db;
                              background:#fff; cursor:pointer; font-size:.8rem; }
     .btn-apply { background:#2563eb; color:#fff; border-color:#2563eb; }
@@ -241,9 +277,69 @@
 <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
 <script>
 const BOARD_CODE = "{{ board_code }}";
+
+// 板块切换：支持输入代码(BKxxxx)或板块名称模糊匹配；联想下拉 + 回车/点「切换」跳转。
+let _bdSuggestTimer = null;
+let _bdSuggestItems = [];
+
+function switchBoardTo(code) {
+    if (!code) return;
+    window.location.href = `/board_data/board?code=${encodeURIComponent(code)}`;
+}
+
+function onBoardSearchInput() {
+    clearTimeout(_bdSuggestTimer);
+    _bdSuggestTimer = setTimeout(fetchBoardSuggest, 200);  // 防抖
+}
+
+async function fetchBoardSuggest() {
+    const term = (document.getElementById('boardCodeInput').value || '').trim();
+    const box = document.getElementById('boardSuggest');
+    if (!term) { box.style.display = 'none'; _bdSuggestItems = []; return; }
+    try {
+        const j = await fetch(`/board_data/api/search?q=${encodeURIComponent(term)}`).then(r => r.json());
+        _bdSuggestItems = (j && j.data) || [];
+    } catch (e) { _bdSuggestItems = []; }
+    if (!_bdSuggestItems.length) {
+        box.innerHTML = '<div class="bd-suggest-empty">无匹配板块</div>';
+        box.style.display = 'block';
+        return;
+    }
+    box.innerHTML = _bdSuggestItems.map(it =>
+        `<div class="bd-suggest-item" onmousedown="switchBoardTo('${it.board_code}')">`
+        + `<b>${it.board_code}</b>${it.board_name || ''}</div>`).join('');
+    box.style.display = 'block';
+}
+
+function onBoardSearchKey(e) {
+    if (e.key === 'Enter') { e.preventDefault(); switchBoard(); }
+    else if (e.key === 'Escape') { document.getElementById('boardSuggest').style.display = 'none'; }
+}
+
+// 切换：合法代码直接跳；否则取当前联想/现查的第一个模糊匹配
+async function switchBoard() {
+    const raw = (document.getElementById('boardCodeInput').value || '').trim();
+    if (!raw) return;
+    const up = raw.toUpperCase();
+    if (/^BK\d+$/.test(up)) { if (up !== BOARD_CODE) switchBoardTo(up); return; }
+    if (_bdSuggestItems.length) { switchBoardTo(_bdSuggestItems[0].board_code); return; }
+    try {
+        const j = await fetch(`/board_data/api/search?q=${encodeURIComponent(raw)}`).then(r => r.json());
+        const items = (j && j.data) || [];
+        if (items.length) switchBoardTo(items[0].board_code);
+        else alert('未找到匹配的板块');
+    } catch (e) { alert('搜索失败：' + e.message); }
+}
+
+// 点输入框/下拉外部时收起联想
+document.addEventListener('click', (e) => {
+    const box = document.getElementById('boardSuggest');
+    const inp = document.getElementById('boardCodeInput');
+    if (box && inp && !box.contains(e.target) && e.target !== inp) box.style.display = 'none';
+});
 let chart = null;
 let chart15m = null;
-let chart30m = null;
+let chart60m = null;
 
 // 历史评分分页（客户端分页，数据一次取回）
 const HIST_PAGE_SIZE = 15;
@@ -278,7 +374,7 @@ function applyDateRange() {
     if (s > e) { alert('起始日期不能晚于结束日期'); return; }
     document.getElementById('rangeHint').textContent = `区间生效：${s} ~ ${e}（覆盖左侧窗口/根数）`;
     loadChart();
-    loadChart30m();
+    loadChart60m();
     loadChart15m();
 }
 
@@ -287,7 +383,7 @@ function clearDateRange() {
     document.getElementById('endDate').value = '';
     document.getElementById('rangeHint').textContent = '';
     loadChart();
-    loadChart30m();
+    loadChart60m();
     loadChart15m();
 }
 
@@ -383,7 +479,7 @@ function renderHistPage() {
 }
 function histGoPage(p) { histPage = p; renderHistPage(); }
 
-// ---------------- 评分四标签：日K / 30分 / 15分 / 汇总 ----------------
+// ---------------- 评分四标签：日K / 60分 / 15分 / 汇总 ----------------
 const STAGE_LABEL = { up_early:'上涨前期', up_late:'上涨后期', down_early:'下跌前期', down_late:'下跌后期', unknown:'未识别' };
 const SIGNAL_LABEL = { buy:'买入', hold:'持有', sell:'卖出', wait:'观望', none:'-' };
 const SUBS = [['price_structure_score','价格'],['ma_score','均线'],['macd_score','MACD'],
@@ -392,7 +488,7 @@ let multiScore = null, multiLoading = false;
 
 function switchScoreTab(tab) {
     document.querySelectorAll('.score-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
-    ['daily','m30','m15','summary'].forEach(t => {
+    ['daily','m60','m15','summary'].forEach(t => {
         const p = document.getElementById('pane-' + t);
         if (p) p.style.display = (t === tab) ? 'block' : 'none';
     });
@@ -404,21 +500,21 @@ async function loadMultiScore() {
     const r = await fetch(`/board_data/api/board/${BOARD_CODE}/multiscore`).then(r => r.json()).catch(() => null);
     multiLoading = false;
     if (!r || !r.success) {
-        ['card-m30','card-m15','summaryBox'].forEach(id => {
+        ['card-m60','card-m15','summaryBox'].forEach(id => {
             const e = document.getElementById(id);
             if (e) e.innerHTML = `<div class="empty" style="padding:1.5rem;">加载失败：${(r && r.message) || ''}</div>`;
         });
         return;
     }
     multiScore = r.data;
-    tfState.m30.rows = multiScore.m30_history || []; tfState.m30.page = 1; renderTfHistory('m30');
+    tfState.m60.rows = multiScore.m60_history || []; tfState.m60.page = 1; renderTfHistory('m60');
     tfState.m15.rows = multiScore.m15_history || []; tfState.m15.page = 1; renderTfHistory('m15');
     renderSummary(multiScore);
 }
 
-// 30分/15分历史评分分页（各自维护页码，15 条/页，与日K一致）
+// 60分/15分历史评分分页（各自维护页码，15 条/页，与日K一致）
 const TF_PAGE_SIZE = 15;
-const tfState = { m30: { rows: [], page: 1, label: '30分K' }, m15: { rows: [], page: 1, label: '15分K' } };
+const tfState = { m60: { rows: [], page: 1, label: '60分K' }, m15: { rows: [], page: 1, label: '15分K' } };
 
 function renderTfHistory(tf) {
     const st = tfState[tf];
@@ -471,7 +567,7 @@ function dirOf(stage) {
 }
 
 function renderSummary(d) {
-    const tfs = [['日K', d.daily], ['30分', d.m30], ['15分', d.m15]];
+    const tfs = [['日K', d.daily], ['60分', d.m60], ['15分', d.m15]];
     const head = `<tr><th>周期</th><th>阶段</th><th>信号</th><th class="hl">综合分</th><th>置信</th><th>强度</th>${SUBS.map(([,n]) => `<th>${n}</th>`).join('')}</tr>`;
     const body = tfs.map(([name, s]) => {
         if (!s || s.error || s.total_score == null)
@@ -490,19 +586,19 @@ function renderSummary(d) {
     const dirs = tfs.map(([,s]) => (s && !s.error && s.total_score != null) ? dirOf(s.trend_stage) : null).filter(Boolean);
     const bull = dirs.filter(x => x === '偏多').length, bear = dirs.filter(x => x === '偏空').length;
     let concl, bg;
-    if (dirs.length === 3 && bull === 3) { concl = '三周期共振看多：日 / 30分 / 15分 一致偏多，趋势较确定。'; bg = '#fef2f2'; }
-    else if (dirs.length === 3 && bear === 3) { concl = '三周期共振看空：日 / 30分 / 15分 一致偏空，规避为主。'; bg = '#f0fdf4'; }
+    if (dirs.length === 3 && bull === 3) { concl = '三周期共振看多：日 / 60分 / 15分 一致偏多，趋势较确定。'; bg = '#fef2f2'; }
+    else if (dirs.length === 3 && bear === 3) { concl = '三周期共振看空：日 / 60分 / 15分 一致偏空，规避为主。'; bg = '#f0fdf4'; }
     else {
-        const dd = dirOf((d.daily||{}).trend_stage), m3 = dirOf((d.m30||{}).trend_stage), m1 = dirOf((d.m15||{}).trend_stage);
+        const dd = dirOf((d.daily||{}).trend_stage), m3 = dirOf((d.m60||{}).trend_stage), m1 = dirOf((d.m15||{}).trend_stage);
         const tail = bear > bull ? '短周期已弱于日线，注意回调风险。'
                    : (bull > bear ? '短周期先于日线转强，留意能否带动日线。' : '多空交织，方向待明朗。');
-        concl = `周期分歧：日K ${dd} / 30分 ${m3} / 15分 ${m1}。${tail}`;
+        concl = `周期分歧：日K ${dd} / 60分 ${m3} / 15分 ${m1}。${tail}`;
         bg = '#fffbeb';
     }
     document.getElementById('summaryBox').innerHTML =
         `<table class="sum-table">${head}${body}</table>`
         + `<div class="resonance" style="background:${bg};">${concl}</div>`
-        + `<div style="font-size:.74rem;color:#9ca3af;margin-top:.5rem;">注：30分/15分用同一套日K公式在对应周期K线上计算（“近60日”等口径相应变为“近60根”），仅作多周期趋势参考；日K历史表为持久化评分。</div>`;
+        + `<div style="font-size:.74rem;color:#9ca3af;margin-top:.5rem;">注：60分/15分用同一套日K公式在对应周期K线上计算（“近60日”等口径相应变为“近60根”），仅作多周期趋势参考；日K历史表为持久化评分。</div>`;
 }
 
 async function loadChart() {
@@ -629,16 +725,16 @@ async function loadChart15m() {
     });
 }
 
-async function loadChart30m() {
-    const bars = document.getElementById('barsSel30').value;
-    const r = await fetch(`/board_data/api/board/${BOARD_CODE}/chart_30m?bars=${bars}${rangeQuery()}`).then(r=>r.json());
+async function loadChart60m() {
+    const bars = document.getElementById('barsSel60').value;
+    const r = await fetch(`/board_data/api/board/${BOARD_CODE}/chart_60m?bars=${bars}${rangeQuery()}`).then(r=>r.json());
     if (!r.success) {
-        document.getElementById('kChart30m').innerHTML =
-            `<div style="padding:2rem;text-align:center;color:#dc2626;">加载 30m 图表失败：${r.message}</div>`;
+        document.getElementById('kChart60m').innerHTML =
+            `<div style="padding:2rem;text-align:center;color:#dc2626;">加载 60m 图表失败：${r.message}</div>`;
         return;
     }
     const rows = r.data.rows;
-    setChartStatus('kChart30mStatus', rows, '30m');
+    setChartStatus('kChart60mStatus', rows, '60m');
     const dates = rows.map(x => x.date);
     const kdata = rows.map(x => [x.open, x.close, x.low, x.high]);
     const ma20  = rows.map(x => x.ma20);
@@ -651,11 +747,11 @@ async function loadChart30m() {
         itemStyle: { color: x.close >= x.open ? '#dc2626' : '#16a34a' }
     }));
 
-    if (!chart30m) chart30m = echarts.init(document.getElementById('kChart30m'));
-    chart30m.setOption({
+    if (!chart60m) chart60m = echarts.init(document.getElementById('kChart60m'));
+    chart60m.setOption({
         animation: false,
         tooltip: { trigger: 'axis', axisPointer: { type: 'cross' } },
-        legend: { data: ['30mK', 'MA20', 'MA60', 'DIF', 'DEA', 'MACD'] , top: 0 },
+        legend: { data: ['60mK', 'MA20', 'MA60', 'DIF', 'DEA', 'MACD'] , top: 0 },
         axisPointer: { link: [{ xAxisIndex: 'all' }] },
         grid: [
             { left: 60, right: 30, top: 30, height: '50%' },
@@ -677,7 +773,7 @@ async function loadChart30m() {
             { show: true, xAxisIndex: [0,1,2], type: 'slider', bottom: 0, start: 0, end: 100 },
         ],
         series: [
-            { name: '30mK', type: 'candlestick', data: kdata, barMaxWidth: 10,
+            { name: '60mK', type: 'candlestick', data: kdata, barMaxWidth: 10,
               itemStyle: { color: '#dc2626', color0: '#16a34a', borderColor: '#dc2626', borderColor0: '#16a34a', borderWidth: 1 } },
             { name: 'MA20', type: 'line', data: ma20, smooth: true, showSymbol: false, lineStyle: { width: 1.2, color: '#f59e0b' } },
             { name: 'MA60', type: 'line', data: ma60, smooth: true, showSymbol: false, lineStyle: { width: 1.2, color: '#8b5cf6' } },
@@ -693,7 +789,7 @@ async function loadChart30m() {
 
 window.addEventListener('resize', () => {
     if (chart) chart.resize();
-    if (chart30m) chart30m.resize();
+    if (chart60m) chart60m.resize();
     if (chart15m) chart15m.resize();
 });
 
@@ -878,7 +974,7 @@ document.getElementById('trackModal').addEventListener('click', e => {
 
 loadHistory();
 loadChart();
-loadChart30m();
+loadChart60m();
 loadChart15m();
 loadStocks();
 loadTrackStatus();

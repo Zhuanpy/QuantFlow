@@ -7,7 +7,7 @@ from ..MySql.sql_utils import Stocks
 import matplotlib.pyplot as plt
 import multiprocessing
 from ..Evaluation.CountPool import PoolCount
-from .Rnn_utils import reset_id_time, reset_record_time, date_range
+from .Rnn_utils import reset_id_time, reset_record_time, date_range, latest_trading_day
 import logging
 from typing import Optional
 
@@ -240,9 +240,11 @@ class RMHistoryCheck:
 
         self.month_parsers = month_parsers
 
-        # 如果未提供结束日期，默认为当前日期
+        # 如果未提供结束日期，默认为「最近一个有数据的交易日」。
+        # 盘前/节假日今天没有 1m 数据时，回退到最近交易日，避免日期落在无数据日
+        # （否则 date_range 返回空，loop_by_date 取 list_day[0] 会 IndexError）。
         if not date_:
-            self.date_ = pd.Timestamp.now().date()
+            self.date_ = latest_trading_day() or pd.Timestamp.now().date()
 
         else:
             self.date_ = pd.to_datetime(date_).date()
@@ -278,6 +280,11 @@ class RMHistoryCheck:
         """
 
         list_day = date_range(self._date, self.date_)
+        if not list_day:
+            msg = f'区间 [{self._date}, {self.date_}] 内无可检查的交易日（无 1m 数据），跳过'
+            logging.warning(msg)
+            print(msg)
+            return
         reset_record_time(list_day[0])
 
         for day_ in list_day:
@@ -293,6 +300,11 @@ class RMHistoryCheck:
         """
 
         list_day = date_range(self._date, self.date_)
+        if not list_day:
+            msg = f'区间 [{self._date}, {self.date_}] 内无可检查的交易日（无 1m 数据），跳过'
+            logging.warning(msg)
+            print(msg)
+            return
         reset_record_time(list_day[0])
 
         for day_ in list_day:

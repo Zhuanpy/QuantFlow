@@ -9,10 +9,12 @@
 from __future__ import annotations
 
 import logging
+import re
+import threading
 from datetime import date, datetime
 
-from flask import Blueprint, jsonify, render_template, request
-from sqlalchemy import and_, func, or_
+from flask import Blueprint, jsonify, render_template, request, current_app
+from sqlalchemy import and_, func, or_, text, bindparam
 
 from App.exts import db
 from App.models.strategy.StockDistSnapshot import StockDistSnapshot
@@ -49,12 +51,93 @@ def page():
                            filterable_fields=sorted(_FILTERABLE_NUMERIC))
 
 
+# ---------------- 后台刷新快照（生成今日 snapshot_date）----------------
+_compute_state = {'running': False, 'done': 0, 'total': 0, 'ok': 0,
+                  'empty': 0, 'fail': 0, 'date': None, 'merge_below': 0, 'error': None}
+_compute_lock = threading.Lock()
+
+
+def _run_compute_all(app, target_date, merge_below=0):
+    """后台线程：对 data/15m 下全部个股(排除 BK)算当日分布快照，逐只 upsert。
+
+    merge_below>0 时按"合并<X%小周期"去噪口径计算，与原始(0)口径分别存行。
+    """
+    from pathlib import Path
+    from config import Config
+    from App.services.dist_snapshot_service import compute_dist_snapshot
+    try:
+        with app.app_context():
+            d15 = Path(Config.get_project_root()) / 'data' / '15m'
+            # 仅取 6 位数字个股代码：排除 BK 板块，以及 *.v1.bak 之类备份文件
+            # （它们的 stem 形如 000063.v1.bak，会撑爆 stock_code 列且非真实代码）
+            codes = sorted(p.stem for p in d15.glob('*.parquet')
+                           if re.fullmatch(r'\d{6}', p.stem))
+            with _compute_lock:
+                _compute_state['total'] = len(codes)
+            for code in codes:
+                try:
+                    row = compute_dist_snapshot(code, snapshot_date=target_date,
+                                                commit=True, merge_below=merge_below)
+                    with _compute_lock:
+                        _compute_state['empty' if row is None else 'ok'] += 1
+                except Exception:
+                    logger.exception(f'[screener] 计算 {code} 快照失败')
+                    with _compute_lock:
+                        _compute_state['fail'] += 1
+                finally:
+                    with _compute_lock:
+                        _compute_state['done'] += 1
+    except Exception as e:
+        logger.exception('[screener] 后台快照计算异常')
+        with _compute_lock:
+            _compute_state['error'] = str(e)
+    finally:
+        with _compute_lock:
+            _compute_state['running'] = False
+
+
+@screener_bp.route('/api/snapshots/compute', methods=['POST'])
+def api_compute():
+    """启动后台计算：对全部收集个股生成今日分布快照（同日同口径重跑覆盖）。
+
+    body/query 可带 merge_below(%)：0=原始口径；>0=合并<X%小周期的去噪口径。
+    """
+    body = request.get_json(silent=True) or {}
+    try:
+        merge_below = float(body.get('merge_below') if body.get('merge_below') is not None
+                            else request.args.get('merge_below') or 0)
+    except (TypeError, ValueError):
+        merge_below = 0.0
+    with _compute_lock:
+        if _compute_state['running']:
+            return jsonify({'success': False, 'message': '已有快照计算在进行中'}), 409
+        _compute_state.update({'running': True, 'done': 0, 'total': 0, 'ok': 0,
+                               'empty': 0, 'fail': 0, 'date': str(date.today()),
+                               'merge_below': merge_below, 'error': None})
+    app = current_app._get_current_object()
+    threading.Thread(target=_run_compute_all, args=(app, date.today(), merge_below),
+                     daemon=True).start()
+    tag = f'（合并<{merge_below}%小周期口径）' if merge_below > 0 else '（原始口径）'
+    return jsonify({'success': True, 'message': f'已开始后台计算今日快照{tag}'})
+
+
+@screener_bp.route('/api/snapshots/compute_status', methods=['GET'])
+def api_compute_status():
+    with _compute_lock:
+        return jsonify({'success': True, 'data': dict(_compute_state)})
+
+
 # ---------------- API ----------------
 @screener_bp.route('/api/snapshots/dates', methods=['GET'])
 def api_dates():
     """有快照数据的日期列表（降序），前端下拉用。计数已排除板块。"""
+    try:
+        merge_below = float(request.args.get('merge_below') or 0)
+    except ValueError:
+        merge_below = 0.0
     q = (db.session.query(StockDistSnapshot.snapshot_date,
-                          func.count(StockDistSnapshot.id).label('cnt')))
+                          func.count(StockDistSnapshot.id).label('cnt'))
+         .filter(StockDistSnapshot.merge_below == merge_below))
     q = _exclude_boards(q)
     rows = (q.group_by(StockDistSnapshot.snapshot_date)
              .order_by(StockDistSnapshot.snapshot_date.desc())
@@ -82,6 +165,10 @@ def api_filter():
     """
     # 1) 日期：缺省挑"样本数最多"的那天（同 count 取最新）
     #    Why: 单独 --code 调试会在最新一天写出仅 1 条快照，按 max(date) 会让列表只剩 1 只
+    try:
+        merge_below = float(request.args.get('merge_below') or 0)
+    except ValueError:
+        merge_below = 0.0
     date_str = (request.args.get('date') or '').strip()
     if date_str:
         try:
@@ -91,13 +178,16 @@ def api_filter():
     else:
         cnt_col = func.count(StockDistSnapshot.id)
         row = (_exclude_boards(db.session.query(StockDistSnapshot.snapshot_date,
-                                                cnt_col.label('cnt')))
+                                                cnt_col.label('cnt'))
+                               .filter(StockDistSnapshot.merge_below == merge_below))
                .group_by(StockDistSnapshot.snapshot_date)
                .order_by(cnt_col.desc(), StockDistSnapshot.snapshot_date.desc())
                .first())
         target = row.snapshot_date if row else date.today()
 
-    q = StockDistSnapshot.query.filter(StockDistSnapshot.snapshot_date == target)
+    q = (StockDistSnapshot.query
+         .filter(StockDistSnapshot.snapshot_date == target)
+         .filter(StockDistSnapshot.merge_below == merge_below))
     q = _exclude_boards(q)
 
     # 1.5) 代码 / 名称模糊搜索（可选）
@@ -165,6 +255,18 @@ def api_filter():
                                 'total': 0, 'count': 0, 'conditions': applied_conditions,
                                 'data': []})
 
+    # 4.5) 板块趋势过滤：只看「所属板块最新趋势阶段」匹配的股票
+    #   board_stage = up_early/up_late/down_early/down_late（精确），或 up/down（前缀，含初/末期）
+    board_stage = (request.args.get('board_stage') or '').strip()
+    if board_stage:
+        bs_codes = _codes_by_board_stage(board_stage)
+        if bs_codes:
+            q = q.filter(StockDistSnapshot.stock_code.in_(bs_codes))
+        else:
+            return jsonify({'success': True, 'date': target.isoformat(),
+                            'total': 0, 'count': 0, 'conditions': applied_conditions,
+                            'data': []})
+
     # 5) limit + 排序
     try:
         limit = max(1, min(int(request.args.get('limit', 200)), 1000))
@@ -185,11 +287,105 @@ def api_filter():
         q = q.order_by(StockDistSnapshot.stock_code.asc())
 
     rows = q.limit(limit).all()
+    data = [r.to_dict() for r in rows]
+    _enrich_boards(data)
     return jsonify({
         'success': True,
         'date': target.isoformat(),
+        'merge_below': merge_below,
         'total': total,
         'count': len(rows),
         'conditions': applied_conditions,
-        'data': [r.to_dict() for r in rows],
+        'data': data,
     })
+
+
+def _codes_by_board_stage(stage):
+    """返回「所属板块最新趋势阶段匹配 stage」的全部成分股代码集合。
+
+    stage 取 up_early/up_late/down_early/down_late（精确），或 up/down（前缀，含初/末期）。
+    流程：每个 board_code 取最新一条 → 命中 stage 的板块 → industry_eastmoney 取其成分股。
+    查询失败/无命中返回空集（调用方据此返回空结果）。
+    """
+    try:
+        from App.models.evaluation.BoardTrendScore import BoardTrendScore
+        rows = (BoardTrendScore.query
+                .order_by(BoardTrendScore.board_code, BoardTrendScore.record_date.desc())
+                .all())
+        latest = {}
+        for r in rows:
+            latest.setdefault(r.board_code, r.trend_stage)
+        if stage in ('up', 'down'):
+            board_codes = [bc for bc, st in latest.items()
+                           if st and st.startswith(stage)]
+        else:
+            board_codes = [bc for bc, st in latest.items() if st == stage]
+        if not board_codes:
+            return set()
+        eng = db.engines['quanttradingsystem']
+        stmt = text('SELECT DISTINCT stock_code FROM industry_eastmoney '
+                    'WHERE board_code IN :bcs').bindparams(
+                        bindparam('bcs', expanding=True))
+        with eng.connect() as conn:
+            return {r.stock_code for r in conn.execute(stmt, {'bcs': board_codes}).fetchall()
+                    if r.stock_code}
+    except Exception:
+        logger.exception('[screener] 按板块趋势筛选失败')
+        return set()
+
+
+def _enrich_boards(data):
+    """给结果行附加 板块（东财行业）+ 板块趋势（eval_board_trend_score 最新一条）。
+
+    每只股票取一个东财行业板块（按 industry_eastmoney 最新日期）；再取该板块最新
+    record_date 的趋势阶段/综合分/信号。查询失败时对应字段留空，不影响主筛选。
+    """
+    codes = [d['stock_code'] for d in data if d.get('stock_code')]
+    if not codes:
+        return
+    # 1) 每只股票 → 一个东财行业板块（按日期取最新那条）
+    code_board = {}
+    try:
+        eng = db.engines['quanttradingsystem']
+        stmt = text('''
+            SELECT t.stock_code, t.board_code, t.board_name
+              FROM industry_eastmoney t
+              JOIN (SELECT stock_code, MAX(date) mx FROM industry_eastmoney
+                     WHERE stock_code IN :codes GROUP BY stock_code) m
+                ON t.stock_code = m.stock_code AND t.date = m.mx
+             WHERE t.stock_code IN :codes
+        ''').bindparams(bindparam('codes', expanding=True))
+        with eng.connect() as conn:
+            for r in conn.execute(stmt, {'codes': codes}).fetchall():
+                code_board.setdefault(r.stock_code, (r.board_code, r.board_name))
+    except Exception:
+        logger.exception('[screener] 取个股板块失败')
+    # 2) 板块 → 最新趋势
+    board_trend = {}
+    board_codes = list({bc for bc, _ in code_board.values() if bc})
+    if board_codes:
+        try:
+            from App.models.evaluation.BoardTrendScore import BoardTrendScore
+            trows = (BoardTrendScore.query
+                     .filter(BoardTrendScore.board_code.in_(board_codes))
+                     .order_by(BoardTrendScore.board_code,
+                               BoardTrendScore.record_date.desc())
+                     .all())
+            for r in trows:
+                board_trend.setdefault(r.board_code, {
+                    'stage': r.trend_stage,
+                    'score': r.total_score,
+                    'signal': r.signal,
+                    'date': r.record_date.isoformat() if r.record_date else None,
+                })
+        except Exception:
+            logger.exception('[screener] 取板块趋势失败')
+    # 3) 附加
+    for d in data:
+        bc, bn = code_board.get(d['stock_code'], (None, None))
+        bt = board_trend.get(bc) if bc else None
+        d['board_code'] = bc
+        d['board_name'] = bn
+        d['board_trend_stage'] = bt['stage'] if bt else None
+        d['board_trend_score'] = bt['score'] if bt else None
+        d['board_signal'] = bt['signal'] if bt else None

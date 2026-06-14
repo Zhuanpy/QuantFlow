@@ -59,6 +59,7 @@
                 <a href="{{ url_for('data_bp.record_stock_minute') }}" class="button">股票分钟数据记录</a>
                 <a href="{{ url_for('daily_viewer.daily_viewer_page') }}" class="button">日线数据查看器</a>
                 <a href="{{ url_for('viewer_15m.viewer_15m_page') }}" class="button">15分钟数据查看器</a>
+                <a href="{{ url_for('stock_detail_bp.stock_onemin_check_page') }}" class="button">1分钟完整性检测</a>
                 <a href="{{ url_for('task_status.task_status_page') }}" class="button">每日任务状态看板</a>
             </div>
         </div>
@@ -74,7 +75,6 @@
             <h2>RNN模型</h2>
             <div class="button-group">
         <a href="{{ url_for('RnnData.rnn_data_page') }}" class="button">模型数据</a>
-        <a href="{{ url_for('RnnData.data_statistics_page') }}" class="button">数据统计</a>
                 <a href="{{ url_for('rnn_strategies_bp.training_page') }}" class="button">模型训练</a>
                 <a href="{{ url_for('rnn_strategies_bp.prediction_page') }}" class="button">模型预测</a>
             </div>

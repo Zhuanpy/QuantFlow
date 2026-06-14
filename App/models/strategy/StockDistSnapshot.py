@@ -24,7 +24,8 @@ class StockDistSnapshot(db.Model):
     __tablename__ = 'stock_dist_snapshot'
     __bind_key__ = 'quanttradingsystem'
     __table_args__ = (
-        db.UniqueConstraint('stock_code', 'snapshot_date', name='uq_stock_date'),
+        # merge_below 纳入唯一键：同一天可同时存"原始口径(0)"与"合并<5%小周期"两套快照
+        db.UniqueConstraint('stock_code', 'snapshot_date', 'merge_below', name='uq_stock_date'),
         db.Index('ix_dist_date', 'snapshot_date'),
         db.Index('ix_dist_code', 'stock_code'),
     )
@@ -35,9 +36,15 @@ class StockDistSnapshot(db.Model):
     stock_code = db.Column(db.String(10), nullable=False, comment='股票代码')
     stock_name = db.Column(db.String(50), nullable=True, comment='股票名称(冗余便于查询展示)')
     snapshot_date = db.Column(db.Date, nullable=False, comment='快照日期')
+    # 周期合并阈值(%)：0=原始口径(每个信号周期独立)；>0=把振幅<该值的中间小周期与前后
+    # 同向周期合并成大周期后再统计（去噪口径）。纳入唯一键，两套口径互不覆盖。
+    merge_below = db.Column(db.Float, nullable=False, default=0, server_default='0',
+                           comment='周期合并阈值(%)，0=不合并')
     last_bar_date = db.Column(db.DateTime, nullable=True, comment='快照所基于的最新一根 15m K 线时间')
     current_direction = db.Column(db.Integer, nullable=True,
                                   comment='当前未完成周期方向：1=上涨 / -1=下跌 / 0=未知')
+    current_signal_name = db.Column(db.String(40), nullable=True,
+                                    comment='当前周期趋势名（↑涨/↓跌#YYMMDD-HHMM，与15m页一致）')
 
     # ---- 周期长度 CycleLengthMax ----
     # 上涨周期

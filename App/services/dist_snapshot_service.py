@@ -131,7 +131,135 @@ def _build_cycles(df: pd.DataFrame, as_of_ts: Optional[pd.Timestamp]) -> list:
 
         cycles.append({
             'direction': direction,
+            'signal_start': sidx,          # 该周期的 SignalStartIndex（起始时间），用于拼趋势名
             'cycle_length_max': clen,
+            'amplitude_max': amp,
+            'cycle_1m_vol_max5': v5,
+            'completed': completed,
+        })
+    return cycles
+
+
+def _build_cycles_merged(df: pd.DataFrame, as_of_ts: Optional[pd.Timestamp],
+                         merge_below: float) -> list:
+    """合并 <merge_below% 的小周期后的 cycles —— 口径与 stock 详情页 api_cycles 的
+    「合并视图」完全一致：连续 SSI 段切分 + 极值口径振幅 + 迭代三合一 + 合并后整段重算。
+
+    规则：某"中间"周期振幅 < 阈值时，与前后两个相邻(同向)周期并成一个大周期，方向取相邻
+    周期方向；迭代到无可并。合并后长度=整段根数、振幅=整段极值口径、能量=整段峰值。
+
+    返回与 _build_cycles 相同结构的 dict 列表（direction / signal_start /
+    cycle_length_max / amplitude_max / cycle_1m_vol_max5 / completed）。
+    """
+    if df.empty or 'SignalStartIndex' not in df.columns:
+        return []
+    df = df.copy()
+    df['date'] = pd.to_datetime(df['date'])
+    df = df[df['SignalStartIndex'].notna()].sort_values('date')
+    if as_of_ts is not None:           # 历史快照：截断到 as_of，杜绝未来泄漏
+        df = df[df['date'] <= as_of_ts]
+    df = df.reset_index(drop=True)
+    if df.empty:
+        return []
+
+    has_choice = 'SignalChoice' in df.columns
+    has_signal = 'Signal' in df.columns
+    has_v5 = 'Cycle1mVolMax5' in df.columns
+    has_sp = 'StartPrice' in df.columns
+    has_high = 'high' in df.columns
+    has_low = 'low' in df.columns
+
+    # 连续同 SSI 段（按时间），不是 groupby(值)——SSI 会复用/非单调
+    ssi_key = df['SignalStartIndex'].astype(str)
+    seg_bounds = []
+    s = 0
+    for i in range(1, len(df) + 1):
+        if i == len(df) or ssi_key.iloc[i] != ssi_key.iloc[s]:
+            seg_bounds.append((s, i - 1))
+            s = i
+
+    def _amp_dir(a, b):
+        g = df.iloc[a:b + 1]
+        d = 0
+        if has_signal:
+            sv = pd.to_numeric(g['Signal'], errors='coerce').dropna()
+            if len(sv):
+                d = int(1 if sv.iloc[-1] > 0 else -1 if sv.iloc[-1] < 0 else 0)
+        sp = None
+        if has_sp:
+            _sp = pd.to_numeric(g['StartPrice'], errors='coerce').dropna()
+            if len(_sp):
+                sp = float(_sp.iloc[0])
+        amp = None
+        if sp and sp != 0 and has_high and has_low:
+            hi = float(pd.to_numeric(g['high'], errors='coerce').max())
+            lo = float(pd.to_numeric(g['low'], errors='coerce').min())
+            if d > 0:
+                amp = abs((hi - sp) / sp)
+            elif d < 0:
+                amp = abs((lo - sp) / sp)
+            else:
+                amp = max(abs((hi - sp) / sp), abs((lo - sp) / sp))
+        return d, amp
+
+    thr = (merge_below or 0) / 100.0
+    guard = 0
+    while thr > 0 and len(seg_bounds) >= 3 and guard < 100000:
+        guard += 1
+        best = None
+        for i in range(1, len(seg_bounds) - 1):
+            _, amp = _amp_dir(*seg_bounds[i])
+            if amp is not None and amp < thr and (best is None or amp < best[1]):
+                best = (i, amp)
+        if best is None:
+            break
+        i = best[0]
+        seg_bounds = (seg_bounds[:i - 1]
+                      + [(seg_bounds[i - 1][0], seg_bounds[i + 1][1])]
+                      + seg_bounds[i + 2:])
+
+    # 截断到 as_of 后，最后一段即"当前进行中"周期
+    inprogress_idx = {len(seg_bounds) - 1} if seg_bounds else set()
+
+    cycles = []
+    for k, (a, b) in enumerate(seg_bounds):
+        g = df.iloc[a:b + 1]
+        is_inprogress = k in inprogress_idx
+        direction = 0
+        if has_signal:
+            sv = pd.to_numeric(g['Signal'], errors='coerce').dropna()
+            if len(sv):
+                direction = int(1 if sv.iloc[-1] > 0 else -1 if sv.iloc[-1] < 0 else 0)
+        clen = (len(g) - 1) if is_inprogress else len(g)
+        # 振幅：极值口径（整段 high/low vs 起点价）
+        amp = None
+        if has_sp and has_high and has_low:
+            _sp = pd.to_numeric(g['StartPrice'], errors='coerce').dropna()
+            if len(_sp):
+                sp = float(_sp.iloc[0])
+                if sp != 0:
+                    hi = float(pd.to_numeric(g['high'], errors='coerce').max())
+                    lo = float(pd.to_numeric(g['low'], errors='coerce').min())
+                    if direction > 0:
+                        amp = abs(round((hi - sp) / sp, 4))
+                    elif direction < 0:
+                        amp = abs(round((lo - sp) / sp, 4))
+                    else:
+                        amp = round(max(abs((hi - sp) / sp), abs((lo - sp) / sp)), 4)
+        v5 = None
+        if has_v5:
+            vv = pd.to_numeric(g['Cycle1mVolMax5'], errors='coerce').dropna()
+            v5 = float(vv.max()) if len(vv) else None
+        if is_inprogress:
+            completed = False
+        elif has_choice:
+            completed = bool(g['SignalChoice'].notna().any())
+        else:
+            completed = None
+        cycles.append({
+            'direction': direction,
+            'signal_start': df['SignalStartIndex'].iloc[a],
+            'cycle_length_max': int(clen),
             'amplitude_max': amp,
             'cycle_1m_vol_max5': v5,
             'completed': completed,
@@ -190,19 +318,24 @@ def _fit_direction(cycles: list, direction: int, value_getter, current_cycle: Op
 def compute_dist_snapshot(code: str,
                           snapshot_date: Optional[date] = None,
                           stock_name: Optional[str] = None,
-                          commit: bool = True) -> Optional[StockDistSnapshot]:
+                          commit: bool = True,
+                          merge_below: float = 0) -> Optional[StockDistSnapshot]:
     """对单只股票算三正态分布快照，upsert 进 stock_dist_snapshot。
 
     Args:
         code:          股票代码
-        snapshot_date: 快照日期，默认今天；同一日重跑会覆盖（按唯一约束 upsert）
+        snapshot_date: 快照日期，默认今天；同一日同口径重跑会覆盖（按唯一约束 upsert）
         stock_name:    股票名（不传会从 StockInfo 查；查不到留空）
         commit:        False 时只算不写库（测试用）
+        merge_below:   周期合并阈值(%)。0=原始口径(每个信号周期独立)；>0=把振幅<该值的
+                       中间小周期与前后同向周期合并成大周期后再统计（去噪口径，与 15m 详情页
+                       「合并<X%小周期」开关一致）。与 0 口径分别存为独立快照行。
 
     Returns:
         StockDistSnapshot 实例；15m 数据不存在时返回 None
     """
     snapshot_date = snapshot_date or date.today()
+    merge_below = float(merge_below or 0)
     as_of_ts = pd.Timestamp(snapshot_date) + pd.Timedelta(hours=15)  # 当日 15:00 收盘
 
     df = StockData15m.load_15m(code)
@@ -210,7 +343,10 @@ def compute_dist_snapshot(code: str,
         logger.warning(f'[dist] {code} 无 15m 数据，跳过')
         return None
 
-    cycles = _build_cycles(df, as_of_ts=as_of_ts)
+    if merge_below > 0:
+        cycles = _build_cycles_merged(df, as_of_ts, merge_below)
+    else:
+        cycles = _build_cycles(df, as_of_ts=as_of_ts)
     if not cycles:
         logger.warning(f'[dist] {code} 截至 {snapshot_date} 无 cycles')
         return None
@@ -249,17 +385,20 @@ def compute_dist_snapshot(code: str,
         except Exception:
             pass
 
-    # upsert：先查再写
+    # upsert：先查再写（按 code + 日期 + 合并口径 三元组）
     row = (StockDistSnapshot.query
-           .filter_by(stock_code=code, snapshot_date=snapshot_date)
+           .filter_by(stock_code=code, snapshot_date=snapshot_date, merge_below=merge_below)
            .first())
     if row is None:
-        row = StockDistSnapshot(stock_code=code, snapshot_date=snapshot_date)
+        row = StockDistSnapshot(stock_code=code, snapshot_date=snapshot_date,
+                                merge_below=merge_below)
         db.session.add(row)
 
     row.stock_name = stock_name
     row.last_bar_date = last_bar_date.to_pydatetime() if hasattr(last_bar_date, 'to_pydatetime') else last_bar_date
     row.current_direction = current_direction
+    # 当前周期趋势名（与 15m 页「当前趋势」一致）：方向词 + #起始时间(YYMMDD-HHMM)
+    row.current_signal_name = _signal_name_of(current_direction, current_cycle.get('signal_start'))
 
     _assign(row, 'len_up', len_up)
     _assign(row, 'len_dn', len_dn)
@@ -271,6 +410,19 @@ def compute_dist_snapshot(code: str,
     if commit:
         db.session.commit()
     return row
+
+
+def _signal_name_of(direction, signal_start):
+    """当前周期趋势名：与 stock 详情页 _signal_name 同格式（↑涨/↓跌/·盘整 + #YYMMDD-HHMM）。"""
+    arrow = '↑' if (direction or 0) > 0 else '↓' if (direction or 0) < 0 else '·'
+    word = '涨' if (direction or 0) > 0 else '跌' if (direction or 0) < 0 else '盘整'
+    tag = ''
+    if signal_start is not None:
+        try:
+            tag = '#' + pd.Timestamp(signal_start).strftime('%y%m%d-%H%M')
+        except Exception:
+            tag = ''
+    return f'{arrow}{word}{tag}'
 
 
 def _assign(row: StockDistSnapshot, prefix: str, stats: Dict):

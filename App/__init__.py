@@ -236,6 +236,13 @@ def register_blueprints(app):
     except ImportError as e:
         print(f"警告: 无法导入 strategy.dist_filter (screener_bp) 蓝图: {e}")
 
+    # 个股统计列表（/stock_stats/）：整合分布快照 + RNN 预测 + 板块趋势
+    try:
+        from App.routes.strategy.stock_stats import stock_stats_bp
+        app.register_blueprint(stock_stats_bp)
+    except ImportError as e:
+        print(f"警告: 无法导入 strategy.stock_stats (stock_stats_bp) 蓝图: {e}")
+
     # 注：原 others/issues.py 和 others/route_stock_issue.py 已并入
     # App.routes.issues_route，不再单独注册（避免 /issues 路由冲突）
 

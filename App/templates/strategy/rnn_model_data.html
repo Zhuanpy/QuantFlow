@@ -5,82 +5,53 @@
   <!-- ========== 顶部 ========== -->
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;border-bottom:2px solid #e5e7eb;padding-bottom:.75rem;">
     <div>
-      <h1 style="margin:0;font-size:1.5rem;">RNN 模型数据 — 状态监控</h1>
+      <h1 style="margin:0;font-size:1.5rem;">RNN 处理管线 — 总览入口</h1>
       <div style="color:#6b7280;font-size:.85rem;margin-top:.25rem;">
-        只读视图：查看训练记录状态。所有"处理 / 训练 / 检查"操作已迁移到 RnnStrategies。
+        RNN 处理管线各步骤的入口（见下方分步卡片）。训练记录的查看与驱动（①②③）在「模型训练」页内。
       </div>
     </div>
     <div style="display:flex;gap:.5rem;">
-      <button id="refreshBtn" class="btn btn-secondary">刷新</button>
-      <a href="{{ url_for('RnnData.data_statistics_page') }}" class="btn btn-info">数据统计</a>
       <a href="{{ url_for('main_bp.index') }}" class="btn btn-outline">返回首页</a>
     </div>
   </div>
 
-  <!-- ========== 操作迁移横幅 ========== -->
-  <div style="background:#eff6ff;border:1px solid #93c5fd;border-radius:8px;padding:1rem 1.25rem;margin-bottom:1rem;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem;">
-    <div>
-      <div style="font-weight:600;color:#1e40af;">所有处理 / 训练 / 预测 / 检查操作 → 请去 RnnStrategies</div>
-      <div style="color:#3b82f6;font-size:.85rem;margin-top:.25rem;">
-        本页只用来监控训练记录的状态，不再触发任何处理。原"处理标准化数据"和"检查模型状态"按钮被验证为只是改 DB status 不做实事，已废弃。
-      </div>
+  {% if stock_code %}
+  <!-- 个股入口：记录查看已统一到训练页，带上代码直接跳过去搜索 -->
+  <div style="background:#ecfdf5;border:1px solid #6ee7b7;border-radius:8px;padding:.75rem 1.25rem;margin-bottom:1rem;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem;">
+    <div style="color:#065f46;font-size:.9rem;">
+      个股 <strong style="font-family:monospace;">{{ stock_code }}</strong>{% if stock_name %}（{{ stock_name }}）{% endif %} 的训练记录请在训练页查看。
     </div>
-    <div style="display:flex;gap:.5rem;">
-      <a href="/RnnStrategies/training" class="btn btn-primary" style="white-space:nowrap;">→ 模型训练</a>
-      <a href="/RnnStrategies/prediction" class="btn btn-success" style="white-space:nowrap;">→ 模型预测</a>
-    </div>
+    <a href="/RnnStrategies/training" class="btn btn-success btn-sm" style="white-space:nowrap;">→ 去训练页</a>
   </div>
+  {% endif %}
 
   <!-- ========== 管线分步入口 ========== -->
   <div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:1.25rem;margin-bottom:1rem;">
-    <h2 style="margin:0 0 .2rem;font-size:1.125rem;">RNN 处理管线 — 分步入口</h2>
+    <h2 style="margin:0 0 .2rem;font-size:1.125rem;">RNN 处理管线 — 入口</h2>
     <div style="color:#6b7280;font-size:.83rem;margin-bottom:1rem;">
-      按顺序执行：① 数据处理 → ② 模型训练 → ③ 历史检查 → ④ 预测/信号。点击卡片跳到对应操作页（不会自动执行，到目标页再点按钮）。
+      两大环节：① 模型训练（数据 → 训练 → 检查，三步都在同一训练页内）→ ② 预测 / 信号。点击卡片进入对应页（不会自动执行，到目标页再点按钮）。
     </div>
     <div style="display:flex;align-items:stretch;gap:.4rem;flex-wrap:wrap;">
 
-      <a href="/RnnStrategies/training#data" style="flex:1 1 220px;min-width:200px;text-decoration:none;border:1px solid #bfdbfe;background:#eff6ff;border-radius:8px;padding:.85rem;display:flex;flex-direction:column;gap:.35rem;transition:box-shadow .15s;" onmouseover="this.style.boxShadow='0 2px 8px rgba(0,0,0,.08)'" onmouseout="this.style.boxShadow='none'">
+      <a href="/RnnStrategies/training" style="flex:2 1 360px;min-width:300px;text-decoration:none;border:1px solid #c7d2fe;background:#eef2ff;border-radius:8px;padding:.85rem;display:flex;flex-direction:column;gap:.4rem;transition:box-shadow .15s;" onmouseover="this.style.boxShadow='0 2px 8px rgba(0,0,0,.08)'" onmouseout="this.style.boxShadow='none'">
         <div style="display:flex;align-items:center;gap:.5rem;">
-          <span style="background:#2563eb;color:#fff;width:1.5rem;height:1.5rem;border-radius:9999px;display:inline-flex;align-items:center;justify-content:center;font-size:.8rem;font-weight:700;">①</span>
-          <span style="font-weight:600;color:#1e3a8a;">数据处理</span>
+          <span style="background:#4f46e5;color:#fff;width:1.5rem;height:1.5rem;border-radius:9999px;display:inline-flex;align-items:center;justify-content:center;font-size:.8rem;font-weight:700;">①</span>
+          <span style="font-weight:600;color:#3730a3;">模型训练</span>
+          <span style="color:#6b7280;font-size:.74rem;">（同一页内三步，按钮 ①②③）</span>
         </div>
-        <div style="color:#3b82f6;font-size:.76rem;line-height:1.5;">
-          1m→15m 重采样 · MACD 三EMA 信号 · 波段切分(SignalId)<br>振幅 / 量能 / 周期长度 特征 · MAD 标准化 · 生成 .npy
+        <div style="color:#4338ca;font-size:.76rem;line-height:1.6;">
+          <b>① 数据处理</b>：1m→15m 重采样 · MACD 三EMA 信号 · 波段切分(SignalId) · 振幅/量能/周期长度特征 · MAD 标准化 · 生成 .npy<br>
+          <b>② 训练模型</b>：CNN(LeNet-5) · 4 个模型分别训练 · MSE/Adam · 输出 .h5 权重（按 股票 × 月份）<br>
+          <b>③ 历史检查</b>：回放历史日期 · 评估模型输出 · 写回 model_check 状态
         </div>
-        <div style="margin-top:auto;color:#1d4ed8;font-size:.78rem;font-weight:600;">→ 训练页「① 生成训练数据」</div>
-      </a>
-
-      <div style="display:flex;align-items:center;color:#cbd5e1;font-size:1.25rem;">→</div>
-
-      <a href="/RnnStrategies/training#train" style="flex:1 1 220px;min-width:200px;text-decoration:none;border:1px solid #ddd6fe;background:#f5f3ff;border-radius:8px;padding:.85rem;display:flex;flex-direction:column;gap:.35rem;transition:box-shadow .15s;" onmouseover="this.style.boxShadow='0 2px 8px rgba(0,0,0,.08)'" onmouseout="this.style.boxShadow='none'">
-        <div style="display:flex;align-items:center;gap:.5rem;">
-          <span style="background:#7c3aed;color:#fff;width:1.5rem;height:1.5rem;border-radius:9999px;display:inline-flex;align-items:center;justify-content:center;font-size:.8rem;font-weight:700;">②</span>
-          <span style="font-weight:600;color:#5b21b6;">模型训练</span>
-        </div>
-        <div style="color:#7c3aed;font-size:.76rem;line-height:1.5;">
-          CNN(LeNet-5) · 4 个模型分别训练<br>MSE / Adam · 输出 .h5 权重（按 股票 × 月份）
-        </div>
-        <div style="margin-top:auto;color:#6d28d9;font-size:.78rem;font-weight:600;">→ 训练页「② 训练模型」</div>
-      </a>
-
-      <div style="display:flex;align-items:center;color:#cbd5e1;font-size:1.25rem;">→</div>
-
-      <a href="/RnnStrategies/training#check" style="flex:1 1 220px;min-width:200px;text-decoration:none;border:1px solid #fde68a;background:#fffbeb;border-radius:8px;padding:.85rem;display:flex;flex-direction:column;gap:.35rem;transition:box-shadow .15s;" onmouseover="this.style.boxShadow='0 2px 8px rgba(0,0,0,.08)'" onmouseout="this.style.boxShadow='none'">
-        <div style="display:flex;align-items:center;gap:.5rem;">
-          <span style="background:#d97706;color:#fff;width:1.5rem;height:1.5rem;border-radius:9999px;display:inline-flex;align-items:center;justify-content:center;font-size:.8rem;font-weight:700;">③</span>
-          <span style="font-weight:600;color:#92400e;">历史检查</span>
-        </div>
-        <div style="color:#d97706;font-size:.76rem;line-height:1.5;">
-          回放历史日期 · 评估模型输出<br>写回 model_check 状态
-        </div>
-        <div style="margin-top:auto;color:#b45309;font-size:.78rem;font-weight:600;">→ 训练页「③ 历史检查」</div>
+        <div style="margin-top:auto;color:#4338ca;font-size:.78rem;font-weight:600;">→ 训练页（页内 ①②③ 三步按钮）</div>
       </a>
 
       <div style="display:flex;align-items:center;color:#cbd5e1;font-size:1.25rem;">→</div>
 
       <a href="/RnnStrategies/prediction" style="flex:1 1 220px;min-width:200px;text-decoration:none;border:1px solid #bbf7d0;background:#f0fdf4;border-radius:8px;padding:.85rem;display:flex;flex-direction:column;gap:.35rem;transition:box-shadow .15s;" onmouseover="this.style.boxShadow='0 2px 8px rgba(0,0,0,.08)'" onmouseout="this.style.boxShadow='none'">
         <div style="display:flex;align-items:center;gap:.5rem;">
-          <span style="background:#16a34a;color:#fff;width:1.5rem;height:1.5rem;border-radius:9999px;display:inline-flex;align-items:center;justify-content:center;font-size:.8rem;font-weight:700;">④</span>
+          <span style="background:#16a34a;color:#fff;width:1.5rem;height:1.5rem;border-radius:9999px;display:inline-flex;align-items:center;justify-content:center;font-size:.8rem;font-weight:700;">②</span>
           <span style="font-weight:600;color:#166534;">预测 / 信号</span>
         </div>
         <div style="color:#16a34a;font-size:.76rem;line-height:1.5;">
@@ -92,213 +63,9 @@
     </div>
   </div>
 
-  <!-- ========== 统计概览 ========== -->
-  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:1rem;margin-bottom:1rem;">
-    <div class="stat-card" style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:1rem;display:flex;align-items:center;gap:.75rem;">
-      <div style="font-size:1.75rem;">📊</div>
-      <div>
-        <div style="color:#6b7280;font-size:.8rem;">训练记录总数</div>
-        <div style="font-size:1.75rem;font-weight:700;color:#1f2937;" id="totalRecords">—</div>
-      </div>
-    </div>
-    <div class="stat-card" style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:1rem;display:flex;align-items:center;gap:.75rem;">
-      <div style="font-size:1.75rem;">✅</div>
-      <div>
-        <div style="color:#6b7280;font-size:.8rem;">model_check = success</div>
-        <div style="font-size:1.75rem;font-weight:700;color:#16a34a;" id="successRecords">—</div>
-      </div>
-    </div>
-    <div class="stat-card" style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:1rem;display:flex;align-items:center;gap:.75rem;">
-      <div style="font-size:1.75rem;">⏳</div>
-      <div>
-        <div style="color:#6b7280;font-size:.8rem;">model_check = pending</div>
-        <div style="font-size:1.75rem;font-weight:700;color:#ca8a04;" id="pendingRecords">—</div>
-      </div>
-    </div>
-    <div class="stat-card" style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:1rem;display:flex;align-items:center;gap:.75rem;">
-      <div style="font-size:1.75rem;">❌</div>
-      <div>
-        <div style="color:#6b7280;font-size:.8rem;">model_check = failed</div>
-        <div style="font-size:1.75rem;font-weight:700;color:#dc2626;" id="failedRecords">—</div>
-      </div>
-    </div>
-  </div>
+  <!-- 季度统计面板及整个「数据统计」页(/data_statistics + /quarter_stats)已移除：均为遗留功能，
+       数据源失效(恒返回0)、操作按钮全是桩，且"季度"维度与当前按月流水线不符。
+       流水线状态统计已由 /RnnStrategies/training 的记录表+按月汇总覆盖。 -->
 
-  <!-- ========== 季度统计面板（折叠） ========== -->
-  <div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:1.25rem;margin-bottom:1rem;">
-    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem;">
-      <h2 style="margin:0;font-size:1.125rem;">季度数据统计</h2>
-      <div style="display:flex;gap:.5rem;align-items:center;">
-        <select id="quarterStatsYear" class="form-select" style="min-width:120px;">
-          <option value="">— 选择年份 —</option>
-        </select>
-        <button id="loadQuarterStatsBtn" class="btn btn-secondary btn-sm">加载</button>
-      </div>
-    </div>
-    <div id="quarterStatsContent" style="margin-top:.75rem;color:#6b7280;font-size:.85rem;">选择年份后查看该年各季度的数据情况。</div>
-  </div>
-
-  <!-- ========== 数据表格 ========== -->
-  <div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:1.25rem;">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.75rem;flex-wrap:wrap;gap:.5rem;">
-      <h2 style="margin:0;font-size:1.125rem;">训练记录详情</h2>
-      <div style="display:flex;gap:.5rem;align-items:center;">
-        <input type="text" id="searchInput" placeholder="搜索股票代码或名称…" class="form-input" style="width:220px;">
-        <select id="statusFilter" class="form-select">
-          <option value="">全部 model_check 状态</option>
-          <option value="pending">待处理</option>
-          <option value="processing">处理中</option>
-          <option value="success">成功</option>
-          <option value="failed">失败</option>
-        </select>
-      </div>
-    </div>
-    <div style="overflow-x:auto;">
-      <table style="width:100%;border-collapse:collapse;font-size:.875rem;">
-        <thead style="background:#f9fafb;">
-          <tr>
-            <th style="padding:.5rem;text-align:left;">代码</th>
-            <th style="padding:.5rem;text-align:left;">名称</th>
-            <th style="padding:.5rem;text-align:left;">解析月份</th>
-            <th style="padding:.5rem;text-align:center;">原始 15m</th>
-            <th style="padding:.5rem;text-align:center;">标准化 15m</th>
-            <th style="padding:.5rem;text-align:center;">model_check</th>
-            <th style="padding:.5rem;text-align:left;">创建</th>
-            <th style="padding:.5rem;text-align:left;">操作</th>
-          </tr>
-        </thead>
-        <tbody id="recordsTableBody"><tr><td colspan="8" style="text-align:center;color:#9ca3af;padding:1rem;">加载中…</td></tr></tbody>
-      </table>
-    </div>
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:.75rem;font-size:.85rem;color:#6b7280;">
-      <button id="prevPageBtn" class="btn btn-outline btn-sm">上一页</button>
-      <span id="pageInfo">第 1 页 / 共 1 页</span>
-      <button id="nextPageBtn" class="btn btn-outline btn-sm">下一页</button>
-    </div>
-  </div>
 </div>
-
-<script>
-let currentPage = 1;
-const pageSize = 20;
-let totalPages = 1;
-
-async function fetchJson(url) {
-  try { const r = await fetch(url); return await r.json(); }
-  catch (e) { return { success: false, message: e.message }; }
-}
-
-// 状态徽章
-function badge(status) {
-  if (!status) return '<span style="color:#9ca3af;">—</span>';
-  const palette = {
-    success:    {bg:'#dcfce7', fg:'#16a34a'},
-    pending:    {bg:'#fef9c3', fg:'#ca8a04'},
-    processing: {bg:'#dbeafe', fg:'#2563eb'},
-    failed:     {bg:'#fee2e2', fg:'#dc2626'},
-    error:      {bg:'#fee2e2', fg:'#dc2626'},
-  };
-  const c = palette[status] || {bg:'#f3f4f6', fg:'#6b7280'};
-  return `<span style="background:${c.bg};color:${c.fg};padding:.15rem .5rem;border-radius:9999px;font-size:.72rem;font-weight:600;">${status}</span>`;
-}
-
-async function loadStatistics() {
-  const j = await fetchJson('/RnnData/statistics');
-  if (j.success) {
-    document.getElementById('totalRecords').textContent = j.total ?? '—';
-    document.getElementById('successRecords').textContent = j.success ?? '—';
-    document.getElementById('pendingRecords').textContent = j.pending ?? '—';
-    document.getElementById('failedRecords').textContent = j.failed ?? '—';
-  }
-}
-
-async function loadRecords() {
-  const search = document.getElementById('searchInput').value;
-  const status = document.getElementById('statusFilter').value;
-  const params = new URLSearchParams({ page: currentPage, page_size: pageSize, search, status });
-  const j = await fetchJson(`/RnnData/records?${params}`);
-  const tbody = document.getElementById('recordsTableBody');
-  if (!j.success) {
-    tbody.innerHTML = `<tr><td colspan="8" style="color:#dc2626;text-align:center;padding:1rem;">${j.message || '加载失败'}</td></tr>`;
-    return;
-  }
-  if (!j.records.length) {
-    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:#9ca3af;padding:1rem;">暂无数据</td></tr>';
-  } else {
-    tbody.innerHTML = j.records.map(r => {
-      const original = r.original_15M?.status;
-      const standard = r.standard_15M?.status;
-      const ts = r.created_at ? new Date(r.created_at).toLocaleDateString() : '—';
-      const code = r.code || '';
-      return `<tr style="border-top:1px solid #e5e7eb;">
-        <td style="padding:.4rem .5rem;font-family:monospace;">
-          ${code ? `<a href="/stock/?code=${code}" target="_blank" style="color:#2563eb;text-decoration:none;">${code}</a>` : '—'}
-        </td>
-        <td style="padding:.4rem .5rem;">${r.name || '—'}</td>
-        <td style="padding:.4rem .5rem;">${r.parser_month || '—'}</td>
-        <td style="padding:.4rem .5rem;text-align:center;">${badge(original)}</td>
-        <td style="padding:.4rem .5rem;text-align:center;">${badge(standard)}</td>
-        <td style="padding:.4rem .5rem;text-align:center;">${badge(r.model_check)}</td>
-        <td style="padding:.4rem .5rem;color:#6b7280;font-size:.78rem;">${ts}</td>
-        <td style="padding:.4rem .5rem;">
-          ${code ? `<a href="/stock/?code=${code}" target="_blank" class="btn btn-outline btn-sm" style="padding:.2rem .5rem;font-size:.78rem;">详情</a>` : ''}
-        </td>
-      </tr>`;
-    }).join('');
-  }
-  currentPage = j.pagination.current_page;
-  totalPages  = j.pagination.total_pages || 1;
-  document.getElementById('pageInfo').textContent = `第 ${currentPage} 页 / 共 ${totalPages} 页（${j.pagination.total_items} 条）`;
-  document.getElementById('prevPageBtn').disabled = currentPage <= 1;
-  document.getElementById('nextPageBtn').disabled = currentPage >= totalPages;
-}
-
-async function loadQuarterStatsYears() {
-  // 通过 statistics 接口里 records 的 parser_month 推断可用年份；简化版直接给固定区间
-  const sel = document.getElementById('quarterStatsYear');
-  const thisYear = new Date().getFullYear();
-  let html = '<option value="">— 选择年份 —</option>';
-  for (let y = thisYear; y >= 2020; y--) html += `<option value="${y}">${y} 年</option>`;
-  sel.innerHTML = html;
-}
-
-async function loadQuarterStats() {
-  const year = document.getElementById('quarterStatsYear').value;
-  const div = document.getElementById('quarterStatsContent');
-  if (!year) { div.innerHTML = '请选择年份。'; return; }
-  div.innerHTML = '加载中…';
-  const j = await fetchJson(`/RnnData/quarter_stats/${year}`);
-  if (!j.success) {
-    div.innerHTML = `<div style="color:#dc2626;">${j.message || '加载失败'}</div>`;
-    return;
-  }
-  // 服务端返回的字段格式可能不一，做防御渲染
-  const items = j.data || j.quarters || j.stats || [];
-  if (!Array.isArray(items) || items.length === 0) {
-    div.innerHTML = `<pre style="background:#f9fafb;padding:.75rem;border-radius:6px;overflow-x:auto;font-size:.78rem;">${JSON.stringify(j, null, 2)}</pre>`;
-    return;
-  }
-  div.innerHTML = items.map(it => `
-    <div style="display:inline-block;background:#f9fafb;padding:.5rem .75rem;margin:.25rem;border-radius:6px;font-size:.85rem;">
-      <strong>${it.quarter || it.name || '?'}</strong>: ${JSON.stringify(it).slice(0, 120)}
-    </div>`).join('');
-}
-
-// 事件
-document.getElementById('refreshBtn').onclick = () => { loadStatistics(); loadRecords(); };
-document.getElementById('searchInput').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') { currentPage = 1; loadRecords(); }
-});
-document.getElementById('statusFilter').onchange = () => { currentPage = 1; loadRecords(); };
-document.getElementById('prevPageBtn').onclick = () => { if (currentPage > 1) { currentPage--; loadRecords(); } };
-document.getElementById('nextPageBtn').onclick = () => { if (currentPage < totalPages) { currentPage++; loadRecords(); } };
-document.getElementById('loadQuarterStatsBtn').onclick = loadQuarterStats;
-
-// 初始化
-(async () => {
-  await loadQuarterStatsYears();
-  loadStatistics();
-  loadRecords();
-})();
-</script>
 {% endblock %}

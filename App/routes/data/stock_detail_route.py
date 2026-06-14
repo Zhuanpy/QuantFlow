@@ -80,6 +80,13 @@ def stock_replay_page():
                            view_mode='replay', period=_read_period_arg())
 
 
+@stock_detail_bp.route('/onemin')
+def stock_onemin_check_page():
+    """个股 1 分钟数据完整性检测页（按年份）。静态路径，优先于 /stock/<code>。"""
+    code = (request.args.get('code') or '').strip()
+    return render_template('data/onemin_check.html', stock_code=code)
+
+
 # ==================== 工具函数 ====================
 def _project_root() -> Path:
     from config import Config
@@ -425,35 +432,35 @@ def _append_live_15m(historical_df: pd.DataFrame, code: str, day_ts: pd.Timestam
     # 5) 取重算后的 live 行
     live_recomputed = combined.tail(len(live_15m)).reset_index(drop=True)
 
-    # 6) 信任 warmup pipeline 的"更晚 flip"判断：
-    #    pre_today.last 的 SignalStartIndex 来自昨天的离线全量 pipeline；
-    #    它的 filter_invalid_macd_signals 阈值在大窗口里有时会把真实的近期 flip
-    #    判成无效。warmup（100 根小窗口）反而能识别出这些近期 flip。
+    # 6) 用"方向"而非"时间戳"决定是否采纳 warmup 重算的趋势起点。
     #
-    #    规则：逐行比较 —— warmup 算出的 SignalStartIndex 比 pre_today.last 的更晚
-    #    就采纳（warmup 看到了离线漏掉的新 flip 或今天新发生的 flip）；否则继承历史。
+    #    warmup 只有 100 根，看不到 100 根之前就开始的"长趋势"的真实起点 ——
+    #    它会把一段延续中的同方向趋势的起点错误地截断到窗口内
+    #    （例：延续自 5/28 的下跌被 warmup 重新标成 6/3 起点）。原先按时间戳
+    #    "更晚就采纳"的规则恰好把这种被截断的假起点也采纳了，导致 live 当前趋势
+    #    与离线 parquet（after_close）不一致、且被切成一小段。
     #
-    #    这放宽了原来"只采纳今天 flip"的 B 语义 —— 此前那条规则太保守，会让 trader
-    #    在交易页面看到比实际趋势滞后 1-2 天的判定。
-    fresh_starts = pd.to_datetime(live_recomputed.get('SignalStartIndex'), errors='coerce')
+    #    新规则（按最终方向比较）：
+    #      - 今天行重算方向 == 离线 last 方向 → 趋势延续，继承离线起点（更早更完整）
+    #      - 方向不同              → 真的发生了翻转（今天新 flip / 离线漏判的近期 flip），
+    #                                采纳 warmup 重算值（其起点必在近期、落在窗口内，准确）
+    #    这样既消除"长趋势被截断"的 bug，又保留 warmup 发现近期翻转的能力。
     last_hist_signal = pre_today.iloc[-1].get('Signal') if 'Signal' in pre_today.columns else None
     last_hist_start = pre_today.iloc[-1].get('SignalStartIndex') if 'SignalStartIndex' in pre_today.columns else None
-    hist_start_ts = pd.to_datetime(last_hist_start, errors='coerce') if last_hist_start is not None else pd.NaT
+    last_hist_id = pre_today.iloc[-1].get('SignalId') if 'SignalId' in pre_today.columns else None
+    hist_sig_num = pd.to_numeric(pd.Series([last_hist_signal]), errors='coerce').iloc[0]
+    fresh_sig = (pd.to_numeric(live_recomputed.get('Signal'), errors='coerce')
+                 if 'Signal' in live_recomputed.columns else None)
 
-    if fresh_starts is None or not fresh_starts.notna().any():
-        # warmup 完全没找到 flip → 整段继承
-        live_recomputed['Signal'] = last_hist_signal
-        live_recomputed['SignalStartIndex'] = last_hist_start
-    else:
-        for i in range(len(live_recomputed)):
-            fs = fresh_starts.iloc[i] if i < len(fresh_starts) else pd.NaT
-            # warmup 这一行的 flip 比离线 last 更晚 → 用 warmup 的（新发现的 flip）
-            # 否则 → 继承离线 last（warmup 没看到比离线更新的东西）
-            if pd.notna(fs) and (pd.isna(hist_start_ts) or fs > hist_start_ts):
-                pass  # 保留 warmup 算出的 fresh 值
-            else:
-                live_recomputed.at[i, 'Signal'] = last_hist_signal
-                live_recomputed.at[i, 'SignalStartIndex'] = last_hist_start
+    for i in range(len(live_recomputed)):
+        fi = fresh_sig.iloc[i] if (fresh_sig is not None and i < len(fresh_sig)) else None
+        # 同向延续，或今天行没算出方向 → 继承离线（趋势从更早的真实起点延续至今）
+        if fi is None or pd.isna(fi) or (pd.notna(hist_sig_num) and fi == hist_sig_num):
+            live_recomputed.at[i, 'Signal'] = last_hist_signal
+            live_recomputed.at[i, 'SignalStartIndex'] = last_hist_start
+            if last_hist_id is not None and 'SignalId' in live_recomputed.columns:
+                live_recomputed.at[i, 'SignalId'] = last_hist_id
+        # else: 方向翻转 → 保留 warmup 算出的 fresh 值（近期真实翻转）
 
     # 7) 列对齐到 pre_today 的全集（pipeline 不写的列保持 NaN），concat 回去
     for c in pre_today.columns:
@@ -477,6 +484,64 @@ def _signal_name(direction, signal_start_ts):
     arrow = '↑' if direction > 0 else '↓' if direction < 0 else '·'
     word = '涨' if direction > 0 else '跌' if direction < 0 else '盘整'
     return f'{arrow}{word}#{ts.strftime("%y%m%d-%H%M")}'
+
+
+def _seg_amp_dir(df, a, b, has_signal, has_sp, has_high, has_low):
+    """连续段 df[a:b] 的方向 + 极值口径振幅（用于"小周期合并"判断）。"""
+    g = df.iloc[a:b + 1]
+    d = 0
+    if has_signal:
+        sv = pd.to_numeric(g['Signal'], errors='coerce').dropna()
+        if len(sv):
+            d = int(1 if sv.iloc[-1] > 0 else -1 if sv.iloc[-1] < 0 else 0)
+    sp = None
+    if has_sp:
+        _sp = pd.to_numeric(g['StartPrice'], errors='coerce').dropna()
+        if len(_sp):
+            sp = float(_sp.iloc[0])
+    amp = None
+    if sp and sp != 0 and has_high and has_low:
+        hi = float(pd.to_numeric(g['high'], errors='coerce').max())
+        lo = float(pd.to_numeric(g['low'], errors='coerce').min())
+        if d > 0:
+            amp = abs((hi - sp) / sp)
+        elif d < 0:
+            amp = abs((lo - sp) / sp)
+        else:
+            amp = max(abs((hi - sp) / sp), abs((lo - sp) / sp))
+    return d, amp
+
+
+def _merge_small_segments(df, seg_bounds, merge_below,
+                          has_signal, has_sp, has_high, has_low):
+    """把振幅 < merge_below% 的"中间"小段与前后两个相邻同向段三合一，迭代到无可并。
+
+    seg_bounds：按时间排好的连续段 [(a, b), ...]；返回合并后的 seg_bounds。
+    与 api_cycles / dist_snapshot_service 的合并口径完全一致（去噪：去掉无效小周期）。
+    振幅算不出(None，如数据起点无 StartPrice)的段不参与合并，避免误并首部大段。
+    """
+    thr = (merge_below or 0) / 100.0
+    if thr <= 0:
+        return seg_bounds
+    guard = 0
+    while len(seg_bounds) >= 3 and guard < 100000:
+        guard += 1
+        best = None
+        for i in range(1, len(seg_bounds) - 1):
+            _, amp = _seg_amp_dir(df, seg_bounds[i][0], seg_bounds[i][1],
+                                  has_signal, has_sp, has_high, has_low)
+            # 只合并"能算出振幅且 < 阈值"的中间小段。振幅算不出(None，多为数据起点
+            # 无 StartPrice 的大段)不参与合并 —— 否则会把首部大段误判为"无效"，
+            # 连锁合并把整条序列塌成一个趋势（30m 等周期上表现为"全是下跌"）。
+            if amp is not None and amp < thr and (best is None or amp < best[1]):
+                best = (i, amp)
+        if best is None:
+            break
+        i = best[0]
+        seg_bounds = (seg_bounds[:i - 1]
+                      + [(seg_bounds[i - 1][0], seg_bounds[i + 1][1])]
+                      + seg_bounds[i + 2:])
+    return seg_bounds
 
 
 @stock_detail_bp.route('/api/<code>/15m', methods=['GET'])
@@ -524,10 +589,19 @@ def api_15m(code):
     if period != '15m':
         from App.codes.utils.timeframe_resample import resample_15m
         from App.codes.Signals.MacdSignalV2 import compute_v2_signals_pipeline
+        from App.codes.Signals.StatisticsMacd import StatisticsMACD
         df = resample_15m(df, period)
         if df.empty:
             return jsonify({'success': False, 'message': f'resample 到 {period} 后无数据'}), 404
         df = compute_v2_signals_pipeline(df, n=7)
+        # 补 StartPrice/CycleAmplitude/CycleLength：合并小周期(去噪)与振幅口径都依赖
+        # StartPrice。与 api_cycles 的 resample 路径保持一致，否则 30m 等周期上 K 线
+        # 底色无法按振幅合并（旧逻辑下还会因 amp 全 None 误并成单一趋势）。
+        if 'Daily1mVolMax5' not in df.columns:
+            df['Daily1mVolMax5'] = pd.NA
+        df = StatisticsMACD.s_StartEndIndex(df)
+        df = StatisticsMACD.s_CycleAmplitude(df)
+        df = StatisticsMACD.s_CycleLength(df)
 
     if start:
         df = df[df['date'] >= pd.to_datetime(start)]
@@ -585,25 +659,39 @@ def api_15m(code):
             'ema_long': _f(el_col, i),
         })
 
-    # 把连续同一周期(SignalStartIndex)的 bar 合并成区段，便于在 K 线上画涨跌底色
+    # 把连续同一周期(SignalStartIndex)的 bar 合并成区段，便于在 K 线上画涨跌底色。
+    # 可选 ?merge_below=X：把振幅 <X% 的小周期与前后同向周期合并（与分布/cycles 口径一致），
+    # 让 K 线底色也反映"去噪后的大周期"，不再画零碎小段。
     segments = []
     if has_sidx and len(df):
         key = df['SignalStartIndex'].astype(str).fillna('NA')
-        seg_start = 0
+        seg_bounds = []
+        s = 0
         for i in range(1, len(df) + 1):
-            if i == len(df) or key.iloc[i] != key.iloc[seg_start]:
-                d = records[seg_start]['direction']
-                if d != 0:
-                    segments.append({
-                        'start_idx': seg_start,
-                        'end_idx': i - 1,
-                        'direction': d,
-                        'signal_name': records[seg_start]['signal_name'],
-                        'start_date': records[seg_start]['date'],
-                        'end_date': records[i - 1]['date'],
-                        'bars': i - seg_start,
-                    })
-                seg_start = i
+            if i == len(df) or key.iloc[i] != key.iloc[s]:
+                seg_bounds.append((s, i - 1))
+                s = i
+        try:
+            merge_below = float(request.args.get('merge_below') or 0)
+        except ValueError:
+            merge_below = 0.0
+        if merge_below > 0:
+            seg_bounds = _merge_small_segments(
+                df, seg_bounds, merge_below, has_signal,
+                'StartPrice' in df.columns, 'high' in df.columns, 'low' in df.columns)
+        for a, b in seg_bounds:
+            # 合并后方向以末根为准（与 cycles 一致）；交替结构下首末根同向，等价
+            d = records[b]['direction'] if records[b]['direction'] != 0 else records[a]['direction']
+            if d != 0:
+                segments.append({
+                    'start_idx': a,
+                    'end_idx': b,
+                    'direction': d,
+                    'signal_name': records[a]['signal_name'],
+                    'start_date': records[a]['date'],
+                    'end_date': records[b]['date'],
+                    'bars': b - a + 1,
+                })
 
     # 当前趋势（最后一段）—— 交易时用：趋势没变名字不变，变了就该止盈/止损
     current_trend = None
@@ -614,13 +702,29 @@ def api_15m(code):
         last_price = records[last['end_idx']]['close']
         change_pct = (round((last_price - start_price) / start_price * 100, 2)
                       if start_price else None)
-        # 趋势振幅：段内最高价与最低价之差，相对段内最高价的百分比
-        # （下跌区间以高点为基准：(high-low)/high*100）
         seg_rows = records[last['start_idx']:last['end_idx'] + 1]
         seg_high = max(r['high'] for r in seg_rows)
         seg_low = min(r['low'] for r in seg_rows)
-        amplitude_pct = (round((seg_high - seg_low) / seg_high * 100, 2)
-                         if seg_high else None)
+
+        # 振幅口径与「周期振幅分布」完全统一 —— 极值口径：
+        #   (本段极值 − 周期起点价) / 周期起点价；上涨取段内最高、下跌取段内最低。
+        # 周期起点价 = 本段 StartPrice 的首个非空值（= flip 行起点，与 cycles 同源）。
+        start_ref = None
+        if 'StartPrice' in df.columns:
+            _sp = pd.to_numeric(
+                df['StartPrice'].iloc[last['start_idx']:last['end_idx'] + 1],
+                errors='coerce').dropna()
+            if len(_sp):
+                start_ref = float(_sp.iloc[0])
+        seg_extreme = seg_high if last['direction'] > 0 else seg_low
+        if start_ref and start_ref != 0:
+            amplitude_pct = round(abs(seg_extreme - start_ref) / start_ref * 100, 2)
+        else:
+            # 无 StartPrice 兜底：退回段内高低口径
+            start_ref = seg_low if last['direction'] > 0 else seg_high
+            amplitude_pct = (round((seg_high - seg_low) / seg_high * 100, 2)
+                             if seg_high else None)
+
         current_trend = {
             'signal_name': last['signal_name'],
             'direction': last['direction'],
@@ -633,6 +737,8 @@ def api_15m(code):
             'high_price': round(seg_high, 2),
             'low_price': round(seg_low, 2),
             'amplitude_pct': amplitude_pct,
+            'amp_start': round(start_ref, 2) if start_ref else None,  # 周期起点价
+            'amp_to': round(seg_extreme, 2),                          # 本段极值
         }
 
     return jsonify({
@@ -922,20 +1028,7 @@ def api_cycles(code):
     # CycleLengthMax / CycleAmplitudeMax 是结束后回填的"最终值"，
     # 直接用会泄漏未来。下面对这些周期单独重算。
     # live 模式：最后一段是"今天进行中"的周期，强制标为 in-progress。
-    inprogress_sidx = set()
-    if as_of_ts is not None:
-        sig_full = df[df['SignalStartIndex'].notna()]
-        for sidx, gg in sig_full.groupby('SignalStartIndex'):
-            if gg['date'].max() > as_of_ts:
-                inprogress_sidx.add(sidx)
-        df = df[df['date'] <= as_of_ts]
-    elif live_merged:
-        # 最后一根 K 线所在的 SignalStartIndex 段 = 还在进行中
-        last_ssi = df['SignalStartIndex'].dropna().iloc[-1] if df['SignalStartIndex'].notna().any() else None
-        if last_ssi is not None:
-            inprogress_sidx.add(last_ssi)
-
-    df = df[df['SignalStartIndex'].notna()].sort_values('date')
+    df = df[df['SignalStartIndex'].notna()].sort_values('date').reset_index(drop=True)
     if df.empty:
         return jsonify({'success': True, 'count': 0,
                         'as_of': as_of_ts.strftime('%Y-%m-%d %H:%M:%S') if as_of_ts is not None else None,
@@ -950,10 +1043,52 @@ def api_cycles(code):
     has_high = 'high' in df.columns
     has_low = 'low' in df.columns
 
+    # 按「时间上连续的同 SignalStartIndex」切分成段，而不是 groupby(SSI 值)。
+    # 信号管线在一次反向小周期后可能把新趋势段又赋成旧的 SignalStartIndex（SSI 复用、
+    # 非单调）。groupby(值) 会把两段不连续的趋势合并成一个超长周期，且"最新周期"按 SSI
+    # 值排序会选错——导致详情页"分布图当前周期"方向与"当前趋势"相反。连续段切分保证：
+    # 每段 = 一个真实连续趋势，按时间排序，最后一段 = 当下进行中的周期（与 api_15m 一致）。
+    ssi_key = df['SignalStartIndex'].astype(str)
+    seg_bounds = []
+    s = 0
+    for i in range(1, len(df) + 1):
+        if i == len(df) or ssi_key.iloc[i] != ssi_key.iloc[s]:
+            seg_bounds.append((s, i - 1))
+            s = i
+
+    # ---- 可选：合并 < merge_below% 的小周期（去噪 / 周期归并）----
+    # 规则：某个"中间"周期的振幅 < 阈值（或算不出，视为无效）时，把它与前后两个相邻(必为同向)
+    # 周期并成一个大周期，方向取相邻周期方向。例如 上涨1 / 下跌2(振幅<5%) / 上涨3 → 合并为一个
+    # 上涨段。迭代到没有可合并的中间小周期为止。合并/口径与 api_15m、dist_snapshot 完全一致。
+    # 合并后长度/振幅/能量都按合并后的整段 K 线重新计算（见下方循环）。
+    try:
+        merge_below = float(request.args.get('merge_below') or 0)
+    except ValueError:
+        merge_below = 0.0
+    merged_mode = merge_below > 0
+    if merged_mode:
+        seg_bounds = _merge_small_segments(
+            df, seg_bounds, merge_below, has_signal, has_sp, has_high, has_low)
+
+    # 进行中段：as_of 模式下"末根晚于 as_of"的段；live 模式下时间最后一段。
+    inprogress_idx = set()
+    if as_of_ts is not None:
+        for k, (a, b) in enumerate(seg_bounds):
+            if df['date'].iloc[b] > as_of_ts:
+                inprogress_idx.add(k)
+    elif live_merged and seg_bounds:
+        inprogress_idx.add(len(seg_bounds) - 1)
+
     cycles = []
-    for sidx, g in df.groupby('SignalStartIndex', sort=True):
+    for k, (a, b) in enumerate(seg_bounds):
+        g = df.iloc[a:b + 1]
+        if as_of_ts is not None:
+            g = g[g['date'] <= as_of_ts]
+            if g.empty:
+                continue
+        sidx = df['SignalStartIndex'].iloc[a]
         first, last = g['date'].iloc[0], g['date'].iloc[-1]
-        is_inprogress = sidx in inprogress_sidx
+        is_inprogress = k in inprogress_idx
         direction = 0
         if has_signal:
             sv = pd.to_numeric(g['Signal'], errors='coerce').dropna()
@@ -961,10 +1096,13 @@ def api_cycles(code):
                 direction = int(1 if sv.iloc[-1] > 0 else -1 if sv.iloc[-1] < 0 else 0)
 
         # CycleLengthMax 在源数据里是周期结束后回填的最终值。
-        # as-of 模式下，正在进行中的周期得改回"截止当下已走过几根" = len(g) - 1，
-        # 否则前端会拿到一个"提前知道未来"的长度。
+        # as-of / 进行中的周期改回"截止当下已走过几根" = len(g) - 1，避免泄漏未来。
         if is_inprogress:
             clen = max(0, len(g) - 1)
+        elif merged_mode:
+            # 合并后周期跨多个原始 SSI 段，CycleLengthMax.max() 只是子段最大值（错），
+            # 用合并后实际 K 线根数作为长度。
+            clen = len(g)
         else:
             clen = pd.to_numeric(g['CycleLengthMax'], errors='coerce').max()
 
@@ -1047,6 +1185,7 @@ def api_cycles(code):
         'as_of': as_of_ts.strftime('%Y-%m-%d %H:%M:%S') if as_of_ts is not None else None,
         'period': period,
         'mode': 'live' if live_merged else 'after_close',
+        'merge_below': merge_below if merged_mode else 0,
         'data': cycles,
     })
 
@@ -1297,6 +1436,134 @@ def api_1m(code):
         'count': len(records),
         'data': records,
     })
+
+
+# ==================== 1m 完整性检测（按年份） ====================
+_ONEMIN_FULL_BARS = 240      # A 股整日 1m 根数（9:30-11:30 + 13:00-15:00）
+_ONEMIN_FULL_MIN = 238       # ≥ 此值视为"完整"（容忍个别缺分钟）
+
+
+def _onemin_quarter_bases():
+    root = _project_root()
+    return [root / 'data' / 'data' / 'quarters', root / 'data' / 'quarters']
+
+
+def _onemin_years(code: str):
+    """有历史 1m 数据的年份 → {year: [季度...]}（只查文件存在，不读内容）。"""
+    out = {}
+    for base in _onemin_quarter_bases():
+        if not base.exists():
+            continue
+        for ydir in base.iterdir():
+            if not ydir.is_dir() or not ydir.name.isdigit():
+                continue
+            qs = []
+            for q in ('Q1', 'Q2', 'Q3', 'Q4'):
+                if (ydir / q / f'{code}.parquet').exists() or (ydir / q / f'{code}.csv').exists():
+                    qs.append(q)
+            if qs:
+                out.setdefault(ydir.name, set()).update(qs)
+    return {y: sorted(v) for y, v in out.items()}
+
+
+def _onemin_day_counts(code: str, year: int):
+    """读该年各季度 parquet 的 date 列 → {date(iso): bar_count}。"""
+    counts = {}
+    for base in _onemin_quarter_bases():
+        ydir = base / str(year)
+        if not ydir.exists():
+            continue
+        for q in ('Q1', 'Q2', 'Q3', 'Q4'):
+            for ext in ('parquet', 'csv'):
+                fp = ydir / q / f'{code}.{ext}'
+                if not fp.exists():
+                    continue
+                try:
+                    df = (pd.read_parquet(fp, columns=['date']) if ext == 'parquet'
+                          else pd.read_csv(fp, usecols=['date']))
+                    df['date'] = pd.to_datetime(df['date'])
+                    vc = df['date'].dt.date.value_counts()
+                    for d, n in vc.items():
+                        iso = d.isoformat()
+                        counts[iso] = counts.get(iso, 0) + int(n)
+                except Exception as e:
+                    logger.warning(f'读 {fp} 失败: {e}')
+    return counts
+
+
+def _onemin_completeness(code: str, year: int):
+    """对比"应有交易日(data_stock_daily)"与"实际 1m 覆盖"，逐日定状态 + 汇总。"""
+    day_counts = _onemin_day_counts(code, year)
+
+    # 应有交易日（该股票该年在日 K 里出现过的日期）
+    rows = (db.session.query(StockDaily.date)
+            .filter(StockDaily.stock_code == code)
+            .filter(StockDaily.date >= datetime(year, 1, 1))
+            .filter(StockDaily.date < datetime(year + 1, 1, 1))
+            .order_by(StockDaily.date.asc()).all())
+    trading_days = [r[0].isoformat() for r in rows]
+
+    days, full, short, missing = [], 0, 0, 0
+    missing_list, short_list = [], []
+    for d in trading_days:
+        n = day_counts.get(d, 0)
+        if n == 0:
+            status = 'missing'; missing += 1; missing_list.append(d)
+        elif n >= _ONEMIN_FULL_MIN:
+            status = 'full'; full += 1
+        else:
+            status = 'short'; short += 1; short_list.append({'date': d, 'bars': n})
+        days.append({'date': d, 'bars': n, 'status': status})
+
+    # 1m 有、daily 无的"多余日"（信息项）
+    extra = sorted([{'date': d, 'bars': n} for d, n in day_counts.items()
+                    if d not in set(trading_days)], key=lambda x: x['date'])
+
+    # 按季度细分
+    quarters = {}
+    for it in days:
+        mo = int(it['date'][5:7]); q = f'Q{(mo - 1) // 3 + 1}'
+        b = quarters.setdefault(q, {'expected': 0, 'full': 0, 'short': 0, 'missing': 0})
+        b['expected'] += 1; b[it['status']] += 1
+
+    one_dates = sorted(day_counts.keys())
+    expected = len(trading_days)
+    return {
+        'code': code, 'year': year,
+        'expected_days': expected,
+        'full': full, 'short': short, 'missing': missing,
+        'complete_rate': round(full / expected * 100, 1) if expected else None,
+        'has_1m': bool(day_counts),
+        'onemin_date_range': [one_dates[0], one_dates[-1]] if one_dates else None,
+        'onemin_day_count': len(day_counts),
+        'quarters': quarters,
+        'days': days,
+        'missing_list': missing_list,
+        'short_list': short_list,
+        'extra_list': extra,
+        'full_bars': _ONEMIN_FULL_BARS,
+    }
+
+
+@stock_detail_bp.route('/api/<code>/1m/years', methods=['GET'])
+def api_1m_years(code):
+    y = _onemin_years(code)
+    years = sorted(y.keys(), reverse=True)
+    return jsonify({'success': True, 'years': years, 'quarters': y,
+                    'latest': years[0] if years else None})
+
+
+@stock_detail_bp.route('/api/<code>/1m/completeness', methods=['GET'])
+def api_1m_completeness(code):
+    year_s = (request.args.get('year') or '').strip()
+    if not year_s.isdigit():
+        return jsonify({'success': False, 'message': '需要 year 参数 (YYYY)'}), 400
+    try:
+        data = _onemin_completeness(code, int(year_s))
+        return jsonify({'success': True, 'data': data})
+    except Exception as e:
+        logger.exception('1m 完整性检测失败')
+        return jsonify({'success': False, 'message': str(e)}), 500
 
 
 def _list_param_months(code: str):

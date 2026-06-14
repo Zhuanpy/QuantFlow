@@ -220,6 +220,25 @@ def get_stock_daily_data(stock_code):
                 'volume': daily.volume or 0, 'money': daily.money or 0,
                 'fund_count': daily.fund_holdings_count or 0,
                 'fund_ratio': _r(daily.fund_holdings_ratio),
+                # 个股统计快照字段（ss_*，由 save_daily_stats.py 写入；原值，None 由前端显示 —）
+                'ss_direction': daily.ss_direction,
+                'ss_signal_name': daily.ss_signal_name,
+                'ss_len_current': daily.ss_len_current, 'ss_len_mean': daily.ss_len_mean,
+                'ss_len_z': daily.ss_len_z, 'ss_len_pct': daily.ss_len_pct, 'ss_len_n': daily.ss_len_n,
+                'ss_amp_current': daily.ss_amp_current, 'ss_amp_mean': daily.ss_amp_mean,
+                'ss_amp_z': daily.ss_amp_z, 'ss_amp_pct': daily.ss_amp_pct,
+                'ss_v5_current': daily.ss_v5_current, 'ss_v5_mean': daily.ss_v5_mean,
+                'ss_v5_z': daily.ss_v5_z, 'ss_v5_pct': daily.ss_v5_pct,
+                'ss_board_name': daily.ss_board_name, 'ss_board_code': daily.ss_board_code,
+                'ss_board_trend_stage': daily.ss_board_trend_stage,
+                'ss_board_trend_score': daily.ss_board_trend_score,
+                'ss_rnn_trends': daily.ss_rnn_trends,
+                'ss_rnn_trade_point': daily.ss_rnn_trade_point,
+                'ss_rnn_score_trends': daily.ss_rnn_score_trends,
+                'ss_rnn_predict_cycle_length': daily.ss_rnn_predict_cycle_length,
+                'ss_rnn_real_cycle_length': daily.ss_rnn_real_cycle_length,
+                'ss_rnn_predict_cycle_change': daily.ss_rnn_predict_cycle_change,
+                'ss_rnn_real_cycle_change': daily.ss_rnn_real_cycle_change,
             }
             if task:
                 row_data.update({

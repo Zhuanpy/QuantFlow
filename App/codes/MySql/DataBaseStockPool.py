@@ -20,9 +20,10 @@ class TableStockPool:
     TABLE_NAME = 'record_stock_pool'
     
     # 数据库配置（从 config.py 读取）
-    # 注意：record_stock_pool 表可能在 mystockrecord 数据库中
-    # 可以通过环境变量 STOCK_POOL_DB 指定，默认为 mystockrecord
-    STOCK_POOL_DB = os.getenv('STOCK_POOL_DB', 'mystockrecord')
+    # record_stock_pool 等池/板块/交易表实际落在主库 Config.DB_NAME（quanttradingsystem）。
+    # 历史遗留默认曾硬编码为 'mystockrecord'（该库通常不存在 → Unknown database 报错），
+    # 现默认回退到主库；仍可用环境变量 STOCK_POOL_DB 覆盖到独立的池库。
+    STOCK_POOL_DB = os.getenv('STOCK_POOL_DB') or Config.DB_NAME
     
     @classmethod
     def _get_db_config(cls, database: Optional[str] = None) -> dict:
@@ -256,7 +257,7 @@ class TableStockBoard:
     """板块表操作类"""
     
     TABLE_NAME = 'stock_board'  # 假设表名，可能需要根据实际情况调整
-    STOCK_POOL_DB = os.getenv('STOCK_POOL_DB', 'mystockrecord')
+    STOCK_POOL_DB = os.getenv('STOCK_POOL_DB') or Config.DB_NAME
     
     @classmethod
     def _get_connection(cls, database: Optional[str] = None):
@@ -337,7 +338,7 @@ class TableStockPoolCount:
     """股票池统计表操作类"""
     
     TABLE_NAME = 'stock_pool_count'  # 假设表名，可能需要根据实际情况调整
-    STOCK_POOL_DB = os.getenv('STOCK_POOL_DB', 'mystockrecord')
+    STOCK_POOL_DB = os.getenv('STOCK_POOL_DB') or Config.DB_NAME
     
     @classmethod
     def _get_connection(cls, database: Optional[str] = None):
@@ -449,7 +450,7 @@ class TableTradeRecord:
     """交易记录表操作类"""
     
     TABLE_NAME = 'trade_record'  # 假设表名，可能需要根据实际情况调整
-    STOCK_POOL_DB = os.getenv('STOCK_POOL_DB', 'mystockrecord')
+    STOCK_POOL_DB = os.getenv('STOCK_POOL_DB') or Config.DB_NAME
     
     @classmethod
     def _get_connection(cls, database: Optional[str] = None):

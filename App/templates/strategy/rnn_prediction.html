@@ -5,6 +5,8 @@
   <div class="page-tabs" style="margin-bottom:1rem;">
     <a class="tab-btn" href="/RnnStrategies/training">训练管理</a>
     <a class="tab-btn active" href="/RnnStrategies/prediction">模型预测</a>
+    <a class="tab-btn" href="/stock_stats/" title="整合分布快照+RNN预测+板块趋势的个股统计列表">📊 个股统计</a>
+    <a class="tab-btn" href="/RnnData/rnn_data_page" style="margin-left:auto;">← 总览入口</a>
   </div>
 
   <!-- ========== 单只查询 ========== -->
@@ -55,27 +57,41 @@
       <button id="btnBatchStop" class="btn btn-danger" disabled>请求停止</button>
     </div>
 
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:1rem;margin-bottom:1rem;">
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:1rem;margin-bottom:1rem;">
       <div><div style="color:#6b7280;font-size:0.85rem;">状态</div><div id="bsStatus" style="font-weight:600;">未开始</div></div>
       <div><div style="color:#6b7280;font-size:0.85rem;">进度</div><div id="bsProgress" style="font-weight:600;">0/0</div></div>
       <div><div style="color:#6b7280;font-size:0.85rem;">月份</div><div id="bsMonth" style="font-weight:600;">-</div></div>
+      <div><div style="color:#6b7280;font-size:0.85rem;">已用时</div><div id="bsElapsed" style="font-weight:600;">-</div></div>
       <div><div style="color:#6b7280;font-size:0.85rem;">开始时间</div><div id="bsStarted" style="font-weight:600;">-</div></div>
       <div><div style="color:#6b7280;font-size:0.85rem;">结束时间</div><div id="bsFinished" style="font-weight:600;">-</div></div>
     </div>
     <div style="background:#f3f4f6;height:10px;border-radius:5px;overflow:hidden;">
       <div id="bsBar" style="background:#16a34a;height:100%;width:0%;transition:width .3s;"></div>
     </div>
+    <div id="bsProgressText" style="text-align:right;font-size:0.85rem;color:#6b7280;margin-top:0.25rem;">0%</div>
     <div id="bsMessage" style="color:#dc2626;font-size:0.85rem;margin-top:0.5rem;"></div>
   </div>
 
   <!-- ========== 预测记录 ========== -->
   <div class="card" style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:1.5rem;">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;flex-wrap:wrap;gap:.5rem;">
       <h3 style="margin:0;">预测记录</h3>
-      <div>
-        <input id="recCode" class="form-input" placeholder="股票代码" style="width:120px;margin-right:0.5rem;">
+      <div style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;">
+        <input id="recCode" class="form-input" placeholder="股票代码" style="width:120px;">
         <select id="recMonth" class="form-select"><option value="">全部月份</option></select>
-        <button id="btnLoadRecords" class="btn btn-secondary" style="margin-left:.5rem;">查询</button>
+        <select id="recTrend" class="form-select">
+          <option value="">全部趋势</option>
+          <option value="上涨">上涨</option>
+          <option value="下跌">下跌</option>
+        </select>
+        <select id="recSignal" class="form-select">
+          <option value="">全部信号</option>
+          <option value="buy">买入</option>
+          <option value="sell">卖出</option>
+          <option value="none">无信号</option>
+        </select>
+        <select id="recBoard" class="form-select" style="max-width:160px;"><option value="">全部板块</option></select>
+        <button id="btnLoadRecords" class="btn btn-secondary">查询</button>
       </div>
     </div>
     <div style="overflow-x:auto;">
@@ -84,30 +100,68 @@
           <tr>
             <th style="padding:.5rem;text-align:left;">代码</th>
             <th style="padding:.5rem;text-align:left;">名称</th>
+            <th style="padding:.5rem;text-align:left;">板块</th>
             <th style="padding:.5rem;text-align:left;">月份</th>
             <th style="padding:.5rem;text-align:left;">趋势</th>
+            <th style="padding:.5rem;text-align:center;">信号</th>
             <th style="padding:.5rem;text-align:right;">预测周期</th>
             <th style="padding:.5rem;text-align:right;">实际周期</th>
             <th style="padding:.5rem;text-align:right;">预测振幅</th>
+            <th style="padding:.5rem;text-align:right;">实际振幅</th>
             <th style="padding:.5rem;text-align:right;">趋势分数</th>
             <th style="padding:.5rem;text-align:left;">更新时间</th>
           </tr>
         </thead>
-        <tbody id="recBody"><tr><td colspan="9" style="text-align:center;padding:1rem;color:#9ca3af;">加载中…</td></tr></tbody>
+        <tbody id="recBody"><tr><td colspan="12" style="text-align:center;padding:1rem;color:#9ca3af;">加载中…</td></tr></tbody>
       </table>
     </div>
-    <div id="recCount" style="margin-top:0.5rem;font-size:0.85rem;color:#6b7280;"></div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:0.75rem;flex-wrap:wrap;gap:0.5rem;">
+      <div id="recCount" style="font-size:0.85rem;color:#6b7280;"></div>
+      <div style="display:flex;align-items:center;gap:0.4rem;font-size:0.85rem;color:#6b7280;">
+        <label>每页</label>
+        <select id="recPageSize" class="form-select" style="width:80px;">
+          <option value="20" selected>20</option>
+          <option value="50">50</option>
+          <option value="100">100</option>
+          <option value="200">200</option>
+        </select>
+        <button id="recPrev" class="btn btn-secondary" style="padding:.25rem .6rem;" disabled>上一页</button>
+        <span id="recPageInfo">第 1 / 1 页</span>
+        <button id="recNext" class="btn btn-secondary" style="padding:.25rem .6rem;" disabled>下一页</button>
+      </div>
+    </div>
   </div>
 </div>
 
 <script>
 const API = '/RnnStrategies/api';
 let batchTimer = null;
+let recPage = 1;
+let recTotalPages = 1;
 const today = new Date().toISOString().slice(0,10);
 document.getElementById('oneDate').value = today;
 document.getElementById('batchDate').value = today;
 
 async function fetchJson(url, opts) { return (await fetch(url, opts)).json(); }
+
+// 振幅等浮点显示保留 3 位小数（仅显示层，不改库里原始值）；空值显示 -
+function fmt3(v) {
+  if (v === null || v === undefined || v === '') return '-';
+  const n = Number(v);
+  return isNaN(n) ? v : n.toFixed(3);
+}
+
+// 与训练页一致的已用时格式化
+function fmtElapsed(startStr, endStr) {
+  if (!startStr) return '-';
+  const start = new Date(startStr.replace(' ', 'T'));
+  if (isNaN(start)) return '-';
+  const end = endStr ? new Date(endStr.replace(' ', 'T')) : new Date();
+  let sec = Math.max(0, Math.floor((end - start) / 1000));
+  const h = Math.floor(sec / 3600); sec -= h * 3600;
+  const m = Math.floor(sec / 60); sec -= m * 60;
+  return (h ? `${h}时` : '') + (h || m ? `${m}分` : '') + `${sec}秒`;
+}
 
 async function loadMonths() {
   const j = await fetchJson(`${API}/available_months`);
@@ -116,6 +170,13 @@ async function loadMonths() {
   document.getElementById('oneMonth').innerHTML = '<option value="">— 选择 —</option>' + opts;
   document.getElementById('batchMonth').innerHTML = '<option value="">— 选择 —</option>' + opts;
   document.getElementById('recMonth').innerHTML = '<option value="">全部月份</option>' + opts;
+}
+
+async function loadBoards() {
+  const j = await fetchJson(`${API}/board_names`);
+  if (!j.success || !Array.isArray(j.data)) return;
+  const opts = j.data.map(b => `<option value="${b}">${b}</option>`).join('');
+  document.getElementById('recBoard').innerHTML = '<option value="">全部板块</option>' + opts;
 }
 
 // ---------- 单只 ----------
@@ -147,11 +208,12 @@ async function predictOne() {
             <div><div style="color:#6b7280;font-size:0.85rem;">股票</div><div style="font-weight:600;">${j.stock_name} (${j.stock_code})</div></div>
             <div><div style="color:#6b7280;font-size:0.85rem;">月份模型</div><div style="font-weight:600;">${r.parser_month}</div></div>
             <div><div style="color:#6b7280;font-size:0.85rem;">趋势</div><div style="font-weight:600;">${r.trends}</div></div>
+            <div><div style="color:#6b7280;font-size:0.85rem;">买卖信号</div><div style="font-weight:600;">${signalCell(r.trade_point)}</div></div>
             <div><div style="color:#6b7280;font-size:0.85rem;">预测周期长度</div><div style="font-weight:600;">${r.predict_cycle_length}</div></div>
-            <div><div style="color:#6b7280;font-size:0.85rem;">预测周期振幅</div><div style="font-weight:600;">${r.predict_cycle_change}</div></div>
-            <div><div style="color:#6b7280;font-size:0.85rem;">预测 Bar 振幅</div><div style="font-weight:600;">${r.predict_bar_change}</div></div>
+            <div><div style="color:#6b7280;font-size:0.85rem;">预测周期振幅</div><div style="font-weight:600;">${fmt3(r.predict_cycle_change)}</div></div>
+            <div><div style="color:#6b7280;font-size:0.85rem;">预测 Bar 振幅</div><div style="font-weight:600;">${fmt3(r.predict_bar_change)}</div></div>
             <div><div style="color:#6b7280;font-size:0.85rem;">预测 Bar 量</div><div style="font-weight:600;">${r.predict_bar_volume}</div></div>
-            <div><div style="color:#6b7280;font-size:0.85rem;">趋势分数</div><div style="font-weight:600;">${r.score_trends}</div></div>
+            <div><div style="color:#6b7280;font-size:0.85rem;">趋势分数</div><div style="font-weight:600;">${scoreCell(r.score_trends)}</div></div>
             <div><div style="color:#6b7280;font-size:0.85rem;">综合准确率</div><div style="font-weight:600;">${(acc.overall_accuracy*100||0).toFixed(1)}%</div></div>
             <div><div style="color:#6b7280;font-size:0.85rem;">更新时间</div><div style="font-weight:600;">${r.updated_at||''}</div></div>
           </div>`;
@@ -198,9 +260,14 @@ async function refreshBatch() {
   document.getElementById('bsStatus').innerText = s.status || '-';
   document.getElementById('bsProgress').innerText = `${s.processed||0} / ${s.total||0}`;
   document.getElementById('bsMonth').innerText = s.month || '-';
+  document.getElementById('bsElapsed').innerText = fmtElapsed(s.started_at, s.finished_at);
   document.getElementById('bsStarted').innerText = s.started_at || '-';
   document.getElementById('bsFinished').innerText = s.finished_at || '-';
-  document.getElementById('bsBar').style.width = (s.progress||0) + '%';
+  // 有总数时按 已处理/总数 算百分比，否则退回后端 progress
+  const ratio = s.total ? (s.processed / s.total * 100) : (s.progress || 0);
+  const pct = Math.round(ratio) + '%';
+  document.getElementById('bsBar').style.width = pct;
+  document.getElementById('bsProgressText').innerText = s.total ? `${pct}（${s.processed}/${s.total}）` : pct;
   document.getElementById('bsMessage').innerText = s.message || '';
   const running = s.status === '进行中';
   document.getElementById('btnBatchStart').disabled = running;
@@ -209,32 +276,66 @@ async function refreshBatch() {
 }
 
 // ---------- 记录 ----------
+// 买卖信号：trade_point >0 买入 / <0 卖出 / 否则 —
+function signalCell(tp) {
+  const v = Number(tp);
+  if (v > 0) return '<span style="background:#dcfce7;color:#16a34a;padding:.15rem .5rem;border-radius:9999px;font-size:.75rem;font-weight:600;">买入</span>';
+  if (v < 0) return '<span style="background:#fee2e2;color:#dc2626;padding:.15rem .5rem;border-radius:9999px;font-size:.75rem;font-weight:600;">卖出</span>';
+  return '<span style="color:#9ca3af;">—</span>';
+}
+// 趋势分数：已归一到 [-1,1]，正绿负红，|score|≥0.7（触发买卖阈值）加粗
+function scoreCell(score) {
+  const v = Number(score);
+  if (isNaN(v)) return '<span style="color:#9ca3af;">-</span>';
+  const color = v > 0 ? '#16a34a' : (v < 0 ? '#dc2626' : '#6b7280');
+  const weight = Math.abs(v) >= 0.7 ? '700' : '400';
+  return `<span style="color:${color};font-weight:${weight};">${v}</span>`;
+}
+
 async function loadRecords() {
   const code = document.getElementById('recCode').value.trim();
   const month = document.getElementById('recMonth').value;
+  const trend = document.getElementById('recTrend').value;
+  const signal = document.getElementById('recSignal').value;
+  const board = document.getElementById('recBoard').value;
+  const pageSize = document.getElementById('recPageSize').value;
   const params = new URLSearchParams();
   if (code) params.set('code', code);
   if (month) params.set('month', month);
+  if (trend) params.set('trend', trend);
+  if (signal) params.set('signal', signal);
+  if (board) params.set('board', board);
+  params.set('page', recPage);
+  params.set('page_size', pageSize);
   const j = await fetchJson(`${API}/prediction_records?${params}`);
   const tbody = document.getElementById('recBody');
-  if (!j.success) { tbody.innerHTML = `<tr><td colspan="9" style="color:#dc2626;text-align:center;padding:1rem;">${j.message||'加载失败'}</td></tr>`; return; }
+  if (!j.success) { tbody.innerHTML = `<tr><td colspan="12" style="color:#dc2626;text-align:center;padding:1rem;">${j.message||'加载失败'}</td></tr>`; return; }
   if (!j.data || !j.data.length) {
-    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:#9ca3af;padding:1rem;">无记录</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="12" style="text-align:center;color:#9ca3af;padding:1rem;">无记录</td></tr>';
   } else {
     tbody.innerHTML = j.data.map(r => `
       <tr style="border-top:1px solid #e5e7eb;">
-        <td style="padding:.5rem;">${r.code||''}</td>
+        <td style="padding:.5rem;font-family:monospace;">${r.code ? `<a href="/stock/?code=${r.code}&period=15m" target="_blank" title="查看 ${r.code} 15分钟趋势分析" style="color:#2563eb;text-decoration:none;">${r.code}</a>` : ''}</td>
         <td style="padding:.5rem;">${r.name||''}</td>
+        <td style="padding:.5rem;color:#6b7280;">${r.board||'-'}</td>
         <td style="padding:.5rem;">${r.parser_month||''}</td>
         <td style="padding:.5rem;">${r.trends||''}</td>
+        <td style="padding:.5rem;text-align:center;">${signalCell(r.trade_point)}</td>
         <td style="padding:.5rem;text-align:right;">${r.predict_cycle_length}</td>
         <td style="padding:.5rem;text-align:right;color:#6b7280;">${r.real_cycle_length}</td>
-        <td style="padding:.5rem;text-align:right;">${r.predict_cycle_change}</td>
-        <td style="padding:.5rem;text-align:right;">${r.score_trends}</td>
+        <td style="padding:.5rem;text-align:right;">${fmt3(r.predict_cycle_change)}</td>
+        <td style="padding:.5rem;text-align:right;color:#6b7280;">${fmt3(r.real_cycle_change)}</td>
+        <td style="padding:.5rem;text-align:right;">${scoreCell(r.score_trends)}</td>
         <td style="padding:.5rem;color:#6b7280;font-size:.8rem;">${r.updated_at||''}</td>
       </tr>`).join('');
   }
-  document.getElementById('recCount').innerText = `共 ${j.count} 条`;
+  const pg = j.pagination || { page: 1, total_pages: 1, total_items: j.count };
+  recPage = pg.page || 1;
+  recTotalPages = pg.total_pages || 1;
+  document.getElementById('recCount').innerText = `共 ${pg.total_items ?? j.count} 条`;
+  document.getElementById('recPageInfo').innerText = `第 ${recPage} / ${recTotalPages} 页`;
+  document.getElementById('recPrev').disabled = recPage <= 1;
+  document.getElementById('recNext').disabled = recPage >= recTotalPages;
 }
 
 function healthBadge(status) {
@@ -304,10 +405,18 @@ document.getElementById('btnPredictOne').onclick = predictOne;
 document.getElementById('btnCheckHealth').onclick = checkHealth;
 document.getElementById('btnBatchStart').onclick = startBatch;
 document.getElementById('btnBatchStop').onclick = stopBatch;
-document.getElementById('btnLoadRecords').onclick = loadRecords;
+document.getElementById('btnLoadRecords').onclick = () => { recPage = 1; loadRecords(); };
+document.getElementById('recTrend').onchange = () => { recPage = 1; loadRecords(); };
+document.getElementById('recSignal').onchange = () => { recPage = 1; loadRecords(); };
+document.getElementById('recBoard').onchange = () => { recPage = 1; loadRecords(); };
+document.getElementById('recMonth').onchange = () => { recPage = 1; loadRecords(); };
+document.getElementById('recPageSize').onchange = () => { recPage = 1; loadRecords(); };
+document.getElementById('recPrev').onclick = () => { if (recPage > 1) { recPage--; loadRecords(); } };
+document.getElementById('recNext').onclick = () => { if (recPage < recTotalPages) { recPage++; loadRecords(); } };
 
 (async () => {
   await loadMonths();
+  await loadBoards();
   await refreshBatch();
   await loadRecords();
   const j = await fetchJson(`${API}/predict_status`);

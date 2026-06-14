@@ -26,11 +26,43 @@ def reset_id_time(id_, _date):
     LoadRnnModel.set_table_run_record(sql, params)
 
 
+def _load_calendar_1m(year, code_=None) -> pd.DataFrame:
+    """加载一只"日历股"的 1m 数据，用于推算交易日。
+
+    依次尝试已知大概率有数据的代码（蓝筹/指数代表）。
+    原来默认 'bk0424' 会被 6 位数字校验器拒绝，故改用几只蓝筹股兜底。
+    """
+    candidates = [c for c in [code_, '000001', '600000', '600519', '000002'] if c]
+    for c in candidates:
+        d = StockData1m.load_1m(c, year=str(year))
+        if d is not None and not d.empty:
+            return d
+    return pd.DataFrame()
+
+
+def latest_trading_day(code_=None):
+    """返回当前有数据的最近一个交易日（<= 今天），全无数据时返回 None。
+
+    盘前 / 节假日「今天」还没有 1m K 线时，用它回退到最近一个真正有数据的
+    交易日，避免把检查日期定在一个无数据的日子上（否则 date_range 返回空）。
+    今年若整年无数据，再回退看上一年。
+    """
+    today = pd.Timestamp.now().date()
+    for year in (today.year, today.year - 1):
+        data = _load_calendar_1m(year, code_)
+        if data is None or data.empty or 'date' not in data.columns:
+            continue
+        data = ResampleData.resample_1m_data(data=data, freq='day').drop_duplicates(subset=['date'])
+        days = [d for d in data['date'] if d <= today]
+        if days:
+            return max(days)
+    return None
+
+
 def date_range(_date, date_, code_=None) -> list:
     """返回 [_date, date_] 区间内的交易日列表。
 
     实现方式：找一只有数据的"日历股"，把它的 1m 数据按日聚合，取出现的日期。
-    原来默认 'bk0424' 会被 6 位数字校验器拒绝，改为依次尝试几只蓝筹股。
     """
     if _date == date_:
         _date = pd.to_datetime(_date).date()
@@ -40,15 +72,7 @@ def date_range(_date, date_, code_=None) -> list:
         _date = pd.to_datetime(_date).date()
         date_ = pd.to_datetime(date_).date()
 
-    # 依次尝试已知大概率有数据的代码（蓝筹/指数代表）
-    candidates = [c for c in [code_, '000001', '600000', '600519', '000002'] if c]
-    data = pd.DataFrame()
-    for c in candidates:
-        d = StockData1m.load_1m(c, year=str(_date.year))
-        if d is not None and not d.empty:
-            data = d
-            break
-
+    data = _load_calendar_1m(_date.year, code_)
     if data is None or data.empty or 'date' not in data.columns:
         return []
 

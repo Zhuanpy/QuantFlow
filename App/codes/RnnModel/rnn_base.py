@@ -33,6 +33,10 @@ class RnnBase:
         self.data_1m = None
         self.data_15m = None
         self.records = None
+        # 历史运行记录（ORM RnnRunningRecord）：last_record=最近一条；
+        # record_time_15m=本次算出的 15m 锚点时间，由 update_RecordRun 落库。
+        self.last_record = None
+        self.record_time_15m = None
         self.checking_data = None
         self.record_last_15m_time = None
         self.check_date = None

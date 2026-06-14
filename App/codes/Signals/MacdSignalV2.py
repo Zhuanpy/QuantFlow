@@ -27,6 +27,47 @@ from App.codes.parsers.MacdParser import (
     up, down, upInt, downInt,
 )
 
+# 弱段合并阈值：净涨幅（|段末close − 段起close| / 段起close）小于此值的"已收口"段，
+# 视为大趋势中的噪声（如下跌途中的失败反弹），并入前一段。口径=净终值振幅。
+# 仅对"已收口"段生效（最后一段还在进行中，无法判定，永不合并）——
+# 这样盘中/实时看到的是当下真实趋势，收盘/回算后才把太弱的段吸收掉。
+# 调参点：调大 → 更激进地抹平短弱段；调小 → 更尊重每一次 flip。
+MIN_NET_AMPLITUDE = 0.01
+
+
+def _merge_weak_segments(flips, close, thresh: float = MIN_NET_AMPLITUDE):
+    """把"已收口"的弱段（净涨幅 < thresh）并入前一段。
+
+    flips: [(start_idx, sig_int, choice), ...] 按时间升序，方向天然交替。
+    close: 收盘价 numpy 数组（用净终值口径判定显著性）。
+
+    规则：删掉弱段的 flip → 前一段的信号会 ffill 穿过它；再把因此相邻的
+    同方向 flip 合并（保留较早那个）。循环到不动点（删段使相邻段变长，
+    可能需要重新审视，但只会更强，不会更弱）。
+    最后一段（仍进行中）永不参与判定。
+    """
+    flips = list(flips)
+    changed = True
+    while changed and len(flips) > 1:
+        changed = False
+        # 只看 j < len-1 的"已收口"段：[flips[j].start, flips[j+1].start-1]
+        for j in range(len(flips) - 1):
+            s = flips[j][0]
+            e = flips[j + 1][0] - 1
+            sp = close[s]
+            if sp and sp == sp and abs(close[e] - sp) / abs(sp) < thresh:
+                del flips[j]
+                # 删除后把相邻同方向 flip 折叠（保留最早的）
+                merged = []
+                for f in flips:
+                    if merged and merged[-1][1] == f[1]:
+                        continue
+                    merged.append(f)
+                flips = merged
+                changed = True
+                break
+    return flips
+
 
 def compute_v2_signals(data: pd.DataFrame, n: int = 7) -> pd.DataFrame:
     """对 15m 数据应用 v2 趋势判定。
@@ -71,6 +112,7 @@ def compute_v2_signals(data: pd.DataFrame, n: int = 7) -> pd.DataFrame:
 
     last_side = None   # 上一个确认的方向
     prev_start = -1    # 上一段 flip 的起点 idx（防止回溯越过上一段）
+    flips = []         # [(start_idx, sig_int, choice), ...] 先收集，后处理再落地
     for i in range(len(data)):
         if up_consec_end.iloc[i] and last_side != 'up':
             # 确认点是 i（连续 7 根满足），但趋势真正的起点是"MACD 变红那一根"——
@@ -78,7 +120,7 @@ def compute_v2_signals(data: pd.DataFrame, n: int = 7) -> pd.DataFrame:
             start_idx = i
             while start_idx > prev_start + 1 and macd_vals[start_idx - 1] > 0:
                 start_idx -= 1
-            _mark(start_idx, upInt, up)
+            flips.append((start_idx, upInt, up))
             last_side = 'up'
             prev_start = start_idx
         elif dn_consec_end.iloc[i] and last_side != 'down':
@@ -86,9 +128,15 @@ def compute_v2_signals(data: pd.DataFrame, n: int = 7) -> pd.DataFrame:
             start_idx = i
             while start_idx > prev_start + 1 and macd_vals[start_idx - 1] < 0:
                 start_idx -= 1
-            _mark(start_idx, downInt, down)
+            flips.append((start_idx, downInt, down))
             last_side = 'down'
             prev_start = start_idx
+
+    # 后处理：把"已收口"的弱段（净涨幅过小，如下跌中的失败反弹）并入前一段。
+    # 最后一段仍进行中，永不合并 —— 这样盘中看到的是当下真实趋势。
+    flips = _merge_weak_segments(flips, data['close'].to_numpy(), MIN_NET_AMPLITUDE)
+    for start_idx, sig_int, choice in flips:
+        _mark(start_idx, sig_int, choice)
 
     # ffill：每根 K 线继承上一个 flip 的 Signal / SignalStartIndex / SignalId
     # SignalChoice 不 ffill（只在 flip 那根标记，统计代码靠它定位 flip）
