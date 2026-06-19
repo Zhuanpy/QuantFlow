@@ -677,7 +677,8 @@ def api_board_multiscore(code):
     """
     try:
         from datetime import date as _date
-        from App.services.board_trend_score_service import score_dataframe, _load_board_daily
+        from App.services.board_trend_score_service import (
+            score_dataframe, _load_board_daily, combine_mtf)
         from App.routes.data.viewer_15m_route import _get_15m_dir, _find_15m_file, _read_15m_file
 
         # 日K
@@ -706,10 +707,24 @@ def api_board_multiscore(code):
                     m60 = score_dataframe(d60)
                     m60_history = _score_history(d60, 30)
 
+        # 多周期综合（日K主导 + 1h/15m 置信度）：复用与批量打分同一套合成逻辑
+        m60_avail = m60 if m60.get('total_score') is not None else None
+        m15_avail = m15 if m15.get('total_score') is not None else None
+        composite = combine_mtf(daily, m60_avail, m15_avail)
+
         return jsonify({'success': True, 'data': {
             'board_code': code,
             'daily': daily, 'm60': m60, 'm15': m15,
             'm60_history': m60_history, 'm15_history': m15_history,
+            'composite': {
+                'total_score': composite['composite_total'],
+                'trend_stage': composite['trend_stage'],
+                'trend_stage_confidence': composite['trend_stage_confidence'],
+                'trend_strength': composite['trend_strength'],
+                'signal': composite['signal'],
+                'alignment': composite['alignment'],
+                'breakdown': composite['breakdown'],
+            },
         }})
     except Exception as e:
         logger.exception('板块多周期评分失败')

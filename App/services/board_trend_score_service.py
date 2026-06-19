@@ -25,7 +25,7 @@ from sqlalchemy import text
 
 logger = logging.getLogger(__name__)
 
-FORMULA_VERSION = 'v1'
+FORMULA_VERSION = 'v1-mtf'   # v1 子分公式 + 日K/1h/15m 多周期综合
 
 # 子分权重（合计 100，纯多头视角；置信度单独算，不进 total_score）
 WEIGHTS = {
@@ -39,6 +39,10 @@ WEIGHTS = {
 
 DAILY_DB = 'datadaily'   # 板块日 K 所在库
 LOOKBACK_DAYS = 250      # 计算窗口
+
+# 多周期综合评分权重（日K主导，1h/15m 辅助定时机）。
+# 某周期数据缺失时，按存在的周期重新归一化。
+MTF_WEIGHTS = {'daily': 0.5, 'h1': 0.3, 'm15': 0.2}
 
 
 # ============== 工具函数 ==============
@@ -145,6 +149,73 @@ def _load_board_daily(board_code: str, end_date: date,
         df = df.loc[~bad_mask].reset_index(drop=True)
         logger.info(f"{board_code}: 清理 {dropped} 行无效 OHLC（0 或 NaN）")
     return df
+
+
+# ============== 多周期数据加载 ==============
+def _load_board_15m(board_code: str, end_date: Optional[date] = None) -> pd.DataFrame:
+    """加载板块 15m K 线（本地 data/15m/{code}.parquet，与 viewer_15m / 个股趋势同源）。
+
+    返回按 date 升序、列 date/open/close/high/low/volume 的 DataFrame；
+    给了 end_date 时只保留该日（含）及之前的 bar，便于历史 as-of 重算。无文件返回空表。
+    """
+    from pathlib import Path
+    from config import Config
+    code = (board_code or '').strip()
+    if not code:
+        return pd.DataFrame()
+    fp = Path(Config.get_project_root()) / 'data' / '15m' / f'{code}.parquet'
+    if not fp.exists():
+        return pd.DataFrame()
+    try:
+        df = pd.read_parquet(fp)
+    except Exception as e:
+        logger.debug(f'读取 {fp} 失败: {e}')
+        return pd.DataFrame()
+    cols = ['date', 'open', 'close', 'high', 'low', 'volume']
+    have = [c for c in cols if c in df.columns]
+    if 'date' not in have:
+        return pd.DataFrame()
+    df = df[have].copy()
+    df['date'] = pd.to_datetime(df['date'], errors='coerce')
+    for c in ('open', 'close', 'high', 'low', 'volume'):
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors='coerce')
+    df = (df.dropna(subset=['date', 'open', 'close', 'high', 'low'])
+            .sort_values('date').reset_index(drop=True))
+    if end_date is not None:
+        # 保留 end_date 当天收盘（含）之前的 bar
+        cutoff = pd.Timestamp(end_date) + pd.Timedelta(hours=23, minutes=59)
+        df = df[df['date'] <= cutoff].reset_index(drop=True)
+    return df
+
+
+def _resample_15m_to_60m(df15: pd.DataFrame) -> pd.DataFrame:
+    """15m → 60m(1小时)：日内顺序每 4 根合并（首open/末close/极值/量和）。
+
+    A股每日 16 根 15m（上午8 + 下午8），每 4 根正好一根 1 小时K 且不跨午休。
+    """
+    if df15 is None or df15.empty:
+        return pd.DataFrame()
+    df = df15.copy()
+    df['date'] = pd.to_datetime(df['date'])
+    df = (df.dropna(subset=['open', 'close', 'high', 'low'])
+            .sort_values('date').reset_index(drop=True))
+    df['volume'] = pd.to_numeric(df.get('volume'), errors='coerce').fillna(0)
+    df['d'] = df['date'].dt.normalize()
+    rows = []
+    for _, g in df.groupby('d'):
+        g = g.reset_index(drop=True)
+        for i in range(0, len(g), 4):
+            ck = g.iloc[i:i + 4]
+            rows.append({
+                'date': ck['date'].iloc[-1],
+                'open': float(ck['open'].iloc[0]),
+                'close': float(ck['close'].iloc[-1]),
+                'high': float(ck['high'].max()),
+                'low': float(ck['low'].min()),
+                'volume': float(ck['volume'].sum()),
+            })
+    return pd.DataFrame(rows)
 
 
 # ============== 单维度子分 ==============
@@ -399,6 +470,7 @@ class BoardScoreResult:
     snapshot: Dict[str, float]   # close / ma20 / ma60 / dif / dea / bar / atr 等
     formula_version: str = FORMULA_VERSION
     error: Optional[str] = None
+    notes: Optional[str] = None  # MTF 明细 JSON（多周期综合打分时写入）
 
 
 def score_dataframe(df: pd.DataFrame) -> dict:
@@ -474,6 +546,107 @@ def score_dataframe(df: pd.DataFrame) -> dict:
     }
 
 
+def _stage_direction(stage: str) -> int:
+    """阶段 → 方向：上涨=+1 / 下跌=-1 / 未识别=0。"""
+    if stage in ('up_early', 'up_late'):
+        return 1
+    if stage in ('down_early', 'down_late'):
+        return -1
+    return 0
+
+
+def combine_mtf(daily: dict, h1: Optional[dict], m15: Optional[dict]) -> dict:
+    """把已算好的三周期评分 dict 合成综合结果（纯函数，无 IO）。
+
+    - 综合分 = 三周期 total_score 的加权平均（MTF_WEIGHTS，缺失周期重新归一化）
+    - 综合阶段 = 日K 阶段（主导）
+    - 综合置信度 = 日K 子分置信度 × 多周期方向一致性调整：
+        · 1h 与 15m 都与日K同向 → 共振(resonate)，置信度 +15
+        · 仅一个同向          → 部分一致(mixed)，置信度不变
+        · 都与日K背离          → 背离/可能拐点(diverge)，置信度 ×0.6
+    """
+    parts = {'daily': daily, 'h1': h1, 'm15': m15}
+    avail = {k: r for k, r in parts.items()
+             if r is not None and r.get('total_score') is not None}
+    if avail:
+        wsum = sum(MTF_WEIGHTS[k] for k in avail)
+        composite = round(
+            sum(MTF_WEIGHTS[k] * avail[k]['total_score'] for k in avail) / wsum, 2)
+    else:
+        composite = None
+
+    stage = daily['trend_stage']
+    base_conf = daily['trend_stage_confidence'] or 0.0
+    daily_dir = _stage_direction(stage)
+
+    agree = conflict = checked = 0
+    for k in ('h1', 'm15'):
+        r = avail.get(k)
+        if r is None:
+            continue
+        d = _stage_direction(r['trend_stage'])
+        if d == 0:
+            continue
+        checked += 1
+        if daily_dir != 0 and d == daily_dir:
+            agree += 1
+        elif daily_dir != 0 and d == -daily_dir:
+            conflict += 1
+
+    if daily_dir == 0 or checked == 0:
+        align, confidence = 'na', base_conf
+    elif conflict >= checked:           # 短周期全部背离
+        align, confidence = 'diverge', round(base_conf * 0.6, 1)
+    elif agree == checked:              # 短周期全部同向
+        align, confidence = 'resonate', round(min(100.0, base_conf + 15), 1)
+    else:                               # 部分一致
+        align, confidence = 'mixed', base_conf
+
+    strength = _strength_from_total(composite) if composite is not None else 'none'
+
+    breakdown = {
+        'composite': composite,
+        'daily': daily.get('total_score'),
+        'h1': h1.get('total_score') if h1 else None,
+        'm15': m15.get('total_score') if m15 else None,
+        'stage': stage,
+        'dirs': {
+            'daily': daily_dir,
+            'h1': _stage_direction(h1['trend_stage']) if h1 else None,
+            'm15': _stage_direction(m15['trend_stage']) if m15 else None,
+        },
+        'align': align,
+        'weights': {k: MTF_WEIGHTS[k] for k in avail},
+        'bars': {'daily': daily.get('bars'),
+                 'h1': h1.get('bars') if h1 else 0,
+                 'm15': m15.get('bars') if m15 else 0},
+    }
+
+    return {
+        'daily': daily, 'h1': h1, 'm15': m15,
+        'composite_total': composite,
+        'trend_stage': stage,
+        'trend_stage_confidence': confidence,
+        'trend_strength': strength,
+        'signal': daily['signal'],
+        'snapshot': daily['snapshot'],          # 行情快照以日K为准
+        'sub_scores': daily['sub_scores'],       # 子分明细以日K为准
+        'alignment': align,
+        'breakdown': breakdown,
+        'error': daily['error'],
+    }
+
+
+def score_multi_timeframe(board_code: str, record_date: date) -> dict:
+    """多周期综合评分：加载 日K + 15m(→1h)，分别打分后用 combine_mtf 合成。"""
+    daily = score_dataframe(_load_board_daily(board_code, record_date))
+    df15 = _load_board_15m(board_code, record_date)
+    m15 = score_dataframe(df15) if not df15.empty else None
+    d60 = _resample_15m_to_60m(df15) if not df15.empty else pd.DataFrame()
+    h1 = score_dataframe(d60) if not d60.empty else None
+    return combine_mtf(daily, h1, m15)
+
+
 def compute_one(board_code: str, record_date: date) -> BoardScoreResult:
     """单板块打分（日K）。失败时 error 字段非空，sub_scores 给 None。"""
     df = _load_board_daily(board_code, record_date)
@@ -490,6 +663,31 @@ def compute_one(board_code: str, record_date: date) -> BoardScoreResult:
         signal=res['signal'],
         snapshot=res['snapshot'],
         error=res['error'],
+    )
+
+
+def compute_one_mtf(board_code: str, record_date: date) -> BoardScoreResult:
+    """单板块多周期综合打分。total_score=综合分、stage=日K阶段、confidence=多周期调整后。
+
+    notes 写入 MTF 明细 JSON（综合/各周期分、方向、一致性），供详情页与审阅追溯。
+    """
+    import json as _json
+    mtf = score_multi_timeframe(board_code, record_date)
+    daily_df = _load_board_daily(board_code, record_date)
+    actual_date = daily_df['date'].iloc[-1] if not daily_df.empty else record_date
+    notes = '[v1-mtf] ' + _json.dumps(mtf['breakdown'], ensure_ascii=False)
+    return BoardScoreResult(
+        board_code=board_code,
+        record_date=actual_date if mtf['error'] is None else record_date,
+        sub_scores=mtf['sub_scores'],
+        total_score=mtf['composite_total'],
+        trend_stage=mtf['trend_stage'],
+        trend_stage_confidence=mtf['trend_stage_confidence'],
+        trend_strength=mtf['trend_strength'],
+        signal=mtf['signal'],
+        snapshot=mtf['snapshot'],
+        error=mtf['error'],
+        notes=notes,
     )
 
 
@@ -526,7 +724,7 @@ def compute_and_persist(board_codes: List[str], record_date: date) -> dict:
 
     for code in board_codes:
         try:
-            r = compute_one(code, record_date)
+            r = compute_one_mtf(code, record_date)
             if r.error:
                 fail += 1
                 errors.append({'board_code': code, 'error': r.error})
@@ -560,6 +758,7 @@ def compute_and_persist(board_codes: List[str], record_date: date) -> dict:
                 atr=r.snapshot.get('atr'),
                 formula_version=FORMULA_VERSION,
                 is_manual=False,
+                notes=r.notes,
             )
             ok += 1
             updated.append(code)

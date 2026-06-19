@@ -967,6 +967,121 @@ def api_15m_schema(code):
     })
 
 
+@stock_detail_bp.route('/api/<code>/15m/rows', methods=['GET'])
+def api_15m_rows(code):
+    """以表格形式分页返回「最近 N 根」15m(或 resample 周期)的原始数据行(全字段)。
+
+    query:
+      limit:     取最近多少根(与 K 线选择一致，默认 1000)
+      page/page_size: 分页(默认 1 / 20)
+      period:    15m / 30m / 60m ...(非 15m 会 resample + 重算信号)
+      as_of:     时光机视角，截断到该时刻
+      mode=live: 拼接当日 1m
+    展示顺序：按时间倒序(最新在最前)。
+    """
+    as_of_ts, err = _parse_as_of(request.args.get('as_of'))
+    if err:
+        return jsonify({'success': False, 'message': err}), 400
+    mode = (request.args.get('mode') or '').strip().lower()
+    period = (request.args.get('period') or '15m').strip().lower()
+    from App.codes.utils.timeframe_resample import SUPPORTED_PERIODS
+    if period not in SUPPORTED_PERIODS:
+        period = '15m'
+    try:
+        limit = max(10, min(int(request.args.get('limit', 1000)), 30000))
+    except ValueError:
+        limit = 1000
+    try:
+        page = max(1, int(request.args.get('page', 1)))
+    except ValueError:
+        page = 1
+    try:
+        page_size = max(5, min(int(request.args.get('page_size', 20)), 200))
+    except ValueError:
+        page_size = 20
+
+    df = StockData15m.load_15m(code)
+    if df.empty:
+        return jsonify({'success': False, 'message': f'未找到 {code} 的 15m 数据'}), 404
+    df['date'] = pd.to_datetime(df['date'])
+
+    if mode == 'live' and as_of_ts is None:
+        today = pd.Timestamp.now().normalize()
+        df, _ = _append_live_15m(df, code, today)
+
+    if period != '15m':
+        from App.codes.utils.timeframe_resample import resample_15m
+        from App.codes.Signals.MacdSignalV2 import compute_v2_signals_pipeline
+        from App.codes.Signals.StatisticsMacd import StatisticsMACD
+        df = resample_15m(df, period)
+        if df.empty:
+            return jsonify({'success': False, 'message': f'resample 到 {period} 后无数据'}), 404
+        df = compute_v2_signals_pipeline(df, n=7)
+        if 'Daily1mVolMax5' not in df.columns:
+            df['Daily1mVolMax5'] = pd.NA
+        df = StatisticsMACD.s_StartEndIndex(df)
+        df = StatisticsMACD.s_CycleAmplitude(df)
+        df = StatisticsMACD.s_CycleLength(df)
+
+    if as_of_ts is not None:
+        df = df[df['date'] <= as_of_ts]
+
+    # 时间段筛选(可选)：start/end 支持 YYYY-MM-DD 或带时分；end 仅到日期时含当天整日。
+    # 一旦指定时间段，就返回该段内全部行(分页)，不再受"最近 limit 根"限制。
+    has_range = False
+    start_raw = (request.args.get('start') or '').strip()
+    end_raw = (request.args.get('end') or '').strip()
+    if start_raw:
+        try:
+            df = df[df['date'] >= pd.to_datetime(start_raw)]
+            has_range = True
+        except Exception:
+            pass
+    if end_raw:
+        try:
+            end_ts = pd.to_datetime(end_raw)
+            if end_ts == end_ts.normalize():        # 只给了日期 → 含当天 23:59:59
+                end_ts = end_ts + pd.Timedelta(hours=23, minutes=59, seconds=59)
+            df = df[df['date'] <= end_ts]
+            has_range = True
+        except Exception:
+            pass
+
+    if df.empty:
+        return jsonify({'success': True, 'columns': [], 'count': 0, 'range': has_range,
+                        'pagination': {'page': 1, 'total_pages': 1, 'total_items': 0}, 'data': []})
+
+    # 无时间段：取最近 limit 根(与 K 线窗口一致)；有时间段：用整段。再按时间倒序(最新在前)
+    df = df.sort_values('date')
+    if not has_range:
+        df = df.tail(limit)
+    df = df.iloc[::-1].reset_index(drop=True)
+
+    total = len(df)
+    columns = [str(c) for c in df.columns]
+    s = (page - 1) * page_size
+    page_df = df.iloc[s:s + page_size]
+    records = []
+    for _, row in page_df.iterrows():
+        rec = {}
+        for col in columns:
+            val = row[col]
+            if col == 'date' and pd.notna(val):
+                rec[col] = pd.Timestamp(val).strftime('%Y-%m-%d %H:%M')
+            else:
+                rec[col] = _safe_jsonable(val)
+        records.append(rec)
+    total_pages = max(1, (total + page_size - 1) // page_size)
+    return jsonify({
+        'success': True,
+        'columns': columns,
+        'count': len(records),
+        'range': has_range,
+        'pagination': {'page': page, 'total_pages': total_pages, 'total_items': total},
+        'data': records,
+    })
+
+
 @stock_detail_bp.route('/api/<code>/cycles', methods=['GET'])
 def api_cycles(code):
     """每个 MACD 信号周期(cycle)的 CycleLengthMax 等量化指标。

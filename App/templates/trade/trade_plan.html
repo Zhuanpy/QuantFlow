@@ -1056,7 +1056,7 @@ function _renderAllCompletedTable(s) {
         const e = (t.entry_time||'').slice(0,10);
         const x = (t.exit_time||'').slice(0,10);
         return `<tr>
-            <td><a class="stock-link" href="/trade/holdings/realtime/${t.stock_code}" target="_blank" title="打开实时 15m 详情">${t.stock_code}</a> <span style="color:#6b7280;">${t.stock_name||''}</span></td>
+            <td><a class="stock-link" href="/stock/?code=${t.stock_code}&period=15m" target="_blank" title="打开 15m 趋势页">${t.stock_code}</a> <span style="color:#6b7280;">${t.stock_name||''}</span></td>
             <td style="font-size:.78rem;">${e} → ${x}</td>
             <td style="text-align:right;">${t.hold_days||'-'}天</td>
             <td style="text-align:right;">${t.avg_entry_price} → ${t.avg_exit_price}</td>
@@ -1199,7 +1199,7 @@ async function loadRecords() {
                 const flowColor = (it.net_amount || 0) >= 0 ? '#059669' : '#dc2626';
                 return `<tr>
                     <td style="font-family:monospace;font-size:.75rem;color:#6b7280;">${it.trade_id || ''}</td>
-                    <td><a class="stock-link" href="/trade/holdings/realtime/${it.stock_code}" target="_blank" title="打开实时 15m 详情">${it.stock_code}</a><br><span style="color:#6b7280;font-size:.78rem;">${it.stock_name || ''}</span></td>
+                    <td><a class="stock-link" href="/stock/?code=${it.stock_code}&period=15m" target="_blank" title="打开 15m 趋势页">${it.stock_code}</a><br><span style="color:#6b7280;font-size:.78rem;">${it.stock_name || ''}</span></td>
                     <td>${dir}</td>
                     <td style="font-size:.78rem;">${it.execute_time || '-'}</td>
                     <td style="text-align:right;">${it.quantity ?? ''}</td>
@@ -1355,8 +1355,8 @@ function applyStockCodeFilter(code) {
                          + 'font-size:.88rem;';
     banner.innerHTML =
         `<span>🔍 已筛选股票 <strong>${code}</strong>（来自实时关注列表）</span>`
-      + `<span><a href="/trade/holdings/realtime/${code}" target="_blank" `
-      +   `style="color:#1d4ed8;margin-right:1rem;text-decoration:underline;">查看实时 15m →</a>`
+      + `<span><a href="/stock/?code=${code}&period=15m" target="_blank" `
+      +   `style="color:#1d4ed8;margin-right:1rem;text-decoration:underline;">查看 15m 趋势 →</a>`
       + `<button class="btn btn-sm btn-secondary" onclick="clearStockCodeFilter()">清除筛选</button></span>`;
     const container = document.querySelector('.container') || document.body;
     container.insertBefore(banner, container.firstChild);
@@ -1755,7 +1755,7 @@ function renderPlanRow(plan) {
 
     return `
         <tr>
-            <td class="stock-cell"><a class="stock-link" href="/trade/holdings/realtime/${plan.stock_code}" target="_blank" title="打开 ${plan.stock_code} 的实时 15m 详情页">${plan.stock_code}</a><span class="stock-name">${plan.stock_name || ''}</span><a href="/stock_pool/?search=${plan.stock_code}" target="_blank" title="在股票池查看 ${plan.stock_code}" style="margin-left:0.4rem;font-size:0.75rem;text-decoration:none;color:#7c3aed;">🎯池</a></td>
+            <td class="stock-cell"><a class="stock-link" href="/stock/?code=${plan.stock_code}&period=15m" target="_blank" title="打开 ${plan.stock_code} 的 15m 趋势页">${plan.stock_code}</a><span class="stock-name">${plan.stock_name || ''}</span><a href="/stock_pool/?search=${plan.stock_code}" target="_blank" title="在股票池查看 ${plan.stock_code}" style="margin-left:0.4rem;font-size:0.75rem;text-decoration:none;color:#7c3aed;">🎯池</a></td>
             <td><span class="badge badge-${plan.trade_mode}">${plan.trade_mode === 'simulate' ? '模拟' : '实盘'}</span></td>
             <td><span class="badge badge-${plan.direction}">${plan.direction === 'long' ? '做多' : '做空'}</span></td>
             <td>${timeDisplay}</td>

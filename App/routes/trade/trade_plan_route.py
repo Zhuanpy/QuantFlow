@@ -236,6 +236,12 @@ def get_trade_plans():
 
         query = TradePlan.query
 
+        # MANUAL-<code> 不是持仓，而是 15m 详情页「止损/止盈」功能的存储容器
+        # （/api/<code>/sl_tp 创建，写死 status=active，且不被成交推断 wipe/更新）。
+        # 它不代表真实仓位，真实仓位来自 INFER-<code> 周期，所以这里排除掉，
+        # 否则只要设过止损止盈就会在持仓列表里留下一行永不消失的幽灵「持仓中」。
+        query = query.filter(~TradePlan.plan_id.like('MANUAL-%'))
+
         if trade_mode:
             query = query.filter(TradePlan.trade_mode == trade_mode)
         if status:

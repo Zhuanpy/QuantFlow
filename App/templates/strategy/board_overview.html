@@ -6,6 +6,11 @@
         <div>
             <h1>板块整体预览</h1>
             <p>只读看板：横向汇总每个板块的数据覆盖、成分股数、最新趋势打分与个人偏好分。数据/趋势/偏好的维护分别在对应页面。</p>
+            <div class="data-dates" id="dataDates"></div>
+        </div>
+        <div class="header-actions">
+            <button class="btn-snap" id="btnSnap" onclick="snapshotDistribution()">记录今日分布</button>
+            <a class="btn-link" href="/board_overview/distribution">分布趋势 →</a>
         </div>
     </div>
 
@@ -60,9 +65,22 @@
 
 <style>
     .container { max-width: 1200px; margin: 1rem auto; padding: 0 1rem; }
-    .page-header { background:#fff; padding:1rem 1.25rem; border-radius:.6rem; box-shadow:var(--shadow-sm); margin-bottom:1rem; }
+    .page-header { background:#fff; padding:1rem 1.25rem; border-radius:.6rem; box-shadow:var(--shadow-sm); margin-bottom:1rem;
+                   display:flex; justify-content:space-between; align-items:flex-start; gap:1rem; }
+    .header-actions { display:flex; flex-direction:column; gap:.5rem; align-items:flex-end; flex-shrink:0; }
+    .btn-snap { padding:.45rem .9rem; border:none; border-radius:.4rem; background:#2563eb; color:#fff;
+                font-size:.85rem; cursor:pointer; white-space:nowrap; }
+    .btn-snap:hover { background:#1d4ed8; }
+    .btn-snap:disabled { background:#93c5fd; cursor:default; }
+    .btn-link { font-size:.82rem; color:#2563eb; text-decoration:none; white-space:nowrap; }
+    .btn-link:hover { text-decoration:underline; }
     .page-header h1 { margin:0 0 .25rem; }
     .page-header p { margin:0; color:#6b7280; font-size:.9rem; }
+    .data-dates { display:flex; flex-wrap:wrap; gap:.5rem; margin-top:.6rem; }
+    .data-dates .date-pill { display:inline-flex; align-items:center; gap:.35rem; padding:.2rem .6rem;
+        border-radius:.4rem; background:#eff6ff; color:#1e40af; font-size:.82rem; }
+    .data-dates .date-pill b { font-weight:700; }
+    .data-dates .date-pill .lbl { color:#6b7280; }
     .cards { display:grid; grid-template-columns: repeat(4, 1fr); gap:.6rem; margin-bottom:.85rem; }
     .card { background:#fff; border-radius:.5rem; padding:.7rem .9rem; box-shadow:var(--shadow-sm); }
     .card h4 { margin:0 0 .5rem; font-size:.82rem; color:#6b7280; font-weight:600; }
@@ -116,6 +134,13 @@ function renderDataStatus(ds) {
 function prefColor(v) { if (v>=8) return '#dc2626'; if (v>=6) return '#f97316'; if (v>=4) return '#f59e0b'; return '#9ca3af'; }
 function prefBadge(v) { return v==null ? '<span style="color:#cbd5e1;">–</span>' : `<span class="pref-badge" style="background:${prefColor(v)};">${v}</span>`; }
 
+function renderDates(s) {
+    const ref = s.reference_date, score = s.latest_score_date;
+    document.getElementById('dataDates').innerHTML =
+        `<span class="date-pill"><span class="lbl">数据基准日</span><b>${ref || '—'}</b></span>`
+      + `<span class="date-pill"><span class="lbl">最新评分日期</span><b>${score || '—'}</b></span>`;
+}
+
 function renderCards(s) {
     const sc = s.stage_counts || {}, pb = s.preference_buckets || {}, dh = s.data_health || {};
     const stageRow = (k) => `<div><span>${STAGE_LABELS[k]||k}</span><b>${sc[k]||0}</b></div>`;
@@ -139,6 +164,19 @@ function renderCards(s) {
         </div></div>`;
 }
 
+async function snapshotDistribution() {
+    const btn = document.getElementById('btnSnap');
+    btn.disabled = true; const old = btn.textContent; btn.textContent = '记录中...';
+    try {
+        const r = await fetch('/board_overview/api/distribution/snapshot', { method: 'POST' }).then(r => r.json());
+        btn.textContent = r.success ? '已记录 ✓' : '记录失败';
+        if (!r.success) alert('记录失败：' + (r.message || ''));
+    } catch (e) {
+        btn.textContent = '记录失败'; alert('记录失败：' + e);
+    }
+    setTimeout(() => { btn.textContent = old; btn.disabled = false; }, 1500);
+}
+
 function reload() { currentPage = 1; loadList(); }
 
 async function loadList() {
@@ -153,6 +191,7 @@ async function loadList() {
     const tbody = document.getElementById('tbody');
     if (!r.success) { tbody.innerHTML = `<tr><td colspan="9" class="empty">加载失败：${r.message || ''}</td></tr>`; return; }
     renderCards(r.data.summary || {});
+    renderDates(r.data.summary || {});
     const items = r.data.items || [];
     if (!items.length) {
         tbody.innerHTML = `<tr><td colspan="9" class="empty">暂无板块。请先到「板块数据管理」同步板块清单。</td></tr>`;

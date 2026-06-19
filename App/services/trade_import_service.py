@@ -398,6 +398,7 @@ def _import_rows(rows: list[dict], dry_run: bool = False, default_date: str = No
                 'anomaly_count': len(infer_res.get('anomaly_stocks', [])),
                 'inserted_or_updated': infer_res.get('inserted_or_updated', 0),
                 'deleted_old': infer_res.get('deleted_old', 0),
+                'cleared_manual_sltp': infer_res.get('cleared_manual_sltp', []),
             }
             logger.info(f'自动推断完成: {stats["infer"]}')
         except Exception as e:
@@ -605,6 +606,7 @@ def infer_plans_from_records(trade_mode: str = 'real',
         'anomaly_stocks': [],  # 出现"卖出在前、没买入历史"的股票
         'inserted_or_updated': 0,
         'deleted_old': 0,
+        'cleared_manual_sltp': [],  # 净持仓归 0 后被清空止损止盈的 MANUAL-<code>
     }
 
     cycles_for_db = []  # (plan_id, summary)
@@ -685,6 +687,24 @@ def infer_plans_from_records(trade_mode: str = 'real',
                 notes='\n'.join(note_lines),
             )
             result['inserted_or_updated'] += 1
+
+        # 净持仓归 0（完全平仓）的票，清空对应 MANUAL-<code> 的止损/止盈。
+        # MANUAL-<code> 是 15m 详情页止损止盈的存储容器（不随推断 wipe），
+        # 平仓后旧止损止盈已失效，留着会在下次买回时误用旧值。
+        # 注意：只处理本次 records 里出现过、且净持仓<=0 的票；从没成交过的
+        # 待买入票（无 records）不在 grouped 内，其手动止损止盈保留不动。
+        closed_codes = [code for code, g in grouped.items() if g['net_position'] <= 0]
+        if closed_codes:
+            stale_manuals = TradePlan.query.filter(
+                TradePlan.plan_id.in_([f'MANUAL-{c}' for c in closed_codes])
+            ).all()
+            for m in stale_manuals:
+                if m.stop_loss_price is None and m.take_profit_price is None:
+                    continue  # 本就没设，跳过
+                m.stop_loss_price = None
+                m.take_profit_price = None
+                m.updated_at = datetime.utcnow()
+                result['cleared_manual_sltp'].append(m.stock_code)
 
         db.session.commit()
     except Exception as e:

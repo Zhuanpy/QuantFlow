@@ -6,6 +6,7 @@
 from .Count import CountBoard, CountStockPool
 from .performance_metrics import StrategyPerformance, RiskMetrics
 from .BoardTrendScore import BoardTrendScore, TREND_STAGES, TREND_STRENGTHS, SIGNALS
+from .BoardTrendDistribution import BoardTrendDistribution
 
 __all__ = [
     'CountBoard',
@@ -13,6 +14,7 @@ __all__ = [
     'StrategyPerformance',
     'RiskMetrics',
     'BoardTrendScore',
+    'BoardTrendDistribution',
     'TREND_STAGES',
     'TREND_STRENGTHS',
     'SIGNALS',

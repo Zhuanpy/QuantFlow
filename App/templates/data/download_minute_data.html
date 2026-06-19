@@ -1778,6 +1778,17 @@ async function autoTriggerBoardTrend() {
         addLog(`板块趋势打分完成：请求 ${cd.requested} / 成功 ${cd.ok} / 失败 ${cd.fail}（日期 ${cd.record_date}）`, 'success');
         setStatus(`板块趋势已更新到 ${cd.record_date}`, '#10b981');
 
+        // 板块趋势打分完成后，自动记录一份「趋势阶段分布」快照（供分布趋势页展示）
+        addLog('板块趋势分布：记录今日分布快照...', 'info');
+        const snapRes = await fetch('/board_overview/api/distribution/snapshot', {
+            method: 'POST',
+        }).then(r => r.json()).catch(() => ({success: false, message: '请求失败'}));
+        if (snapRes.success) {
+            addLog('板块趋势分布快照已记录：' + (snapRes.message || ''), 'success');
+        } else {
+            addLog('板块趋势分布快照失败：' + (snapRes.message || ''), 'warning');
+        }
+
         // 接着跑个股趋势打分（与板块同 record_date）
         addLog(`个股趋势打分：开始同步股票池（${today}）...`, 'info');
         setStatus('个股趋势：同步股票池中...', '#3b82f6');

@@ -35,6 +35,8 @@
       <a href="/stock/onemin?code={{ stock_code }}" title="1 分钟数据完整性检测（按年份）"
          style="font-size:.82rem;color:#2563eb;text-decoration:none;white-space:nowrap;">1m 完整性 ↗</a>
       {% endif %}
+      <a href="/trade/real?status=active" target="_blank" title="交易持仓管理（实盘进行中计划）"
+         style="font-size:.82rem;color:#dc2626;text-decoration:none;white-space:nowrap;font-weight:600;">💼 交易持仓 ↗</a>
     </div>
   </div>
 
@@ -262,30 +264,6 @@
     <div id="kChart1m" style="width:100%;height:380px;color:#9ca3af;text-align:center;padding-top:120px;">选择日期查看 1m K 线</div>
   </div>
 
-  <!-- ========== ③ 标准化参数 ========== -->
-  <div class="card" style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:1.25rem;margin-bottom:1rem;">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.75rem;">
-      <h2 style="margin:0;font-size:1.125rem;">③ 标准化参数</h2>
-      <select id="paramMonth" class="form-select" style="min-width:140px;"><option>加载月份…</option></select>
-    </div>
-    <div id="paramMeta" style="color:#6b7280;font-size:.85rem;margin-bottom:.5rem;"></div>
-    <div style="overflow-x:auto;">
-      <table style="width:100%;border-collapse:collapse;font-size:.875rem;">
-        <thead style="background:#f9fafb;">
-          <tr>
-            <th style="padding:.5rem;text-align:left;">字段</th>
-            <th style="padding:.5rem;text-align:right;">num_max</th>
-            <th style="padding:.5rem;text-align:right;">num_min</th>
-            <th style="padding:.5rem;text-align:right;">window_months</th>
-            <th style="padding:.5rem;text-align:right;">sample_count</th>
-            <th style="padding:.5rem;text-align:left;">computed_at</th>
-          </tr>
-        </thead>
-        <tbody id="paramBody"><tr><td colspan="6" style="text-align:center;color:#9ca3af;padding:1rem;">…</td></tr></tbody>
-      </table>
-    </div>
-  </div>
-
   <!-- ========== ④ 关键指标摘要 ========== -->
   <div class="card" style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:1.25rem;margin-bottom:1rem;">
     <h2 style="margin:0 0 .75rem 0;font-size:1.125rem;">④ 关键指标摘要</h2>
@@ -319,7 +297,7 @@
   </div>
 
   <!-- ========== ⑥ 基金持仓时序 ========== -->
-  <div class="card" style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:1.25rem;">
+  <div class="card" style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:1.25rem;margin-bottom:1rem;">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.75rem;">
       <h2 style="margin:0;font-size:1.125rem;">⑥ 基金持仓数时序</h2>
       <select id="fundDays" class="form-select">
@@ -332,26 +310,36 @@
     <div id="fundChart" style="width:100%;height:380px;">加载中…</div>
   </div>
 
-  <!-- ========== ①· 15m 数据字段一览（页面底部） ========== -->
+  <!-- ========== ①· 15m 数据表（最近 N 根，分页） ========== -->
   <div class="card" style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:1.25rem;margin-bottom:1rem;">
     <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem;margin-bottom:.75rem;">
-      <h2 style="margin:0;font-size:1.125rem;">①· 15m 数据字段一览</h2>
-      <span id="schemaMeta" style="color:#6b7280;font-size:.85rem;"></span>
+      <h2 style="margin:0;font-size:1.125rem;">①· 15m 数据表</h2>
+      <div style="display:flex;align-items:center;gap:.4rem;flex-wrap:wrap;">
+        <span style="font-size:.82rem;color:#6b7280;">时间段</span>
+        <input type="date" id="dataStart" class="form-select" style="padding:.3rem .4rem;" onchange="dataPage=1;loadDataTable()">
+        <span style="color:#9ca3af;">~</span>
+        <input type="date" id="dataEnd" class="form-select" style="padding:.3rem .4rem;" onchange="dataPage=1;loadDataTable()">
+        <button onclick="document.getElementById('dataStart').value='';document.getElementById('dataEnd').value='';dataPage=1;loadDataTable()"
+                style="padding:.3rem .7rem;border:1px solid #e5e7eb;background:#fff;border-radius:6px;cursor:pointer;font-size:.82rem;">清除</button>
+      </div>
+      <span id="dataTableMeta" style="color:#6b7280;font-size:.85rem;"></span>
     </div>
-    <div style="max-height:360px;overflow-y:auto;border:1px solid #f3f4f6;border-radius:6px;">
-      <table style="width:100%;border-collapse:collapse;font-size:.85rem;">
-        <thead style="background:#f9fafb;position:sticky;top:0;">
-          <tr>
-            <th style="padding:.5rem;text-align:left;">#</th>
-            <th style="padding:.5rem;text-align:left;">字段名</th>
-            <th style="padding:.5rem;text-align:left;">类型</th>
-            <th style="padding:.5rem;text-align:right;">非空</th>
-            <th style="padding:.5rem;text-align:right;">空值</th>
-            <th style="padding:.5rem;text-align:left;">最新值示例</th>
-          </tr>
-        </thead>
-        <tbody id="schemaBody"><tr><td colspan="6" style="text-align:center;color:#9ca3af;padding:1rem;">…</td></tr></tbody>
+    <div style="max-height:480px;overflow:auto;border:1px solid #f3f4f6;border-radius:6px;">
+      <table id="dataTable" style="border-collapse:collapse;font-size:.8rem;white-space:nowrap;">
+        <thead id="dataTableHead" style="background:#f9fafb;position:sticky;top:0;z-index:1;"></thead>
+        <tbody id="dataTableBody"><tr><td style="text-align:center;color:#9ca3af;padding:1rem;">加载中…</td></tr></tbody>
       </table>
+    </div>
+    <div style="display:flex;justify-content:flex-end;align-items:center;gap:.5rem;margin-top:.6rem;font-size:.85rem;color:#6b7280;">
+      <label>每页</label>
+      <select id="dataPageSize" class="form-select" style="width:80px;" onchange="dataPage=1;loadDataTable()">
+        <option value="20" selected>20</option><option value="50">50</option><option value="100">100</option>
+      </select>
+      <button id="dataPrev" onclick="if(dataPage>1){dataPage--;loadDataTable()}"
+              style="padding:.35rem .7rem;border:1px solid #e5e7eb;background:#fff;border-radius:6px;cursor:pointer;">上一页</button>
+      <span id="dataPageInfo">第 1 / 1 页</span>
+      <button id="dataNext" onclick="if(dataPage<dataTotalPages){dataPage++;loadDataTable()}"
+              style="padding:.35rem .7rem;border:1px solid #e5e7eb;background:#fff;border-radius:6px;cursor:pointer;">下一页</button>
     </div>
   </div>
 
@@ -720,6 +708,35 @@ async function quickAddPool(poolType) {
 }
 
 // ---------- ① 15m ----------
+// 给 Plotly 工具栏(modebar)注册中文提示，只注册一次
+let _zhLocaleDone = false;
+function ensureZhLocale() {
+  if (_zhLocaleDone || typeof Plotly === 'undefined' || !Plotly.register) return;
+  try {
+    Plotly.register({
+      moduleType: 'locale',
+      name: 'zh-CN',
+      dictionary: {
+        'Download plot as a png': '下载为 PNG 图片',
+        'Download plot': '下载图片',
+        'Zoom': '缩放',
+        'Pan': '平移',
+        'Box Select': '框选',
+        'Lasso Select': '套索选择',
+        'Zoom in': '放大',
+        'Zoom out': '缩小',
+        'Autoscale': '自适应缩放',
+        'Reset axes': '重置坐标轴',
+        'Toggle Spike Lines': '切换十字参考线',
+        'Show closest data on hover': '悬停显示最近数据点',
+        'Compare data on hover': '悬停对比同列数据',
+      },
+      format: { year: '%Y年', month: '%m月', dayMonth: '%m月%d日', dayMonthYear: '%Y年%m月%d日' },
+    });
+    _zhLocaleDone = true;
+  } catch (e) { console.warn('注册中文 locale 失败', e); }
+}
+
 async function load15m() {
   const limit = document.getElementById('kRange').value;
   let u15 = withAsOf(`${API}/15m?limit=${limit}`);
@@ -730,6 +747,7 @@ async function load15m() {
     document.getElementById('kChart15m').innerText = 'Plotly 未加载（检查 /static/js/plotly.min.js）';
     return;
   }
+  ensureZhLocale();
   const data = j.data;
   const segs = j.segments || [];
   const up = segs.filter(s => s.direction > 0).length;
@@ -900,7 +918,7 @@ async function load15m() {
   ], {
     margin:{t:10,r:30,l:60,b:18},
     xaxis:{
-      rangeslider:{visible:true, thickness:0.03, bgcolor:'#f9fafb', bordercolor:'#e5e7eb', borderwidth:1},
+      rangeslider:{visible:false},   // 去掉底部时间条：它会把K线/量/MACD缩小重画一遍，造成重复观感；缩放用鼠标在主图拖框
       type:'category', tickangle:-45, nticks:12, tickfont:{size:10},
     },
     yaxis:{domain:[0.48,1.0], title:'价格', rangemode:'normal',
@@ -910,7 +928,7 @@ async function load15m() {
     showlegend: true,
     legend: { orientation: 'h', y: 1.02, x: 0 },
     shapes: shapes.concat(tradeShapes),
-  }, {responsive:true});
+  }, {responsive:true, locale:'zh-CN'});
 
   if (!hasMacd) {
     document.getElementById('kSummary15m').innerHTML +=
@@ -922,31 +940,47 @@ async function load15m() {
   }
 }
 
-// ---------- ①· 15m 字段一览 ----------
-async function loadSchema() {
-  const body = document.getElementById('schemaBody');
-  const j = await fetchJson(`${API}/15m/schema`);
+// ---------- ①· 15m 数据表（最近 N 根，分页，全字段）----------
+let dataPage = 1, dataTotalPages = 1;
+async function loadDataTable() {
+  const limit = document.getElementById('kRange').value;
+  const ps = document.getElementById('dataPageSize').value;
+  const start = document.getElementById('dataStart').value;
+  const end = document.getElementById('dataEnd').value;
+  const head = document.getElementById('dataTableHead');
+  const body = document.getElementById('dataTableBody');
+  let url = `${API}/15m/rows?limit=${limit}&page=${dataPage}&page_size=${ps}`;
+  if (start) url += `&start=${start}`;
+  if (end) url += `&end=${end}`;
+  const j = await fetchJson(withAsOf(url));
   if (!j.success) {
-    document.getElementById('schemaMeta').innerText = '';
-    body.innerHTML = `<tr><td colspan="6" style="text-align:center;color:#dc2626;padding:1rem;">${j.message || '加载失败'}</td></tr>`;
+    document.getElementById('dataTableMeta').innerText = '';
+    head.innerHTML = '';
+    body.innerHTML = `<tr><td style="text-align:center;color:#dc2626;padding:1rem;">${j.message || '加载失败'}</td></tr>`;
     return;
   }
-  document.getElementById('schemaMeta').innerText = `共 ${j.column_count} 个字段，${j.total_rows} 行`;
-  body.innerHTML = j.columns.map((c, i) => {
-    const hasNull = c.null > 0;
-    let sample = c.sample;
-    if (sample === null || sample === undefined) sample = '<span style="color:#9ca3af;">null</span>';
-    else if (typeof sample === 'number') sample = `<span style="font-family:monospace;">${sample}</span>`;
-    else sample = `<span style="font-family:monospace;">${String(sample)}</span>`;
-    return `<tr style="border-top:1px solid #f3f4f6;">
-      <td style="padding:.4rem .5rem;color:#9ca3af;">${i + 1}</td>
-      <td style="padding:.4rem .5rem;font-weight:600;font-family:monospace;">${c.name}</td>
-      <td style="padding:.4rem .5rem;color:#2563eb;font-family:monospace;">${c.dtype}</td>
-      <td style="padding:.4rem .5rem;text-align:right;font-family:monospace;">${c.non_null}</td>
-      <td style="padding:.4rem .5rem;text-align:right;font-family:monospace;color:${hasNull ? '#b91c1c' : '#9ca3af'};">${c.null}</td>
-      <td style="padding:.4rem .5rem;">${sample}</td>
-    </tr>`;
-  }).join('');
+  const cols = j.columns || [];
+  const th = c => `<th style="padding:.4rem .55rem;text-align:left;border-bottom:1px solid #e5e7eb;font-family:monospace;font-weight:600;">${c}</th>`;
+  head.innerHTML = '<tr>' + cols.map(th).join('') + '</tr>';
+  if (!j.data.length) {
+    body.innerHTML = `<tr><td colspan="${cols.length || 1}" style="text-align:center;color:#9ca3af;padding:1rem;">无数据</td></tr>`;
+  } else {
+    body.innerHTML = j.data.map(r => '<tr style="border-top:1px solid #f3f4f6;">' + cols.map(c => {
+      let v = r[c];
+      if (v === null || v === undefined) v = '<span style="color:#d1d5db;">–</span>';
+      else if (typeof v === 'number') v = Number.isInteger(v) ? v : v.toFixed(4).replace(/\.?0+$/, '');
+      const isDate = (c === 'date');
+      return `<td style="padding:.35rem .55rem;font-family:monospace;${isDate ? 'font-weight:600;color:#111827;' : ''}">${v}</td>`;
+    }).join('') + '</tr>').join('');
+  }
+  const pg = j.pagination || { page: 1, total_pages: 1, total_items: 0 };
+  dataPage = pg.page; dataTotalPages = pg.total_pages;
+  document.getElementById('dataTableMeta').innerText = j.range
+    ? `时间段 ${start || '最早'} ~ ${end || '最新'} · 共 ${pg.total_items} 行 · ${cols.length} 字段（最新在前）`
+    : `最近 ${limit} 根 · 共 ${pg.total_items} 行 · ${cols.length} 字段（最新在前）`;
+  document.getElementById('dataPageInfo').innerText = `第 ${pg.page} / ${pg.total_pages} 页`;
+  document.getElementById('dataPrev').disabled = pg.page <= 1;
+  document.getElementById('dataNext').disabled = pg.page >= pg.total_pages;
 }
 
 // ---------- ①' 15m 数据完整性 ----------
@@ -1351,45 +1385,6 @@ async function load1m() {
   }, {responsive:true});
 }
 
-// ---------- ③ 标准化参数 ----------
-async function loadParamMonths() {
-  const j = await fetchJson(`${API}/params/months`);
-  const sel = document.getElementById('paramMonth');
-  if (!j.success || !j.months.length) {
-    sel.innerHTML = '<option>无标准化参数</option>';
-    document.getElementById('paramBody').innerHTML = '<tr><td colspan="6" style="text-align:center;color:#9ca3af;padding:1rem;">该股票无标准化参数</td></tr>';
-    return;
-  }
-  sel.innerHTML = j.months.map((m,i) => `<option value="${m}"${i===0?' selected':''}>${m}</option>`).join('');
-  loadParams();
-}
-
-async function loadParams() {
-  const month = document.getElementById('paramMonth').value;
-  if (!month) return;
-  const j = await fetchJson(`${API}/params?month=${month}`);
-  const tbody = document.getElementById('paramBody');
-  if (!j.success) { tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;color:#dc2626;padding:1rem;">${j.message}</td></tr>`; return; }
-  const fields = j.normalized_fields;
-  const keys = Object.keys(fields).sort();
-  document.getElementById('paramMeta').innerText = `共 ${j.normalized_fields_count} 个归一化字段`;
-  if (keys.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#9ca3af;padding:1rem;">无归一化字段</td></tr>';
-    return;
-  }
-  tbody.innerHTML = keys.map(k => {
-    const v = fields[k];
-    return `<tr style="border-top:1px solid #e5e7eb;">
-      <td style="padding:.4rem .5rem;font-weight:600;">${k}</td>
-      <td style="padding:.4rem .5rem;text-align:right;font-family:monospace;">${fmtNum(v.num_max)}</td>
-      <td style="padding:.4rem .5rem;text-align:right;font-family:monospace;color:#6b7280;">${fmtNum(v.num_min)}</td>
-      <td style="padding:.4rem .5rem;text-align:right;color:${v.window_months ? '#16a34a' : '#9ca3af'};">${v.window_months || '—'}</td>
-      <td style="padding:.4rem .5rem;text-align:right;color:#6b7280;">${v.sample_count || '—'}</td>
-      <td style="padding:.4rem .5rem;color:#6b7280;font-size:.78rem;">${v.computed_at || '老格式'}</td>
-    </tr>`;
-  }).join('');
-}
-
 function fmtNum(v) {
   if (v == null) return '—';
   if (Math.abs(v) >= 10000) return v.toLocaleString(undefined, {maximumFractionDigits:0});
@@ -1480,10 +1475,9 @@ async function loadFundHoldings() {
   }, {responsive:true});
 }
 
-document.getElementById('kRange').onchange = load15m;
+document.getElementById('kRange').onchange = () => { load15m(); dataPage = 1; loadDataTable(); };
 document.getElementById('dsOnlyIssues').onchange = loadDailySummary;
 document.getElementById('oneMinDate').onchange = load1m;
-document.getElementById('paramMonth').onchange = loadParams;
 document.getElementById('fundDays').onchange = loadFundHoldings;
 
 // ---------- 历史回放：时光机日期 ----------
@@ -1566,7 +1560,7 @@ if (VIEW_MODE === 'replay') {
 
 // 所有加载相互独立，互不阻塞（loadOverview 如果挂起也不应让 K 线/分布图卡死）
 loadOverview().catch(e => console.error('[loadOverview]', e));
-load15m(); loadSchema(); loadDailySummary(); loadCycles(); load1mDates(); loadParamMonths();
+load15m(); loadDataTable(); loadDailySummary(); loadCycles(); load1mDates();
 loadMetrics(); loadPredictions(); loadFundHoldings();
 </script>
 {% endblock %}

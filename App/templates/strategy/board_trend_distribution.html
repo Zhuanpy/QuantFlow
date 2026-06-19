@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container">
+    <div class="page-header">
+        <div>
+            <h1>板块趋势阶段分布趋势</h1>
+            <p>每日记录的全市场板块趋势阶段分布（上涨前期/后期、下跌前期/后期、未识别、无评分），用于观察市场整体趋势结构的变化。在「板块整体预览」页点「记录今日分布」生成快照。</p>
+        </div>
+        <div class="header-actions">
+            <label>显示
+                <select id="limitSel" onchange="loadHistory()">
+                    <option value="30">最近 30 天</option>
+                    <option value="60" selected>最近 60 天</option>
+                    <option value="120">最近 120 天</option>
+                    <option value="365">最近 365 天</option>
+                </select>
+            </label>
+            <a class="btn-link" href="/board_overview/">← 返回整体预览</a>
+        </div>
+    </div>
+
+    <div class="chart-card">
+        <div id="distChart" style="width:100%;height:380px;"></div>
+        <div id="chartEmpty" class="empty" style="display:none;">暂无快照数据。请先到「板块整体预览」页点「记录今日分布」。</div>
+    </div>
+
+    <div class="table-wrap">
+        <table class="dist-table">
+            <thead>
+                <tr><th>日期</th><th class="up">上涨前期</th><th class="up">上涨后期</th>
+                    <th class="down">下跌前期</th><th class="down">下跌后期</th>
+                    <th>未识别</th><th>无评分</th><th>板块总数</th></tr>
+            </thead>
+            <tbody id="tbody"><tr><td colspan="8" class="empty">加载中...</td></tr></tbody>
+        </table>
+    </div>
+</div>
+
+<style>
+    .container { max-width: 1200px; margin: 1rem auto; padding: 0 1rem; }
+    .page-header { background:#fff; padding:1rem 1.25rem; border-radius:.6rem; box-shadow:var(--shadow-sm); margin-bottom:1rem;
+                   display:flex; justify-content:space-between; align-items:flex-start; gap:1rem; }
+    .page-header h1 { margin:0 0 .25rem; }
+    .page-header p { margin:0; color:#6b7280; font-size:.9rem; max-width:760px; }
+    .header-actions { display:flex; flex-direction:column; gap:.5rem; align-items:flex-end; flex-shrink:0; }
+    .header-actions label { font-size:.85rem; color:#374151; }
+    .header-actions select { padding:.3rem .5rem; border:1px solid #d1d5db; border-radius:.3rem; font-size:.85rem; }
+    .btn-link { font-size:.82rem; color:#2563eb; text-decoration:none; white-space:nowrap; }
+    .btn-link:hover { text-decoration:underline; }
+    .chart-card { background:#fff; border-radius:.5rem; padding:.75rem; box-shadow:var(--shadow-sm); margin-bottom:1rem; }
+    .table-wrap { background:#fff; border-radius:.5rem; padding:.5rem; box-shadow:var(--shadow-sm); overflow-x:auto; }
+    .dist-table { width:100%; border-collapse:collapse; font-size:.83rem; }
+    .dist-table th, .dist-table td { padding:.5rem .55rem; border-bottom:1px solid #f1f5f9; text-align:right; white-space:nowrap; }
+    .dist-table th { background:#f9fafb; color:#374151; font-weight:600; text-align:center; }
+    .dist-table th.up { color:#166534; } .dist-table th.down { color:#991b1b; }
+    .dist-table td:first-child, .dist-table th:first-child { text-align:left; }
+    .dist-table tr:hover { background:#f9fafb; }
+    .empty { text-align:center !important; color:#9ca3af; padding:1.5rem; }
+</style>
+
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<script>
+const SERIES = [
+    { key: 'up_early',   name: '上涨前期', color: '#34d399' },
+    { key: 'up_late',    name: '上涨后期', color: '#059669' },
+    { key: 'down_early', name: '下跌前期', color: '#fb923c' },
+    { key: 'down_late',  name: '下跌后期', color: '#dc2626' },
+    { key: 'unknown',    name: '未识别',   color: '#9ca3af' },
+    { key: 'none',       name: '无评分',   color: '#d1d5db' },
+];
+let _chart = null;
+
+async function loadHistory() {
+    const limit = document.getElementById('limitSel').value;
+    const r = await fetch('/board_overview/api/distribution/history?limit=' + limit).then(r => r.json());
+    const tbody = document.getElementById('tbody');
+    if (!r.success) { tbody.innerHTML = `<tr><td colspan="8" class="empty">加载失败：${r.message || ''}</td></tr>`; return; }
+    const items = r.data.items || [];
+    renderChart(items);
+    if (!items.length) {
+        tbody.innerHTML = `<tr><td colspan="8" class="empty">暂无快照数据。请先到「板块整体预览」页点「记录今日分布」。</td></tr>`;
+        return;
+    }
+    // 表格按日期倒序（最新在上）
+    tbody.innerHTML = items.slice().reverse().map(it => `<tr>
+        <td>${it.record_date}</td>
+        <td style="color:#059669;">${it.up_early}</td>
+        <td style="color:#047857;font-weight:600;">${it.up_late}</td>
+        <td style="color:#ea580c;">${it.down_early}</td>
+        <td style="color:#dc2626;font-weight:600;">${it.down_late}</td>
+        <td style="color:#6b7280;">${it.unknown}</td>
+        <td style="color:#9ca3af;">${it.none}</td>
+        <td><b>${it.total_boards}</b></td>
+    </tr>`).join('');
+}
+
+function renderChart(items) {
+    const empty = document.getElementById('chartEmpty');
+    const el = document.getElementById('distChart');
+    if (!items.length) { empty.style.display = 'block'; el.style.display = 'none'; return; }
+    empty.style.display = 'none'; el.style.display = 'block';
+    if (typeof echarts === 'undefined') return;
+    if (!_chart) _chart = echarts.init(el);
+    const dates = items.map(it => it.record_date);
+    _chart.setOption({
+        tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+        legend: { data: SERIES.map(s => s.name), top: 0 },
+        grid: { left: 45, right: 20, top: 36, bottom: 28 },
+        xAxis: { type: 'category', data: dates, boundaryGap: false },
+        yAxis: { type: 'value', name: '板块数', minInterval: 1 },
+        series: SERIES.map(s => ({
+            name: s.name, type: 'line', stack: 'total', areaStyle: {},
+            emphasis: { focus: 'series' }, symbol: 'none', smooth: false,
+            data: items.map(it => it[s.key] || 0), itemStyle: { color: s.color },
+        })),
+    });
+}
+window.addEventListener('resize', () => { if (_chart) _chart.resize(); });
+loadHistory();
+</script>
+{% endblock %}

@@ -345,7 +345,7 @@ def update_score(stock_id):
 def remove_stock(stock_id):
     """移出股票池：软删除（is_active=False），保留记录与历史，可重新添加恢复。
 
-    与「归档」区别：归档仍在池内(归档 Tab 可见)，移出后不出现在任何 Tab。
+    移出后不出现在任何 Tab；区别于硬删除(/api/delete)会彻底删行。
     """
     try:
         stock = StockPool.query.get_or_404(stock_id)
@@ -472,7 +472,7 @@ def api_filter_scan():
         data = request.get_json(silent=True) or {}
         pool_type = data.get('pool_type')
         filters = data.get('filters', {})
-        if pool_type not in ('candidate', 'watching', 'trading', 'archived'):
+        if pool_type not in ('candidate', 'watching', 'trading'):
             return jsonify({'success': False, 'message': '需要有效的 pool_type'}), 400
 
         stocks = StockPool.query.filter(
@@ -538,7 +538,7 @@ def api_apply_rules():
     """
     应用一组自动化规则，返回每条规则触发的股票列表。
     body: {
-      candidate_archive_days: 30,    candidate 在池中超过 N 天未晋升 → archived
+      candidate_archive_days: 30,    candidate 在池中超过 N 天未晋升 → 移出股票池
       degenerate_demote: {           watching 模型综合 DEGENERATE → candidate
           enabled: true,
           month: '2026-04',          检查健康度用的月份
@@ -550,9 +550,9 @@ def api_apply_rules():
         from datetime import timedelta
         data = request.get_json(silent=True) or {}
 
-        results = {'archived_old_candidates': [], 'demoted_degenerate': []}
+        results = {'removed_old_candidates': [], 'demoted_degenerate': []}
 
-        # 规则 1：candidate 超 N 天未晋升
+        # 规则 1：candidate 超 N 天未晋升 → 移出股票池(软删 is_active=False)
         days = int(data.get('candidate_archive_days', 30) or 30)
         if days > 0:
             cutoff = datetime.utcnow() - timedelta(days=days)
@@ -563,14 +563,12 @@ def api_apply_rules():
                 StockPool.created_at <= cutoff,
             ).all()
             for s in old_candidates:
-                old_pool = s.pool_type
-                s.pool_type = 'archived'
-                s.exclusion_reason = (s.exclusion_reason or '') + f' 候选超 {days} 天未晋升自动归档'
+                s.is_active = False
+                s.exclusion_reason = (s.exclusion_reason or '') + f' 候选超 {days} 天未晋升自动移出'
                 s.updated_at = datetime.utcnow()
-                results['archived_old_candidates'].append({
+                results['removed_old_candidates'].append({
                     'id': s.id, 'stock_code': s.stock_code, 'stock_name': s.stock_name,
                     'created_at': s.created_at.isoformat() if s.created_at else None,
-                    'from': old_pool,
                 })
 
         # 规则 2：watching 模型 DEGENERATE 降级
@@ -621,7 +619,7 @@ def api_apply_rules():
         db.session.commit()
         return jsonify({
             'success': True,
-            'archived_count': len(results['archived_old_candidates']),
+            'removed_count': len(results['removed_old_candidates']),
             'demoted_count': len(results['demoted_degenerate']),
             'details': results,
         })

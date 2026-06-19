@@ -12,6 +12,7 @@
             <button class="btn btn-primary" onclick="showAddModal()">+ 添加股票</button>
             <button class="btn btn-outline" onclick="showImportModal()">从记录导入</button>
             <button class="btn btn-outline" onclick="exportStocks()">导出</button>
+            <a class="btn btn-outline" href="/trade/real?mode=real" target="_blank" title="打开交易管理(计划与成交)">📋 交易管理</a>
         </div>
     </div>
 
@@ -29,10 +30,6 @@
             <div class="stat-num" id="statCandidate">0</div>
             <div class="stat-text">候选池</div>
         </div>
-        <div class="stat-card archived">
-            <div class="stat-num" id="statArchived">0</div>
-            <div class="stat-text">已归档</div>
-        </div>
         <div class="stat-card score">
             <div class="stat-num" id="statAvgScore">0</div>
             <div class="stat-text">平均评分</div>
@@ -45,7 +42,6 @@
         <button class="tab" data-type="trading" onclick="switchTab(this)">交易中</button>
         <button class="tab" data-type="watching" onclick="switchTab(this)">观察中</button>
         <button class="tab" data-type="candidate" onclick="switchTab(this)">候选池</button>
-        <button class="tab" data-type="archived" onclick="switchTab(this)">归档</button>
         <div class="tab-right">
             <div class="search-box">
                 <input type="text" id="searchInput" placeholder="搜索代码/名称/标签..." onkeypress="if(event.key==='Enter')loadStocks()">
@@ -68,8 +64,7 @@
             <button class="btn btn-sm" onclick="batchMove('trading')">移入交易</button>
             <button class="btn btn-sm" onclick="batchMove('watching')">移入观察</button>
             <button class="btn btn-sm" onclick="batchMove('candidate')">移入候选</button>
-            <button class="btn btn-sm" onclick="batchMove('archived')">归档</button>
-            <button class="btn btn-sm btn-danger" onclick="batchDelete()">删除</button>
+            <button class="btn btn-sm btn-danger" onclick="batchRemove()">移出股票池</button>
             <button class="btn btn-sm" onclick="clearSelection()">取消</button>
         </div>
     </div>
@@ -200,7 +195,6 @@
                             <option value="trading">交易中</option>
                             <option value="watching">观察中</option>
                             <option value="candidate">候选池</option>
-                            <option value="archived">归档</option>
                         </select>
                     </div>
                     <div class="form-group">
@@ -311,7 +305,7 @@
         <div class="modal-footer" style="padding:.75rem 1rem;display:flex;gap:.5rem;justify-content:flex-end;">
             <button class="btn btn-outline" onclick="closeModal('filterModal')">取消</button>
             <button class="btn btn-primary" onclick="runFilterScan()">扫描</button>
-            <button class="btn btn-danger" id="filterApplyBtn" onclick="applyFilterRemove()" style="display:none;">确认全部归档</button>
+            <button class="btn btn-danger" id="filterApplyBtn" onclick="applyFilterRemove()" style="display:none;">确认全部移出</button>
         </div>
     </div>
 </div>
@@ -325,7 +319,7 @@
         </div>
         <div class="modal-body" style="padding:1rem;">
             <label style="display:block;margin-bottom:.6rem;">
-                候选池超过多少天未晋升 → 自动归档（设 0 跳过）：
+                候选池超过多少天未晋升 → 自动移出股票池（设 0 跳过）：
                 <input type="number" id="rulesDays" value="30" min="0" max="365" style="width:100%;padding:.4rem;margin-top:.2rem;">
             </label>
             <label style="display:flex;align-items:center;gap:.4rem;margin-bottom:.4rem;">
@@ -612,7 +606,6 @@ async function loadStats() {
         document.getElementById('statTrading').textContent = dist.trading || 0;
         document.getElementById('statWatching').textContent = dist.watching || 0;
         document.getElementById('statCandidate').textContent = dist.candidate || 0;
-        document.getElementById('statArchived').textContent = dist.archived || 0;
         document.getElementById('statAvgScore').textContent = d.data.avg_score || 0;
     } catch(e) { console.error(e); }
 }
@@ -757,7 +750,6 @@ function renderTable(stocks) {
             <td>${priceCell(s)}</td>
             <td>${s.updated_at || '-'}</td>
             <td><div class="row-actions">
-                ${renderTradeLinks(s)}
                 ${renderPrimaryAction(s)}
                 <button class="act-btn more" onclick="showRowMenu(event,${s.id},'${s.pool_type}','${s.stock_code}')" title="更多操作">&#8943;</button>
             </div></td>
@@ -805,7 +797,6 @@ function showRowMenu(e, stockId, poolType, code) {
         ['trading', '移到交易中'],
         ['watching', '移到观察中'],
         ['candidate', '移到候选池'],
-        ['archived', '移到归档'],
     ].filter(([t]) => t !== poolType)
      .map(([t, label]) => `<button class="dropdown-item" onclick="confirmAndMove(${stockId},'${t}','${code}','${label}')">${label}</button>`)
      .join('');
@@ -854,52 +845,23 @@ async function moveStock(stockId, poolType) {
 // 按当前 pool_type 返回上下文相关的快捷按钮
 // 候选 → 晋升观察 / 排除
 // 观察 → 买入(交易) / 降级候选 / 排除
-// 交易 → 降级观察 / 清仓归档
-// 归档 → 重新激活(候选)
-// 打通 trade/real + 持仓实时 15m：每行加两个跳转按钮
-function renderTradeLinks(s) {
-    const code = s.stock_code;
-    const name = encodeURIComponent(s.stock_name || '');
-    // 1) 实时 15m K
-    const liveBtn = `<a class="act-btn ctx-purple" href="/trade/holdings/realtime/${code}"`
-                  + ` target="_blank" title="查看 ${code} 实时 15m K 线">📈</a>`;
-    // 2) 跳交易管理：watching 池一键预填新建计划；其它池就筛选到该代码
-    let tradeBtn;
-    if (s.pool_type === 'watching' && s.target_price) {
-        const params = new URLSearchParams({
-            mode: 'real',
-            action: 'new',
-            stock_code: code,
-            stock_name: s.stock_name || '',
-            entry_price: s.target_price,
-        });
-        if (s.stop_loss_price) params.set('stop_loss_price', s.stop_loss_price);
-        tradeBtn = `<a class="act-btn ctx-orange" href="/trade/real?${params.toString()}"`
-                 + ` target="_blank" title="预填 ${code} 新建交易计划（entry=${s.target_price}）">📋</a>`;
-    } else {
-        tradeBtn = `<a class="act-btn ctx-orange" href="/trade/real?mode=real&stock_code=${code}"`
-                 + ` target="_blank" title="去 /trade/real 看 ${code} 计划与成交">📋</a>`;
-    }
-    return liveBtn + tradeBtn;
-}
-
 // 每行只保留「主操作」= 该池最常见的下一步；其余移动入 ⋯ 菜单的"移动到"。
-//   候选 → ↑观察    观察 → ↑买入(交易)    交易 → ✓清仓(归档)    归档 → ↻激活(候选)
+//   候选 → ↑观察    观察 → ↑买入(交易)    交易 → ✓清仓(移出股票池)
 function renderPrimaryAction(s) {
     const id = s.id, code = s.stock_code;
     const btn = (target, label, color) =>
         `<button class="act-btn ctx-${color}" onclick="confirmAndMove(${id},'${target}','${code}','${label}')" title="${label}">${label}</button>`;
     if (s.pool_type === 'candidate') return btn('watching', '↑观察', 'green');
     if (s.pool_type === 'watching')  return btn('trading', '↑买入', 'blue');
-    if (s.pool_type === 'trading')   return btn('archived', '✓清仓', 'gray');
-    if (s.pool_type === 'archived')  return btn('candidate', '↻激活', 'green');
+    // 清仓 = 卖出后移出股票池(软删，记录保留)
+    if (s.pool_type === 'trading')
+        return `<button class="act-btn ctx-gray" onclick="removeStock(${id},'${code}')" title="清仓并移出股票池">✓清仓</button>`;
     return '';
 }
 
 async function confirmAndMove(stockId, poolType, code, action) {
-    // 关键操作（买入=入交易池 / 清仓=归档）需要二次确认
-    const needConfirm = poolType === 'trading' || poolType === 'archived'
-        || action.includes('买入') || action.includes('清仓');
+    // 关键操作（买入=入交易池）需要二次确认
+    const needConfirm = poolType === 'trading' || action.includes('买入');
     if (needConfirm && !confirm(`确定${action} ${code} ?`)) return;
     return moveStock(stockId, poolType);
 }
@@ -919,20 +881,19 @@ async function batchMove(poolType) {
     } catch(e) { toast('批量操作失败', 'err'); }
 }
 
-async function batchDelete() {
-    if (!selectedIds.size || !confirm(`确定删除选中的 ${selectedIds.size} 只股票？`)) return;
-    let ok = 0;
-    for (const id of selectedIds) {
-        try {
-            const r = await fetch(`/stock_pool/api/delete/${id}`, { method: 'DELETE' });
-            const d = await r.json();
-            if (d.success) ok++;
-        } catch(e) {}
-    }
-    toast(`成功删除 ${ok} 条`, 'ok');
-    clearSelection();
-    loadStats();
-    loadStocks();
+// 批量移出股票池：软删(is_active=false)，保留记录，可重新添加恢复
+async function batchRemove() {
+    if (!selectedIds.size || !confirm(`确定将选中的 ${selectedIds.size} 只股票移出股票池？(记录保留，可重新添加恢复)`)) return;
+    try {
+        const r = await fetch('/stock_pool/api/batch_update', {
+            method: 'POST',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({ stock_ids: [...selectedIds], updates: { is_active: false }})
+        });
+        const d = await r.json();
+        if (d.success) { toast(`已移出 ${selectedIds.size} 只`, 'ok'); clearSelection(); loadStats(); loadStocks(); }
+        else toast(d.message, 'err');
+    } catch(e) { toast('批量移出失败', 'err'); }
 }
 
 // === CRUD ===
@@ -1206,16 +1167,16 @@ async function runFilterScan() {
 
 async function applyFilterRemove() {
     if (!_filterScanResult || !_filterScanResult.length) return;
-    if (!confirm(`确定把 ${_filterScanResult.length} 只股票全部归档？`)) return;
+    if (!confirm(`确定把 ${_filterScanResult.length} 只股票全部移出股票池？`)) return;
     const ids = _filterScanResult.map(s => s.id);
     try {
         const r = await fetch('/stock_pool/api/batch_update', {
             method: 'POST', headers: {'Content-Type':'application/json'},
-            body: JSON.stringify({ stock_ids: ids, updates: { pool_type: 'archived' }})
+            body: JSON.stringify({ stock_ids: ids, updates: { is_active: false }})
         });
         const d = await r.json();
         if (d.success) {
-            toast(`已归档 ${ids.length} 只`, 'ok');
+            toast(`已移出 ${ids.length} 只`, 'ok');
             closeModal('filterModal');
             loadStats(); loadStocks();
         } else {
@@ -1249,18 +1210,18 @@ async function runApplyRules() {
         });
         const d = await r.json();
         if (!d.success) { area.innerHTML = `<span style="color:#dc2626;">${d.message}</span>`; return; }
-        const a1 = d.details.archived_old_candidates;
+        const a1 = d.details.removed_old_candidates;
         const a2 = d.details.demoted_degenerate;
         let html = `<div style="margin-bottom:.5rem;">
-            <strong>归档 ${d.archived_count} 只</strong>（候选超期）
+            <strong>移出 ${d.removed_count} 只</strong>（候选超期）
             ・<strong>降级 ${d.demoted_count} 只</strong>（模型退化）
         </div>`;
-        if (a1.length) html += `<div><b>归档:</b> ${a1.map(x => x.stock_code).join(', ')}</div>`;
+        if (a1.length) html += `<div><b>移出:</b> ${a1.map(x => x.stock_code).join(', ')}</div>`;
         if (a2.length) html += `<div style="margin-top:.3rem;"><b>降级:</b> ${a2.map(x => `${x.stock_code} (${x.health_per_model.join('/')})`).join(', ')}</div>`;
         area.innerHTML = html;
         toast('规则应用完成', 'ok');
         loadStats();
-        if (currentPoolType === 'candidate' || currentPoolType === 'watching' || currentPoolType === 'archived') loadStocks();
+        if (currentPoolType === 'candidate' || currentPoolType === 'watching') loadStocks();
     } catch (e) {
         area.innerHTML = `<span style="color:#dc2626;">异常：${e.message}</span>`;
     }
