@@ -12,7 +12,10 @@
     #ssTable td { padding:.4rem .5rem; white-space:nowrap; }
     #ssTable tr { border-top:1px solid #f3f4f6; }
     .ss-grp-snap { background:#eff6ff; }  /* 分布快照组表头底色 */
+    .ss-grp-spd  { background:#fffbeb; }  /* 速度(派生)组表头底色 */
     .ss-grp-rnn  { background:#f0fdf4; }  /* RNN 预测组表头底色 */
+    #ssTable th.ss-sort { cursor:pointer; user-select:none; }
+    #ssTable th.ss-sort:hover { filter:brightness(.96); }
   </style>
 
   <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem;margin-bottom:.5rem;">
@@ -34,6 +37,21 @@
       <a href="/stock_pool/" style="color:#16a34a;text-decoration:none;font-size:.85rem;font-weight:600;">→ 股票池</a>
     </div>
   </div>
+
+  <!-- 顶部快捷搜索：输入代码或名称直接定位个股 -->
+  <div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:.75rem 1rem;margin-bottom:1rem;display:flex;align-items:center;gap:.6rem;flex-wrap:wrap;">
+    <span style="font-size:1.05rem;">🔍</span>
+    <span style="color:#374151;font-weight:600;font-size:.9rem;">快速定位个股</span>
+    <input id="topQ" class="ss-inp" style="flex:1;min-width:220px;max-width:380px;font-size:.95rem;"
+           type="search" placeholder="输入代码或名称，如 600519 / 茅台，回车搜索"
+           onkeydown="if(event.key==='Enter')quickSearch()">
+    <button onclick="quickSearch()" class="ss-btn-primary">搜索</button>
+    <button onclick="clearQuickSearch()" class="ss-btn">清空</button>
+    <span style="color:#9ca3af;font-size:.78rem;">在当前快照内按代码 / 名称定位，与下方筛选条件叠加</span>
+  </div>
+
+  <!-- 数据新鲜度兜底提示：快照落后于最新交易日时出现 -->
+  <div id="freshBanner" style="display:none;margin-bottom:1rem;padding:.7rem 1rem;border-radius:8px;font-size:.85rem;"></div>
 
   <!-- 筛选区 -->
   <div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:1rem;margin-bottom:1rem;">
@@ -85,7 +103,8 @@
       <button onclick="saveStrategy()" class="ss-btn">💾 保存策略</button>
       <button onclick="deleteStrategy()" class="ss-btn">删除</button>
     </div>
-    <div style="color:#9ca3af;font-size:.78rem;margin-top:.5rem;">长度/振幅/能量按「当前方向」历史分位筛选，需先选方向；样本不足 8 自动排除。数据＝最新分布快照 ⨝ 各股最新 RNN 预测。</div>
+    <div style="color:#9ca3af;font-size:.78rem;margin-top:.5rem;">长度/振幅/能量按「当前方向」历史分位筛选，需先选方向；样本不足 8 自动排除。数据＝最新分布快照 ⨝ 各股最新 RNN 预测。<br>
+      <b>速度</b>列＝振幅均值÷长度均值×16（%/交易日）：上涨速度=赚得多快、下跌速度=亏得多快、攻守比=上涨速度÷下跌速度(>1攻强于守)。点表头按<b>全部匹配数据</b>排序(服务端，非仅当前页)；速度高≠赚得多，仍需结合<b>总振幅</b>与<b>当前周期分位</b>(这波是否已走完)一起判断。</div>
   </div>
 
   <div style="display:flex;align-items:center;gap:.6rem;flex-wrap:wrap;margin:.25rem 0 .6rem;">
@@ -120,6 +139,9 @@
           <th class="ss-grp-snap" style="text-align:right;">量能 z</th>
           <th class="ss-grp-snap" style="text-align:right;">量能 分位</th>
           <th class="ss-grp-snap" style="text-align:right;">样本 n</th>
+          <th class="ss-grp-spd ss-sort" data-sk="spd_up" style="text-align:right;" title="上涨速度 = 上涨振幅均值 ÷ 上涨长度均值 ×16，单位 %/交易日。越大=上涨越快(资金效率高)。点击按全部数据排序">上涨速度 %/天</th>
+          <th class="ss-grp-spd ss-sort" data-sk="spd_dn" style="text-align:right;" title="下跌速度 = 下跌振幅均值 ÷ 下跌长度均值 ×16，单位 %/交易日。越大=下跌越快(风险高)。点击按全部数据排序">下跌速度 %/天</th>
+          <th class="ss-grp-spd ss-sort" data-sk="ratio" style="text-align:right;" title="攻守比 = 上涨速度 ÷ 下跌速度。>1=涨比跌快(攻强于守)，风险调整后更值得关注。点击按全部数据排序">攻守比</th>
           <th class="ss-grp-rnn" style="text-align:left;">RNN趋势</th>
           <th class="ss-grp-rnn" style="text-align:center;">信号</th>
           <th class="ss-grp-rnn" style="text-align:right;">预测周期</th>
@@ -130,7 +152,7 @@
           <th class="ss-grp-rnn" style="text-align:left;">更新</th>
         </tr>
       </thead>
-      <tbody id="ssBody"><tr><td colspan="24" style="text-align:center;color:#9ca3af;padding:1rem;">加载中…</td></tr></tbody>
+      <tbody id="ssBody"><tr><td colspan="27" style="text-align:center;color:#9ca3af;padding:1rem;">加载中…</td></tr></tbody>
     </table>
   </div>
 
@@ -175,8 +197,18 @@ async function loadDates(){
 
 function resetFilter(){
   ['dirSel','fLen','fAmp','fVol','fBoardStage','fSignal','fPool'].forEach(id=>document.getElementById(id).value='');
-  ['fScoreMin','fScoreMax','fQ'].forEach(id=>document.getElementById(id).value='');
+  ['fScoreMin','fScoreMax','fQ','topQ'].forEach(id=>document.getElementById(id).value='');
   syncMetricDisabled(); recPage=1; runFilter();
+}
+
+/* ===== 顶部快捷搜索：与下方「代码/名称」筛选框(fQ)同源 ===== */
+function quickSearch(){
+  document.getElementById('fQ').value = document.getElementById('topQ').value.trim();
+  recPage=1; runFilter();
+}
+function clearQuickSearch(){
+  document.getElementById('topQ').value=''; document.getElementById('fQ').value='';
+  recPage=1; runFilter();
 }
 
 /* ===== 筛选策略（保存到浏览器本地）===== */
@@ -229,22 +261,68 @@ async function runFilter(){
   if(g('fScoreMax')!=='') p.set('score_max',g('fScoreMax'));
   if(g('fPool')) p.set('pool_type',g('fPool'));
   if(g('fQ').trim()) p.set('q',g('fQ').trim());
+  document.getElementById('topQ').value=g('fQ');  // 顶部快捷搜索框与 fQ 保持同步显示
+  if(sortKey){ p.set('sort',sortKey); p.set('sort_dir', sortAsc?'asc':'desc'); }  // 服务端全量排序
   p.set('merge_below',getMerge());
   p.set('page',recPage); p.set('page_size',g('pageSize'));
 
   document.getElementById('resultMeta').innerText='查询中…';
   const j=await fetchJson(`${API}/list?${p}`);
   const body=document.getElementById('ssBody');
-  if(!j.success){ body.innerHTML=`<tr><td colspan="24" style="text-align:center;color:#dc2626;padding:1rem;">${j.message||'查询失败'}</td></tr>`; return; }
+  if(!j.success){ body.innerHTML=`<tr><td colspan="27" style="text-align:center;color:#dc2626;padding:1rem;">${j.message||'查询失败'}</td></tr>`; return; }
   const pg=j.pagination||{page:1,total_pages:1,total_items:0};
   recPage=pg.page; recTotalPages=pg.total_pages;
   document.getElementById('resultMeta').innerHTML=`快照 <b>${j.date||'—'}</b>　|　命中 <b>${pg.total_items}</b> 只（含分布快照 + RNN 预测 + 板块趋势）`;
   document.getElementById('pageInfo').innerText=`第 ${recPage} / ${recTotalPages} 页`;
   document.getElementById('prevBtn').disabled=recPage<=1;
   document.getElementById('nextBtn').disabled=recPage>=recTotalPages;
-  if(!j.data.length){ body.innerHTML='<tr><td colspan="24" style="text-align:center;color:#9ca3af;padding:1rem;">无符合条件的股票</td></tr>'; return; }
+  if(!j.data.length){ body.innerHTML='<tr><td colspan="27" style="text-align:center;color:#9ca3af;padding:1rem;">无符合条件的股票</td></tr>'; return; }
 
-  body.innerHTML=j.data.map(r=>{
+  lastRows = j.data;
+  renderRows(lastRows);   // 服务端已按 sort 全量排序+分页，前端直接渲染
+}
+
+/* ===== 派生「速度」指标：振幅均值 ÷ 长度均值 ×16 = %/交易日（A股每日16根15m）=====
+   上涨/下跌分开算、与当前方向无关，便于在任意行直接比较买入候选。 */
+const BARS_PER_DAY = 16;
+function _speed(ampMean, lenMean){            // 返回 %/交易日 的数值，或 null
+  if(ampMean==null || lenMean==null || lenMean<=0) return null;
+  return ampMean / lenMean * BARS_PER_DAY * 100;   // amp 是小数，×100 转百分比
+}
+function _ratio(au,lu,ad,ld){                  // 攻守比 = 上涨速度/下跌速度
+  const u=_speed(au,lu), d=_speed(ad,ld);
+  return (u!=null && d!=null && d>0) ? u/d : null;
+}
+function fmtSpeed(ampMean, lenMean){
+  const v=_speed(ampMean,lenMean);
+  return v==null ? '<span style="color:#9ca3af;">—</span>'
+                 : `<span style="font-family:monospace;">${v.toFixed(2)}</span>`;
+}
+function fmtRatioCell(au,lu,ad,ld){
+  const r=_ratio(au,lu,ad,ld);
+  if(r==null) return '<span style="color:#9ca3af;">—</span>';
+  const c = r>=1.2?'#16a34a':(r<0.8?'#dc2626':'#6b7280');
+  const w = r>=1.5?'700':'400';
+  return `<span style="font-family:monospace;color:${c};font-weight:${w};">${r.toFixed(2)}</span>`;
+}
+
+/* ===== 速度三列排序（服务端全量排序：排的是「现有全部数据」而非当前页）===== */
+let lastRows=[], sortKey=null, sortAsc=false;
+function onSortClick(key){
+  if(sortKey===key) sortAsc=!sortAsc; else { sortKey=key; sortAsc=false; }  // 默认降序(大在前)
+  updateSortArrows();
+  recPage=1; runFilter();           // 重新向后端请求：全量排序 + 回到第 1 页
+}
+function updateSortArrows(){
+  document.querySelectorAll('#ssTable th.ss-sort').forEach(th=>{
+    if(!th.dataset.base) th.dataset.base=th.textContent;
+    th.textContent = th.dataset.base + (th.dataset.sk===sortKey ? (sortAsc?' ▲':' ▼') : '');
+  });
+}
+
+function renderRows(rows){
+  const body=document.getElementById('ssBody');
+  body.innerHTML=rows.map(r=>{
     const up=r.current_direction===1;
     const dirChip = r.current_direction===1?'<span style="color:#b91c1c;font-weight:600;">↑涨</span>':r.current_direction===-1?'<span style="color:#15803d;font-weight:600;">↓跌</span>':'<span style="color:#9ca3af;">·</span>';
     const boardCell = r.board_name?`<a href="/board_data/board?code=${r.board_code}" target="_blank" style="color:#2563eb;text-decoration:none;">${r.board_name}</a>`:'<span style="color:#9ca3af;">—</span>';
@@ -268,6 +346,9 @@ async function runFilter(){
       <td style="text-align:right;">${fmtZ(up?r.v5_up_z:r.v5_dn_z)}</td>
       <td style="text-align:right;">${fmtPct(up?r.v5_up_pct:r.v5_dn_pct)}</td>
       <td style="text-align:right;color:#6b7280;">${(up?r.len_up_n:r.len_dn_n)||'—'}</td>
+      <td style="text-align:right;background:#fffdf5;">${fmtSpeed(r.amp_up_mean, r.len_up_mean)}</td>
+      <td style="text-align:right;background:#fffdf5;">${fmtSpeed(r.amp_dn_mean, r.len_dn_mean)}</td>
+      <td style="text-align:right;background:#fffdf5;">${fmtRatioCell(r.amp_up_mean, r.len_up_mean, r.amp_dn_mean, r.len_dn_mean)}</td>
       <td>${rnn.trends||'—'}</td>
       <td style="text-align:center;">${rnn.trade_point==null?'<span style="color:#9ca3af;">—</span>':signalCell(rnn.trade_point)}</td>
       <td style="text-align:right;">${rnn.predict_cycle_length??'—'}</td>
@@ -310,11 +391,78 @@ async function addSelectedToPool(){
   }catch(e){ alert('加入失败：'+e); }
 }
 
+/* ===== 数据新鲜度兜底：快照落后于最新交易日时，按情况自动重算或提示 =====
+   主用「收盘流水线」(scripts/Others/daily_close_pipeline.py + 任务计划程序)；
+   这里是没跑到时的页面兜底——但会先确认行情数据本身是否已更新，避免拿旧 15m
+   算出一个"今日日期、实为旧数据"的误导快照。 */
+let _autoComputeTried = false;
+function showBanner(html, kind){
+  const b=document.getElementById('freshBanner');
+  const sty={info:'background:#eff6ff;border:1px solid #bfdbfe;color:#1e40af;',
+             warn:'background:#fffbeb;border:1px solid #fde68a;color:#92400e;',
+             ok:'background:#f0fdf4;border:1px solid #bbf7d0;color:#166534;'}[kind]||'';
+  b.style.cssText='margin-bottom:1rem;padding:.7rem 1rem;border-radius:8px;font-size:.85rem;'+sty;
+  b.innerHTML=html; b.style.display='block';
+}
+function hideBanner(){ document.getElementById('freshBanner').style.display='none'; }
+
+async function checkFreshness(){
+  const sel=document.getElementById('dateSel');
+  const newest=(sel.options.length && sel.options[0].value) ? sel.options[0].value : null;
+  const td=await fetchJson('{{ url_for("download_data_bp.check_trading_day") }}');
+  if(!td || !td.success) return;
+  const ltd=td.latest_trading_date;                 // 最新交易日
+
+  // 关键：先看「行情数据本身」是否更新到最新交易日（快照日期=计算当天，不能反映数据新旧）
+  if(!td.data_up_to_date){
+    // 行情未更到最新交易日：重算只会拿旧 15m 算出"今日日期、实为旧数据"的误导快照 → 诚实提示
+    showBanner(`⚠️ <b>行情数据尚未更新到最新交易日 ${ltd}</b>（已下载到 ${td.last_end_date||'—'}）。`+
+      `此时即使重算，快照内容仍是旧数据。请先跑收盘流水线(下载→转15m)或 `+
+      `<a href="{{ url_for('download_data_bp.download_minute_data_page') }}" style="color:inherit;text-decoration:underline;">去下载行情</a>，再回来；`+
+      `<a href="javascript:void(0)" onclick="autoRecompute()" style="color:inherit;text-decoration:underline;">仍按现有数据重算快照</a>。`, 'warn');
+    return;
+  }
+
+  // 行情已是最新：若快照日期落后于最新交易日，说明只是没重算 → 自动重算（便宜、本地、不联网）
+  if(!newest || (ltd && newest < ltd)){
+    if(_autoComputeTried) return; _autoComputeTried=true;
+    showBanner(`快照 <b>${newest||'无'}</b> 落后于最新交易日 <b>${ltd}</b>，行情已更新——正在后台重算今日快照…`, 'info');
+    await autoRecompute();
+  }else{
+    hideBanner();                                   // 行情+快照都最新，安静
+  }
+}
+
+async function autoRecompute(){
+  try{
+    await fetch('{{ url_for("screener.api_compute") }}', {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({merge_below:getMerge()})});  // 409=已在跑，忽略，下面直接轮询
+  }catch(e){}
+  await pollCompute();
+}
+async function pollCompute(){
+  for(let i=0;i<150;i++){                              // 最长 ~5min，足够 ~380 只
+    await new Promise(s=>setTimeout(s,2000));
+    const st=await fetchJson('{{ url_for("screener.api_compute_status") }}');
+    const d=(st&&st.data)||{};
+    if(d.running){ showBanner(`后台重算今日快照中… ${d.done||0}/${d.total||0}（ok ${d.ok||0} / 空 ${d.empty||0} / 失败 ${d.fail||0}）`, 'info'); continue; }
+    showBanner(`今日快照已重算完成（ok ${d.ok||0} / 空 ${d.empty||0} / 失败 ${d.fail||0}），已刷新列表。`, 'ok');
+    await loadDates(); await runFilter();
+    setTimeout(hideBanner, 5000);
+    return;
+  }
+  showBanner('后台重算超时，请稍后手动刷新或检查日志。', 'warn');
+}
+
 (async function init(){
   renderStrategyList('');
+  document.querySelectorAll('#ssTable th.ss-sort').forEach(th=>
+    th.addEventListener('click', ()=>onSortClick(th.dataset.sk)));
   await loadDates();
   syncMetricDisabled();
   await runFilter();
+  checkFreshness();   // 不 await：列表先出来，新鲜度提示在后台异步判断
 })();
 </script>
 {% endblock %}

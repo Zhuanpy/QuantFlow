@@ -59,7 +59,7 @@
         <div id="overviewMeta" style="color:#6b7280;font-size:.85rem;margin-top:.2rem;">加载中…</div>
       </div>
       <div style="display:flex;gap:1.25rem;align-items:flex-start;flex-wrap:wrap;">
-        <div><div style="color:#6b7280;font-size:.75rem;">最新收盘</div><div id="overviewPrice" style="font-size:1.35rem;font-weight:600;color:#2563eb;">—</div></div>
+        <div><div id="overviewPriceLabel" style="color:#6b7280;font-size:.75rem;">最新收盘</div><div id="overviewPrice" style="font-size:1.35rem;font-weight:600;color:#2563eb;">—</div></div>
         <div><div style="color:#6b7280;font-size:.75rem;">流通市值</div><div id="overviewCircCap" style="font-size:1.35rem;font-weight:600;color:#0891b2;">—</div></div>
         <div>
           <div style="color:#6b7280;font-size:.75rem;">交易状态</div>
@@ -128,20 +128,21 @@
       口径: 周期内极值 vs 起点 = |(上涨 high.max / 下跌 low.min − 起点价) / 起点价|（真·周期最大摆动）；当前振幅越接近右侧，趋势剩余空间越小
     </div>
     <div style="display:flex;gap:1rem;flex-wrap:wrap;">
-      <div style="flex:1;min-width:320px;">
+      <div id="ampColUp" style="flex:1;min-width:320px;">
         <div style="display:flex;flex-direction:column;align-items:stretch;gap:.2rem;margin-bottom:.4rem;">
           <h3 style="margin:0;font-size:.95rem;color:#b91c1c;">↑ 上涨周期</h3>
           <span id="ampDistInfoUp" style="color:#6b7280;font-size:.8rem;"></span>
         </div>
         <div id="ampDistChartUp" style="width:100%;height:300px;">加载中…</div>
       </div>
-      <div style="flex:1;min-width:320px;">
+      <div id="ampColDn" style="flex:1;min-width:320px;">
         <div style="display:flex;flex-direction:column;align-items:stretch;gap:.2rem;margin-bottom:.4rem;">
           <h3 style="margin:0;font-size:.95rem;color:#15803d;">↓ 下跌周期</h3>
           <span id="ampDistInfoDn" style="color:#6b7280;font-size:.8rem;"></span>
         </div>
         <div id="ampDistChartDn" style="width:100%;height:300px;">加载中…</div>
       </div>
+      <div id="ampEstimatePanel" style="flex:1;min-width:300px;border-left:1px dashed #e5e7eb;padding-left:1rem;"></div>
     </div>
   </div>
 
@@ -151,20 +152,21 @@
       含今天 in-progress 周期；当前根数越靠右，趋势已走的时间越长
     </div>
     <div style="display:flex;gap:1rem;flex-wrap:wrap;">
-      <div style="flex:1;min-width:320px;">
+      <div id="cycleColUp" style="flex:1;min-width:320px;">
         <div style="display:flex;flex-direction:column;align-items:stretch;gap:.2rem;margin-bottom:.4rem;">
           <h3 style="margin:0;font-size:.95rem;color:#b91c1c;">↑ 上涨周期</h3>
           <span id="cycleDistInfoUp" style="color:#6b7280;font-size:.8rem;"></span>
         </div>
         <div id="cycleDistChartUp" style="width:100%;height:300px;">加载中…</div>
       </div>
-      <div style="flex:1;min-width:320px;">
+      <div id="cycleColDn" style="flex:1;min-width:320px;">
         <div style="display:flex;flex-direction:column;align-items:stretch;gap:.2rem;margin-bottom:.4rem;">
           <h3 style="margin:0;font-size:.95rem;color:#15803d;">↓ 下跌周期</h3>
           <span id="cycleDistInfoDn" style="color:#6b7280;font-size:.8rem;"></span>
         </div>
         <div id="cycleDistChartDn" style="width:100%;height:300px;">加载中…</div>
       </div>
+      <div id="cycleEstimatePanel" style="flex:1;min-width:300px;border-left:1px dashed #e5e7eb;padding-left:1rem;"></div>
     </div>
   </div>
 
@@ -251,23 +253,51 @@ async function loadOverview() {
   if (!j.success) { document.getElementById('overviewMeta').innerText = j.message || '加载失败'; return; }
   const d = j.data;
   document.getElementById('stockName').innerText = d.name || '—';
-  document.getElementById('overviewMeta').innerText =
-    `${d.classification || '—'}${d.latest_date ? ' · ' + d.latest_date : ''}`;
-  document.getElementById('overviewPrice').innerText = d.latest_close != null ? d.latest_close.toFixed(2) : '—';
   document.getElementById('overviewCircCap').innerText = d.circ_cap != null ? (d.circ_cap / 1e8).toFixed(1) + ' 亿' : '—';
 
   // 交易状态 badge
   renderTradeBadge(d.trade_info);
-  // 记录持仓信息 + 日线收盘（作为现价回退值），再用最新可得价重画焦点面板
+  // 记录持仓信息 + 日线收盘/日期（作为盘中无 live 时的回退值）
   TRADE_INFO = d.trade_info;
   LATEST_DAILY_CLOSE = d.latest_close;
+  LATEST_DAILY_DATE = d.latest_date;
+  CLASSIFICATION = d.classification;
+  refreshOverviewHeader();   // 价格/日期统一在这里渲染（盘中优先 live）
   renderTradePanels();
+}
+
+// 顶部「最新收盘/最新价 + 日期」统一渲染：盘中有 live K 线时优先显示实时价与其时间戳，
+// 否则回退到日线收盘价与日期，避免停留在昨天收盘。
+function refreshOverviewHeader() {
+  const live = LATEST_LIVE_CLOSE;
+  const price = live != null ? live : LATEST_DAILY_CLOSE;
+  const date = (live != null && LATEST_LIVE_DATE) ? LATEST_LIVE_DATE.slice(0, 16)
+                                                   : LATEST_DAILY_DATE;
+  const priceEl = document.getElementById('overviewPrice');
+  if (priceEl) priceEl.innerText = price != null ? price.toFixed(2) : '—';
+  const labelEl = document.getElementById('overviewPriceLabel');
+  if (labelEl) labelEl.innerText = (live != null && HAS_LIVE_BARS) ? '最新价（盘中）' : '最新收盘';
+  const metaEl = document.getElementById('overviewMeta');
+  if (metaEl) metaEl.innerText = `${CLASSIFICATION || '—'}${date ? ' · ' + date : ''}`;
 }
 
 // 持仓/计划面板的"现价"：盘中优先用 live K 线最新一根的 close，没有时回退日线收盘
 let TRADE_INFO = null;
 let LATEST_DAILY_CLOSE = null;
+let LATEST_DAILY_DATE = null;
 let LATEST_LIVE_CLOSE = null;
+let LATEST_LIVE_DATE = null;
+let HAS_LIVE_BARS = false;
+let CLASSIFICATION = null;
+
+// 右侧预估面板用：当前趋势态势 + 当前方向的振幅/长度正态拟合 + 用户选的分位
+let CURRENT_TREND = null;   // 来自 15m 接口 current_trend（起点价/现价/已走根数/起始时间等）
+let AMP_FIT = null;         // {n,mean,std,min,max}：当前方向「周期振幅(%)」拟合
+let LEN_FIT = null;         // {n,mean,std,min,max}：当前方向「周期长度(根)」拟合
+let CUR_DIR = 0;            // 当前趋势方向 1=涨 / -1=跌 / 0=未知
+let AMP_PCT = 50;           // 振幅预估分位（%）
+let LEN_PCT = 50;           // 长度预估分位（%）
+let KLINE = null;           // 15m K 线数据缓存，供预估路径重绘复用
 let UP_AMP_MEDIAN = null;   // 上涨周期振幅中位数（小数，如 0.085）
 let DN_AMP_MEDIAN = null;   // 下跌周期振幅中位数
 function curPrice() {
@@ -287,10 +317,44 @@ function renderTradeBadge(t) {
   el.innerHTML = `<span style="display:inline-block;padding:.15rem .55rem;background:${c.bg};color:${c.fg};border-radius:9999px;font-size:.83rem;">${t.status_label || '—'}</span>`;
 }
 
+// 空仓时的「预估买入价」参考：
+//   下跌趋势 → 当前下跌段的预估底部（与下方振幅分位联动）
+//   其它趋势 → 现价 ×(1 − 下跌振幅中位数)，作为"若回调"的参考买点
+function buyRef(latestClose) {
+  const pt = projAmpTarget();
+  if (pt && pt.down) {
+    return { price: pt.target, label: `预估底部 P${AMP_PCT}`,
+             basis: `起点 ${pt.start.toFixed(2)} ×(1 − ${pt.projAmp.toFixed(2)}%)` };
+  }
+  if (DN_AMP_MEDIAN != null && latestClose != null) {
+    return { price: latestClose * (1 - DN_AMP_MEDIAN),
+             label: `回调参考 · 下跌中位 ${(DN_AMP_MEDIAN*100).toFixed(1)}%`,
+             basis: `现价 ${latestClose.toFixed(2)} ×(1 − ${(DN_AMP_MEDIAN*100).toFixed(1)}%)` };
+  }
+  return null;
+}
+
 function renderHoldingPanel(t, latestClose) {
   const el = document.getElementById('holdingBody');
   if (!t || !t.holding || !t.quantity) {
-    el.innerHTML = '<span style="color:#9ca3af;font-size:.88rem;">未持仓 — 盘中视角对持仓股最有价值，建议先在 trade_plan 建仓后再用</span>';
+    const ref = buyRef(latestClose);
+    let block = '';
+    if (ref) {
+      let dist = '';
+      if (latestClose != null) {
+        dist = latestClose > ref.price
+          ? `现价距买点还需跌 <b style="color:#15803d;font-family:monospace;">${((latestClose - ref.price)/latestClose*100).toFixed(2)}%</b>`
+          : `<b style="color:#b91c1c;">✅ 现价已进入预估买入区</b>`;
+      }
+      block = `
+        <div style="border-top:1px dashed #e5e7eb;margin-top:.5rem;padding-top:.5rem;">
+          <div style="color:#6b7280;font-size:.76rem;">预估买入价 <span style="color:#9ca3af;font-size:.72rem;">(${ref.label})</span></div>
+          <div style="font-family:monospace;font-size:1.2rem;font-weight:700;color:#15803d;">¥${ref.price.toFixed(2)}</div>
+          <div style="font-size:.8rem;margin-top:.1rem;">${dist}</div>
+          <div style="font-size:.71rem;color:#9ca3af;margin-top:.2rem;">${ref.basis}；分位见下方「振幅」滑块</div>
+        </div>`;
+    }
+    el.innerHTML = '<span style="color:#9ca3af;font-size:.84rem;">未持仓（空仓）</span>' + block;
     return;
   }
   // 浮盈用当前价(现价)实时重算，保证和"现价"一致；不再用服务端按日线收盘算的旧值
@@ -425,29 +489,17 @@ async function load15m() {
     (segs.length ? `&nbsp;|&nbsp;波段 <span style="color:#dc2626;font-weight:600;">■ 涨 ${up}</span> / <span style="color:#16a34a;font-weight:600;">■ 跌 ${dn}</span>` : '');
 
   renderTrendPanel(j.current_trend);
+  CURRENT_TREND = j.current_trend;          // 供右侧预估面板用
+  renderEstimateAmp(); renderEstimateLen(); // 趋势态势更新后刷新预估（拟合到位才算）
 
-  // 用 live K 线最新一根 close 作为"现价"，刷新持仓/计划面板（盘中实时价）
+  // 用 live K 线最新一根 close 作为"现价"，刷新顶部价格与持仓/计划面板（盘中实时价）
   LATEST_LIVE_CLOSE = data.length ? data[data.length - 1].close : null;
+  LATEST_LIVE_DATE = data.length ? data[data.length - 1].date : null;
+  HAS_LIVE_BARS = (j.live_bars || 0) > 0;
+  refreshOverviewHeader();
   renderTradePanels();
 
   const x = data.map(r => r.date);
-  const sname = data.map(r => r.signal_name || '—');
-  const shapes = segs.map(s => ({
-    type:'rect', xref:'x', yref:'paper',
-    x0: s.start_idx - 0.5, x1: s.end_idx + 0.5,
-    y0: 0.48, y1: 1.0,
-    fillcolor: s.direction > 0 ? 'rgba(220,38,38,0.10)' : 'rgba(22,163,74,0.10)',
-    line:{width:0}, layer:'below',
-  }));
-  // 今天 live 段额外加竖线圈出来
-  if (j.live_bars && j.live_bars > 0 && data.length) {
-    const liveStartIdx = data.length - j.live_bars;
-    shapes.push({
-      type:'line', xref:'x', yref:'paper',
-      x0: liveStartIdx - 0.5, x1: liveStartIdx - 0.5, y0:0, y1:1,
-      line:{color:'#ea580c', width:1.5, dash:'dash'}, layer:'above',
-    });
-  }
 
   const lows = data.map(r => r.low).filter(v => v > 0);
   const highs = data.map(r => r.high).filter(v => v > 0);
@@ -508,9 +560,49 @@ async function load15m() {
     }
   } catch (e) { /* 无交易记录或表不存在时静默跳过 */ }
 
+  // 数据与叠加层（成交标注/竖线）存起来，预估变化时可不重新拉数据直接重绘
+  KLINE = { data, segs, j, x, tradeTraces, tradeShapes, yRange };
+  drawKline();
+}
+
+// 用 KLINE 缓存重绘 15m 图（含淡灰预估路径）。预估分位变化时只调它，不重新 fetch。
+function drawKline() {
+  if (!KLINE || typeof Plotly === 'undefined') return;
+  const { data, segs, j, x, tradeTraces, tradeShapes } = KLINE;
+  let yRange = KLINE.yRange ? KLINE.yRange.slice() : null;
+  const sname = data.map(r => r.signal_name || '—');
+
+  // 波段背景色块
+  const shapes = segs.map(s => ({
+    type:'rect', xref:'x', yref:'paper',
+    x0: s.start_idx - 0.5, x1: s.end_idx + 0.5, y0: 0.48, y1: 1.0,
+    fillcolor: s.direction > 0 ? 'rgba(220,38,38,0.10)' : 'rgba(22,163,74,0.10)',
+    line:{width:0}, layer:'below',
+  }));
+  // 今天 live 段竖线
+  if (j.live_bars && j.live_bars > 0 && data.length) {
+    const liveStartIdx = data.length - j.live_bars;
+    shapes.push({ type:'line', xref:'x', yref:'paper',
+      x0: liveStartIdx - 0.5, x1: liveStartIdx - 0.5, y0:0, y1:1,
+      line:{color:'#ea580c', width:1.5, dash:'dash'}, layer:'above' });
+  }
+
   const dif = data.map(r => r.dif), dea = data.map(r => r.dea), macd = data.map(r => r.macd);
   const macdColors = macd.map(v => v == null ? '#cbd5e1' : (v >= 0 ? '#dc2626' : '#16a34a'));
   const emaShort = data.map(r => r.ema_short), emaMid = data.map(r => r.ema_mid), emaLong = data.map(r => r.ema_long);
+
+  // 压缩底部时间刻度：完整日期时间仍用于分类/悬浮，刻度只显示精简的「MM-DD HH:MM」
+  const _tickEvery = Math.max(1, Math.ceil(x.length / 12));
+  const _tickvals = [], _ticktext = [];
+  x.forEach((v, i) => { if (i % _tickEvery === 0) { _tickvals.push(v); _ticktext.push((v || '').slice(5, 16)); } });
+
+  // 预估虚拟路径（淡灰，区别于真实 K 线）
+  const proj = buildProjection(data);
+  let projTraces = [];
+  if (proj) {
+    projTraces = proj.traces;
+    if (yRange) yRange = [Math.min(yRange[0], proj.yLo), Math.max(yRange[1], proj.yHi)];
+  }
 
   Plotly.newPlot('kChart15m', [
     {type:'candlestick', x, open:data.map(r=>r.open), close:data.map(r=>r.close),
@@ -527,10 +619,11 @@ async function load15m() {
     {type:'bar', x, y:macd, name:'MACD', xaxis:'x', yaxis:'y3', marker:{color:macdColors}, showlegend:false, hovertemplate:'MACD %{y:.3f}<extra></extra>'},
     {type:'scatter', mode:'lines', x, y:dif, name:'DIF', xaxis:'x', yaxis:'y3', line:{color:'#2563eb', width:1.2}, connectgaps:false, hovertemplate:'DIF %{y:.3f}<extra></extra>'},
     {type:'scatter', mode:'lines', x, y:dea, name:'DEA', xaxis:'x', yaxis:'y3', line:{color:'#f59e0b', width:1.2}, connectgaps:false, hovertemplate:'DEA %{y:.3f}<extra></extra>'},
-    ...tradeTraces
+    ...tradeTraces,
+    ...projTraces
   ], {
-    margin:{t:10,r:30,l:60,b:40},
-    xaxis:{rangeslider:{visible:true, thickness:0.04, bgcolor:'#fff7ed', bordercolor:'#fed7aa', borderwidth:1}, type:'category', tickangle:-45, nticks:12},
+    margin:{t:10,r:30,l:60,b:18},
+    xaxis:{rangeslider:{visible:true, thickness:0.03, bgcolor:'#fff7ed', bordercolor:'#fed7aa', borderwidth:1}, type:'category', tickangle:-45, tickvals:_tickvals, ticktext:_ticktext, tickfont:{size:10}},
     yaxis:{domain:[0.48,1.0], title:'价格', ...(yRange?{range:yRange,autorange:false}:{autorange:true})},
     yaxis2:{domain:[0.30,0.46], title:'量'},
     yaxis3:{domain:[0.0,0.28], title:'MACD', zeroline:true, zerolinecolor:'#9ca3af', zerolinewidth:1},
@@ -538,6 +631,77 @@ async function load15m() {
     legend:{orientation:'h', y:1.02, x:0},
     shapes: shapes.concat(tradeShapes),
   }, {responsive:true});
+}
+
+// 字符串哈希 → 32 位整数（给随机种子用，保证同一标的/同一末根时的预估形态稳定）
+function _hash(s) { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
+// mulberry32 种子随机：同种子→同序列，避免每次拖滑块预估K线乱跳
+function _seededRand(seed) {
+  let t = seed >>> 0;
+  return function () {
+    t += 0x6D2B79F5;
+    let x = Math.imul(t ^ (t >>> 15), 1 | t);
+    x ^= x + Math.imul(x ^ (x >>> 7), 61 | x);
+    return ((x ^ (x >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// 预估虚拟 K 线：从最后一根真实 K 线，按"预估剩余根数"沿交易时段延伸，
+// 用「布朗桥」随机游走生成 OHLC（末根收在预估目标价），淡灰色与真实红绿区分。
+// 振幅分位决定目标价、长度分位决定延伸多少根；两个滑块任一变动都会重画。
+function buildProjection(data) {
+  if (!data || !data.length) return null;
+  const pt = projAmpTarget();
+  if (!pt || !LEN_FIT || !CURRENT_TREND) return null;
+  const elapsed = CURRENT_TREND.bars_in_trend != null ? CURRENT_TREND.bars_in_trend : 0;
+  const projLen = Math.max(1, Math.round(LEN_FIT.mean + invNorm(LEN_PCT / 100) * LEN_FIT.std));
+  let N = projLen - elapsed;
+  if (N < 1) return null;                 // 已超过预估长度则不画
+  N = Math.min(N, 200);                    // 安全上限
+  const last = data[data.length - 1];
+  const lastClose = last.close, target = pt.target;
+
+  // 随机：用末根时间 + 根数做种子，形态稳定且随估计变化
+  const rand = _seededRand(_hash(last.date) ^ (N * 2654435761));
+  const gauss = () => { let u = 0, v = 0; while (u === 0) u = rand(); while (v === 0) v = rand(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); };
+
+  // 累积随机游走 w，再做桥接：末值正好落到 target（线性漂移 + 归零的噪声）
+  const w = [0]; for (let i = 1; i <= N; i++) w.push(w[i - 1] + gauss());
+  const wN = w[N] || 1e-9;
+  const perBarVol = Math.max(Math.abs(target - lastClose) / Math.max(N, 1) * 1.4, lastClose * 0.003);
+
+  const xs = [], open = [], high = [], low = [], close = [];
+  let prev = lastClose;
+  for (let i = 1; i <= N; i++) {
+    xs.push(_fmtDT(addTradingBars(last.date, i)));
+    const lin = lastClose + (target - lastClose) * (i / N);
+    const bridge = (w[i] - wN * (i / N)) * perBarVol;
+    let c = lin + bridge;
+    if (i === N) c = target;               // 末根收在预估目标价
+    const o = prev;
+    const wick = perBarVol * (0.4 + rand() * 0.7);
+    open.push(o); close.push(c);
+    high.push(Math.max(o, c) + wick);
+    low.push(Math.min(o, c) - wick);
+    prev = c;
+  }
+
+  const GRAY = '#cbd5e1';
+  const candle = {
+    type:'candlestick', x:xs, open, high, low, close, name:'预估K线', xaxis:'x', yaxis:'y',
+    increasing:{line:{color:GRAY, width:1}, fillcolor:'rgba(203,213,225,0.55)'},
+    decreasing:{line:{color:GRAY, width:1}, fillcolor:'rgba(203,213,225,0.25)'},
+    hovertemplate:'预估<br>O %{open:.2f} H %{high:.2f}<br>L %{low:.2f} C %{close:.2f}<extra></extra>',
+  };
+  const endTrace = {
+    type:'scatter', mode:'markers+text', x:[xs[N - 1]], y:[target], name:'预估目标',
+    xaxis:'x', yaxis:'y', text:[`预估${pt.down ? '底' : '顶'} ${target.toFixed(2)}`],
+    textposition: pt.down ? 'bottom center' : 'top center', textfont:{color:'#94a3b8', size:11},
+    marker:{color:'rgba(148,163,184,0.9)', size:8, symbol:'circle-open', line:{color:'#94a3b8', width:2}}, hoverinfo:'text',
+  };
+  const yLo = Math.min(lastClose, target, ...low);
+  const yHi = Math.max(lastClose, target, ...high);
+  return { traces:[candle, endTrace], yLo, yHi };
 }
 
 function renderTrendPanel(ct) {
@@ -605,23 +769,33 @@ async function loadCycles() {
   const all = d.filter(c => c.cycle_length_max != null);
   const current = all.length ? all[all.length - 1] : null;
 
-  // 周期长度分布
-  const lenOpt = { value: c => c.cycle_length_max, xtitle: 'CycleLengthMax (根)',
-                   numfmt: '.0f', fmt: v => `${Math.round(v)} 根` };
-  renderDist(all.filter(c => c.direction > 0), distUpEl, distUpInfo,
-             current && current.direction > 0 ? current : null, '#dc2626', lenOpt);
-  renderDist(all.filter(c => c.direction < 0), distDnEl, distDnInfo,
-             current && current.direction < 0 ? current : null, '#16a34a', lenOpt);
-
-  // 振幅分布：用 amplitude_extreme（周期内极值 vs 起点 = 真·周期振幅），
-  // 不是 amplitude_close（末根 close vs 起点 = 周期涨跌幅）
+  // 振幅分布数据（用 amplitude_extreme：周期内极值 vs 起点 = 真·周期振幅）
   const ampAll = d.filter(c => c.amplitude_extreme != null);
   const ampCur = ampAll.length ? ampAll[ampAll.length - 1] : null;
+
+  // 盘中模式：底部分布图只显示「当前趋势」方向那一边，另一边整列隐藏。
+  // 当前方向取最新一段周期的 direction；取不到时（0/未知）回退为两边都显示。
+  const curDir = (current && current.direction) || (ampCur && ampCur.direction) || 0;
+  const showUp = curDir >= 0;   // >0 只看上涨；==0 两边都显示
+  const showDn = curDir <= 0;   // <0 只看下跌；==0 两边都显示
+  const _toggle = (id, on) => { const e = document.getElementById(id); if (e) e.style.display = on ? '' : 'none'; };
+  _toggle('ampColUp', showUp);   _toggle('ampColDn', showDn);
+  _toggle('cycleColUp', showUp); _toggle('cycleColDn', showDn);
+
+  // 周期长度分布（只渲染显示中的那一边）
+  const lenOpt = { value: c => c.cycle_length_max, xtitle: 'CycleLengthMax (根)',
+                   numfmt: '.0f', fmt: v => `${Math.round(v)} 根` };
+  if (showUp) renderDist(all.filter(c => c.direction > 0), distUpEl, distUpInfo,
+             current && current.direction > 0 ? current : null, '#dc2626', lenOpt);
+  if (showDn) renderDist(all.filter(c => c.direction < 0), distDnEl, distDnInfo,
+             current && current.direction < 0 ? current : null, '#16a34a', lenOpt);
+
+  // 振幅分布（只渲染显示中的那一边）
   const ampOpt = { value: c => c.amplitude_extreme != null ? c.amplitude_extreme * 100 : null,
                    xtitle: '周期振幅 (%)', numfmt: '.2f', fmt: v => `${v.toFixed(2)}%` };
-  renderDist(ampAll.filter(c => c.direction > 0), ampUpEl, ampUpInfo,
+  if (showUp) renderDist(ampAll.filter(c => c.direction > 0), ampUpEl, ampUpInfo,
              ampCur && ampCur.direction > 0 ? ampCur : null, '#dc2626', ampOpt);
-  renderDist(ampAll.filter(c => c.direction < 0), ampDnEl, ampDnInfo,
+  if (showDn) renderDist(ampAll.filter(c => c.direction < 0), ampDnEl, ampDnInfo,
              ampCur && ampCur.direction < 0 ? ampCur : null, '#16a34a', ampOpt);
 
   // 存上涨/下跌振幅中位数（仅已完成周期）供"按分布建议"用
@@ -634,6 +808,170 @@ async function loadCycles() {
   UP_AMP_MEDIAN = median(ampAll.filter(c => c.direction > 0 && c.completed === true).map(c => c.amplitude_extreme));
   DN_AMP_MEDIAN = median(ampAll.filter(c => c.direction < 0 && c.completed === true).map(c => c.amplitude_extreme));
   renderTradePanels();  // 中位数到位后刷新计划面板（建议值可算了）
+
+  // ---- 右侧预估面板：当前方向的振幅/长度正态拟合 ----
+  CUR_DIR = curDir > 0 ? 1 : curDir < 0 ? -1 : 0;
+  AMP_FIT = CUR_DIR ? computeFit(ampAll.filter(c => Math.sign(c.direction) === CUR_DIR),
+                                 c => c.amplitude_extreme != null ? c.amplitude_extreme * 100 : null) : null;
+  LEN_FIT = CUR_DIR ? computeFit(all.filter(c => Math.sign(c.direction) === CUR_DIR),
+                                 c => c.cycle_length_max) : null;
+  buildEstimateShells();
+  renderEstimateAmp();
+  renderEstimateLen();
+  renderTradePanels();   // 拟合就绪后刷新"买卖标准"面板（空仓+下跌→建议买入价）
+  drawKline();           // 拟合就绪后在 15m 图上补画淡灰预估路径
+}
+
+// 与 renderDist 同口径的正态拟合（已完成周期，取最近 60 个）。样本不足返回 null。
+function computeFit(subset, valOf) {
+  const hist = subset.filter(c => c.completed === true).slice(-60).map(valOf).filter(v => v != null);
+  const n = hist.length;
+  if (n < 8) return null;
+  const mean = hist.reduce((a, b) => a + b, 0) / n;
+  const std = Math.sqrt(hist.reduce((a, b) => a + (b - mean) ** 2, 0) / n);
+  return { n, mean, std, min: Math.min(...hist), max: Math.max(...hist) };
+}
+
+// 标准正态分位点（Acklam 近似），p∈(0,1) → z
+function invNorm(p) {
+  if (p <= 0) return -38; if (p >= 1) return 38;
+  const a = [-3.969683028665376e+1, 2.209460984245205e+2, -2.759285104469687e+2, 1.383577518672690e+2, -3.066479806614716e+1, 2.506628277459239e+0];
+  const b = [-5.447609879822406e+1, 1.615858368580409e+2, -1.556989798598866e+2, 6.680131188771972e+1, -1.328068155288572e+1];
+  const c = [-7.784894002430293e-3, -3.223964580411365e-1, -2.400758277161838e+0, -2.549732539343734e+0, 4.374664141464968e+0, 2.938163982698783e+0];
+  const d = [7.784695709041462e-3, 3.224671290700398e-1, 2.445134137142996e+0, 3.754408661907416e+0];
+  const pl = 0.02425, ph = 1 - pl; let q, r;
+  if (p < pl) { q = Math.sqrt(-2 * Math.log(p)); return (((((c[0]*q+c[1])*q+c[2])*q+c[3])*q+c[4])*q+c[5]) / ((((d[0]*q+d[1])*q+d[2])*q+d[3])*q+1); }
+  if (p <= ph) { q = p - 0.5; r = q*q; return (((((a[0]*r+a[1])*r+a[2])*r+a[3])*r+a[4])*r+a[5])*q / (((((b[0]*r+b[1])*r+b[2])*r+b[3])*r+b[4])*r+1); }
+  q = Math.sqrt(-2 * Math.log(1 - p)); return -(((((c[0]*q+c[1])*q+c[2])*q+c[3])*q+c[4])*q+c[5]) / ((((d[0]*q+d[1])*q+d[2])*q+d[3])*q+1);
+}
+
+// A 股 15m K 线的 16 个收盘时点（每交易日）
+const BAR_TIMES = ['09:45','10:00','10:15','10:30','10:45','11:00','11:15','11:30',
+                   '13:15','13:30','13:45','14:00','14:15','14:30','14:45','15:00'];
+
+// 从某根 15m K 线时间，按交易时段（跳过午休/周末，不计节假日）前推 N 根，返回 Date
+function addTradingBars(startStr, bars) {
+  if (!startStr) return null;
+  const m = String(startStr).match(/(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/);
+  if (!m) return null;
+  const hhmm = `${m[4]}:${m[5]}`;
+  let idx = BAR_TIMES.indexOf(hhmm);
+  if (idx < 0) { idx = BAR_TIMES.findIndex(t => t >= hhmm); if (idx < 0) idx = BAR_TIMES.length - 1; }
+  const total = idx + Math.max(0, Math.round(bars));
+  let dayAdvance = Math.floor(total / 16);
+  const slot = total % 16;
+  const date = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  let advanced = 0;
+  while (advanced < dayAdvance) {
+    date.setDate(date.getDate() + 1);
+    const dow = date.getDay();
+    if (dow !== 0 && dow !== 6) advanced++;
+  }
+  const [eh, em] = BAR_TIMES[slot].split(':').map(Number);
+  date.setHours(eh, em, 0, 0);
+  return date;
+}
+
+function _fmtDT(d) {
+  if (!d || isNaN(d)) return '—';
+  const p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+// 构建左右两块预估面板的外壳（含分位滑块），只在 loadCycles 时重建一次
+function buildEstimateShells() {
+  const dirTxt = CUR_DIR > 0 ? '上涨' : CUR_DIR < 0 ? '下跌' : '—';
+  const shell = (sliderId, labelId, pct, onInput, curId, estId, title) =>
+      `<div style="font-size:.85rem;">`
+    + `  <div style="font-weight:700;margin-bottom:.4rem;color:#374151;">📍 当前（${dirTxt}趋势）</div>`
+    + `  <div id="${curId}" style="color:#6b7280;line-height:1.8;margin-bottom:.7rem;">—</div>`
+    + `  <div style="font-weight:700;margin-bottom:.35rem;color:#374151;">🎯 ${title}</div>`
+    + `  <div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.55rem;">`
+    + `    <span style="color:#6b7280;font-size:.8rem;white-space:nowrap;">分布分位</span>`
+    + `    <input id="${sliderId}" type="range" min="5" max="95" step="5" value="${pct}" oninput="${onInput}(this.value)" style="flex:1;accent-color:#4f46e5;">`
+    + `    <span id="${labelId}" style="font-family:monospace;min-width:3rem;text-align:right;font-weight:600;color:#4f46e5;">P${pct}</span>`
+    + `  </div>`
+    + `  <div id="${estId}" style="line-height:1.9;">—</div>`
+    + `</div>`;
+  const ampEl = document.getElementById('ampEstimatePanel');
+  if (ampEl) ampEl.innerHTML = shell('ampPctSlider','ampPctLabel',AMP_PCT,'onAmpPct','ampCurBlock','ampEstBlock','预估幅度与目标价');
+  const lenEl = document.getElementById('cycleEstimatePanel');
+  if (lenEl) lenEl.innerHTML = shell('lenPctSlider','lenPctLabel',LEN_PCT,'onLenPct','lenCurBlock','lenEstBlock','预估周期与结束时间');
+}
+
+function onAmpPct(v) { AMP_PCT = +v; const l = document.getElementById('ampPctLabel'); if (l) l.innerText = 'P' + v; renderEstimateAmp(); renderTradePanels(); drawKline(); }
+function onLenPct(v) { LEN_PCT = +v; const l = document.getElementById('lenPctLabel'); if (l) l.innerText = 'P' + v; renderEstimateLen(); drawKline(); }
+
+// 当前方向、所选分位下，整段周期的预估振幅(%) 与目标价（上涨=顶 / 下跌=底）。
+// 振幅预估面板与"空仓建议买入价"共用，保证两处口径一致。
+function projAmpTarget() {
+  if (!AMP_FIT || !CURRENT_TREND || CURRENT_TREND.start_price == null) return null;
+  const start = Number(CURRENT_TREND.start_price);
+  const down = CUR_DIR < 0;
+  const projAmp = Math.max(0, AMP_FIT.mean + invNorm(AMP_PCT / 100) * AMP_FIT.std);
+  const target = down ? start * (1 - projAmp / 100) : start * (1 + projAmp / 100);
+  return { down, start, projAmp, target };
+}
+
+// 振幅 → 目标价
+function renderEstimateAmp() {
+  const cur = document.getElementById('ampCurBlock'), est = document.getElementById('ampEstBlock');
+  if (!cur || !est) return;
+  if (!AMP_FIT) { cur.innerHTML = '<span style="color:#9ca3af;">样本不足或无当前趋势</span>'; est.innerHTML = ''; return; }
+  const t = CURRENT_TREND;
+  if (!t) { cur.innerHTML = '<span style="color:#9ca3af;">等待趋势数据…</span>'; est.innerHTML = ''; return; }
+  const down = CUR_DIR < 0;
+  const start = t.start_price != null ? Number(t.start_price) : null;
+  const now = t.last_price != null ? Number(t.last_price) : LATEST_LIVE_CLOSE;
+  cur.innerHTML =
+      `起点价 <b style="font-family:monospace;color:#374151;">${start != null ? start.toFixed(2) : '—'}</b>`
+    + `　现价 <b style="font-family:monospace;color:#374151;">${now != null ? now.toFixed(2) : '—'}</b><br>`
+    + `已走振幅 <b style="color:${down?'#15803d':'#b91c1c'};font-family:monospace;">${t.amplitude_pct != null ? t.amplitude_pct + '%' : '—'}</b>`;
+
+  // 该分位对应的「整段周期振幅(%)」与目标价（与"建议买入价"同源）
+  const pt = projAmpTarget();
+  const projAmp = pt.projAmp;
+  const target = pt.target;
+  let moveTxt = '';
+  if (target != null && now != null) {
+    const mv = down ? (now - target) / now * 100 : (target - now) / now * 100;
+    moveTxt = mv > 0.05
+      ? `较现价还需${down?'跌':'涨'} <b style="color:${down?'#15803d':'#b91c1c'};font-family:monospace;">${mv.toFixed(2)}%</b>`
+      : `<b style="color:#9a3412;">现价已达/超过该分位目标</b>`;
+  }
+  est.innerHTML =
+      `P${AMP_PCT} → 预估整段振幅 <b style="font-family:monospace;color:#4f46e5;">${projAmp.toFixed(2)}%</b>`
+    + `　<span style="color:#9ca3af;font-size:.78rem;">(均值 ${AMP_FIT.mean.toFixed(2)}% / σ ${AMP_FIT.std.toFixed(2)})</span><br>`
+    + `预估目标价 <b style="font-family:monospace;font-size:1.05rem;color:${down?'#15803d':'#b91c1c'};">${target != null ? '¥'+target.toFixed(2) : '—'}</b><br>`
+    + moveTxt;
+}
+
+// 周期长度 → 结束时间
+function renderEstimateLen() {
+  const cur = document.getElementById('lenCurBlock'), est = document.getElementById('lenEstBlock');
+  if (!cur || !est) return;
+  if (!LEN_FIT) { cur.innerHTML = '<span style="color:#9ca3af;">样本不足或无当前趋势</span>'; est.innerHTML = ''; return; }
+  const t = CURRENT_TREND;
+  if (!t) { cur.innerHTML = '<span style="color:#9ca3af;">等待趋势数据…</span>'; est.innerHTML = ''; return; }
+  const elapsed = t.bars_in_trend != null ? t.bars_in_trend : 0;
+  cur.innerHTML =
+      `已持续 <b style="font-family:monospace;color:#374151;">${elapsed}</b> 根<br>`
+    + `起始 <span style="font-family:monospace;">${t.started_at || '—'}</span><br>`
+    + `末根 <span style="font-family:monospace;">${LATEST_LIVE_DATE ? LATEST_LIVE_DATE.slice(0,16) : '—'}</span>`;
+
+  let projLen = LEN_FIT.mean + invNorm(LEN_PCT / 100) * LEN_FIT.std;
+  projLen = Math.max(1, Math.round(projLen));
+  const remaining = Math.max(0, projLen - elapsed);
+  const endDate = addTradingBars(LATEST_LIVE_DATE, remaining);
+  const tradingDays = (remaining / 16).toFixed(1);
+  est.innerHTML =
+      `P${LEN_PCT} → 预估整段长度 <b style="font-family:monospace;color:#4f46e5;">${projLen}</b> 根`
+    + `　<span style="color:#9ca3af;font-size:.78rem;">(均值 ${LEN_FIT.mean.toFixed(0)} / σ ${LEN_FIT.std.toFixed(0)})</span><br>`
+    + (remaining > 0
+        ? `预估还剩 <b style="font-family:monospace;">${remaining}</b> 根（约 ${tradingDays} 交易日）<br>`
+          + `预估结束 <b style="font-family:monospace;font-size:1.05rem;color:#4f46e5;">${_fmtDT(endDate)}</b>`
+          + `<div style="color:#9ca3af;font-size:.72rem;margin-top:.2rem;">按交易时段顺推，不计节假日停牌</div>`
+        : `<b style="color:#9a3412;">当前已达/超过该分位长度</b>`);
 }
 
 // 单方向某指标的正态分布：对 subset 拟合 + 直方图 + 标当前周期

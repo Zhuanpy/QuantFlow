@@ -669,13 +669,11 @@ def compute_one(board_code: str, record_date: date) -> BoardScoreResult:
 def compute_one_mtf(board_code: str, record_date: date) -> BoardScoreResult:
     """单板块多周期综合打分。total_score=综合分、stage=日K阶段、confidence=多周期调整后。
 
-    notes 写入 MTF 明细 JSON（综合/各周期分、方向、一致性），供详情页与审阅追溯。
+    notes 留空，仅供手工备注；MTF 明细不再写入（综合/各子分已有独立列）。
     """
-    import json as _json
     mtf = score_multi_timeframe(board_code, record_date)
     daily_df = _load_board_daily(board_code, record_date)
     actual_date = daily_df['date'].iloc[-1] if not daily_df.empty else record_date
-    notes = '[v1-mtf] ' + _json.dumps(mtf['breakdown'], ensure_ascii=False)
     return BoardScoreResult(
         board_code=board_code,
         record_date=actual_date if mtf['error'] is None else record_date,
@@ -687,7 +685,6 @@ def compute_one_mtf(board_code: str, record_date: date) -> BoardScoreResult:
         signal=mtf['signal'],
         snapshot=mtf['snapshot'],
         error=mtf['error'],
-        notes=notes,
     )
 
 
@@ -758,7 +755,7 @@ def compute_and_persist(board_codes: List[str], record_date: date) -> dict:
                 atr=r.snapshot.get('atr'),
                 formula_version=FORMULA_VERSION,
                 is_manual=False,
-                notes=r.notes,
+                # notes 不传：保留用户手工备注，重算时不覆盖
             )
             ok += 1
             updated.append(code)

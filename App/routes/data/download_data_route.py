@@ -754,6 +754,28 @@ def download_file():
                     _mark_recent_attempts_failed(stock_code, download_max_days,
                                                  f'[STEP3] 异常: {e}')
 
+                # ===== STEP 3.5: 板块日K的 15m 兜底补当天 =====
+                # 结构性修复：STEP1 的日K在 STEP3 生成 15m 之前执行，所以当
+                # push2his 被 RST、日K只能走 15m 兜底时，读到的是"还没更新的旧
+                # 15m 文件"，永远落后一轮、补不上当天。这里在 15m 已落盘之后再用
+                # 新 15m 聚合一次日K并 upsert，专门补上当天/近窗缺口（仅板块）。
+                if is_board:
+                    try:
+                        from App.codes.downloads.eastmoney.board_downloader import BoardDownloader
+                        from App.models.data.StockDaily import save_daily_stock_data_to_sql
+                        from App.models.data.DailyTaskStatus import DailyTaskStatus
+
+                        bd = BoardDownloader._board_daily_from_15m(stock_code)
+                        if bd is not None and not bd.empty:
+                            bd['date'] = pd.to_datetime(bd['date'])
+                            save_daily_stock_data_to_sql(stock_code, bd)
+                            for d in bd['date'].dt.date.unique():
+                                DailyTaskStatus.mark_task(stock_code, d, 'is_daily_processed')
+                            logging.info(f"[STEP3.5] {stock_code} 15m聚合补板块日K {len(bd)} 条"
+                                         f"（最新 {bd['date'].max().date()}）")
+                    except Exception as e:
+                        logging.warning(f"[STEP3.5] {stock_code} 15m聚合补日K失败: {e}")
+
                 # 更新完成计数和进度
                 with download_lock:
                     pipeline_completed_count += 1

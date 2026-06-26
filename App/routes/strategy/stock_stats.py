@@ -219,14 +219,26 @@ def api_list():
         q = q.filter(StockDistSnapshot.stock_code.in_(rnn_codes or {'__none__'}))
 
     # ---- 排序 + 分页 ----
-    if is_up:
-        q = q.order_by(StockDistSnapshot.len_up_pct.is_(None),
-                       StockDistSnapshot.len_up_pct.desc())
+    S = StockDistSnapshot
+    # 派生「速度」表达式（与前端一致：振幅均值/长度均值；攻守比=上涨速度/下跌速度）。
+    # 除零/空 → SQL 得 NULL，统一靠 NULLS-LAST(.is_(None) 在前) 沉底。
+    sort_exprs = {
+        'spd_up': S.amp_up_mean / S.len_up_mean,
+        'spd_dn': S.amp_dn_mean / S.len_dn_mean,
+        'ratio': (S.amp_up_mean * S.len_dn_mean) / (S.len_up_mean * S.amp_dn_mean),
+    }
+    sort_key = (request.args.get('sort') or '').strip()
+    if sort_key in sort_exprs:
+        expr = sort_exprs[sort_key]
+        asc = (request.args.get('sort_dir') or 'desc').lower() == 'asc'
+        q = q.order_by(expr.is_(None), expr.asc() if asc else expr.desc(),
+                       S.stock_code.asc())
+    elif is_up:
+        q = q.order_by(S.len_up_pct.is_(None), S.len_up_pct.desc())
     elif is_dn:
-        q = q.order_by(StockDistSnapshot.len_dn_pct.is_(None),
-                       StockDistSnapshot.len_dn_pct.desc())
+        q = q.order_by(S.len_dn_pct.is_(None), S.len_dn_pct.desc())
     else:
-        q = q.order_by(StockDistSnapshot.stock_code.asc())
+        q = q.order_by(S.stock_code.asc())
 
     try:
         page = max(1, int(request.args.get('page', 1)))
