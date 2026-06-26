@@ -127,12 +127,6 @@ def register_blueprints(app):
     except ImportError as e:
         print(f"警告: 无法导入 daily_viewer_route 蓝图: {e}")
 
-    try:
-        from App.routes.data.viewer_15m_route import viewer_15m_bp
-        app.register_blueprint(viewer_15m_bp)
-    except ImportError as e:
-        print(f"警告: 无法导入 viewer_15m_route 蓝图: {e}")
-
     # 任务状态看板路由
     try:
         from App.routes.data.task_status_route import task_status_bp

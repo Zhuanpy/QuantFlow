@@ -497,8 +497,6 @@
                 const icon = r[f] ? '<span class="tag-done">V</span>' : '<span class="tag-pending">-</span>';
                 if (f === 'is_1m_downloaded') {
                     return `<td><a href="/data_viewer?stock=${r.stock_code}" target="_blank" class="task-link" title="查看1m数据">${icon}</a></td>`;
-                } else if (f === 'is_15m_generated') {
-                    return `<td><a href="/viewer_15m?stock=${r.stock_code}" target="_blank" class="task-link" title="查看15m数据">${icon}</a></td>`;
                 }
                 return `<td>${icon}</td>`;
             }).join('');
