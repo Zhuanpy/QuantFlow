@@ -46,8 +46,20 @@ _FILTERABLE_NUMERIC = {
 
 # ---------------- 页面 ----------------
 @screener_bp.route('/')
+@screener_bp.route('/current')
 def page():
-    return render_template('strategy/dist_filter.html',
+    """当前周期趋势筛选：按当下未完成周期方向 + 当前相对历史的分位筛选。
+
+    同时挂在 `/` 与 `/current`：`/current` 与 `/history` 路径对称，`/` 作为默认别名。
+    """
+    return render_template('strategy/dist_filter.html', mode='current',
+                           filterable_fields=sorted(_FILTERABLE_NUMERIC))
+
+
+@screener_bp.route('/history')
+def page_history():
+    """历史周期趋势筛选：不限当下方向，按某方向历史已完成周期的均值（振幅/长度/量能）筛选。"""
+    return render_template('strategy/dist_filter.html', mode='history',
                            filterable_fields=sorted(_FILTERABLE_NUMERIC))
 
 

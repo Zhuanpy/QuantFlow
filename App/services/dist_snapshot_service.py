@@ -14,9 +14,10 @@
   - 当前周期：取最新 cycle（无论是否完成），按其方向归到对应指标
     * 如果它在 inprogress_sidx 集合里（源数据里跨过 snapshot_date 才结束）
       → cycle_length_max 用 len(g)-1 重算（不引入未来）
-  - amplitude_max 用 close 口径：(本周期最后一根 close − StartPrice)/StartPrice 取绝对值
-    与 stock_detail_route.api_cycles 的 amp_close 字段保持一致，
+  - amplitude_max 用极值口径：周期内 high.max(上涨)/low.min(下跌) 对比 flip 行起点价取绝对值
+    与 stock_detail_route.api_cycles 的 amplitude_max(=amp_extreme) 保持一致，
     确保 /screener/ 和 /stock/ 详情页 renderDist 算出来的分位/z 是同一个序列。
+    （注：合并口径 _build_cycles_merged 一直就是极值口径，此处统一原始口径）
 """
 from __future__ import annotations
 
@@ -78,6 +79,8 @@ def _build_cycles(df: pd.DataFrame, as_of_ts: Optional[pd.Timestamp]) -> list:
     has_v5 = 'Cycle1mVolMax5' in df.columns
     has_sp = 'StartPrice' in df.columns
     has_close = 'close' in df.columns
+    has_high = 'high' in df.columns
+    has_low = 'low' in df.columns
 
     cycles = []
     for sidx, g in df.groupby('SignalStartIndex', sort=True):
@@ -97,20 +100,33 @@ def _build_cycles(df: pd.DataFrame, as_of_ts: Optional[pd.Timestamp]) -> list:
             clen = pd.to_numeric(g['CycleLengthMax'], errors='coerce').max()
             clen = None if pd.isna(clen) else int(clen)
 
-        # 周期振幅（close 口径，绝对值）：(本周期最后一根 close − StartPrice) / StartPrice
-        # 已完成周期 → 周期收盘价对比上一极值（实际兑现）
-        # 进行中周期 → 最新 close 对比上一极值（当前 P&L）
-        # 与 stock_detail_route.api_cycles 的 amp_close 一致，避免 screener 和详情页量纲不同
+        # 周期振幅（极值口径，绝对值）：周期内 high.max(上涨) / low.min(下跌) 对比起点价。
+        # 与 stock_detail_route.api_cycles 的 amplitude_max(=amp_extreme) 完全一致，
+        # 确保 /screener/ 历史页与 /stock/ 详情页分布图同口径（极值 ≥ 收盘）。
+        # 起点价用 flip 行(组首)的 StartPrice 首个非空值——不要 iloc[-1]，周期边界处
+        # StartPrice 会被相邻周期的 ffill 值污染，抓到下一周期起点导致振幅算错。
         amp = None
-        if has_close and has_sp:
-            sp_series = pd.to_numeric(g['StartPrice'], errors='coerce').dropna()
+        sp_at_flip = None
+        if has_sp:
+            _sp = pd.to_numeric(g['StartPrice'], errors='coerce').dropna()
+            if len(_sp):
+                sp_at_flip = float(_sp.iloc[0])
+        if sp_at_flip and sp_at_flip != 0 and has_high and has_low:
+            hi = float(pd.to_numeric(g['high'], errors='coerce').max())
+            lo = float(pd.to_numeric(g['low'], errors='coerce').min())
+            if direction > 0:
+                amp = abs(round((hi - sp_at_flip) / sp_at_flip, 4))
+            elif direction < 0:
+                amp = abs(round((lo - sp_at_flip) / sp_at_flip, 4))
+            else:
+                amp = round(max(abs((hi - sp_at_flip) / sp_at_flip),
+                                abs((lo - sp_at_flip) / sp_at_flip)), 4)
+        # 回退1：无 high/low 时退到收盘口径 (末根 close vs 起点)
+        if amp is None and has_close and sp_at_flip and sp_at_flip != 0:
             close_series = pd.to_numeric(g['close'], errors='coerce').dropna()
-            if len(sp_series) and len(close_series):
-                sp = float(sp_series.iloc[-1])
-                cl = float(close_series.iloc[-1])
-                if sp != 0:
-                    amp = abs(round((cl - sp) / sp, 4))
-        # 回退：旧数据无 close/StartPrice 时退到 CycleAmplitudeMax 极值口径
+            if len(close_series):
+                amp = abs(round((float(close_series.iloc[-1]) - sp_at_flip) / sp_at_flip, 4))
+        # 回退2：旧数据无 close/StartPrice 时退到 CycleAmplitudeMax 极值口径
         if amp is None and has_amp:
             a = pd.to_numeric(g['CycleAmplitudeMax'], errors='coerce').dropna()
             amp = float(a.abs().max()) if len(a) else None

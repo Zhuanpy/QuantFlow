@@ -3,7 +3,14 @@
 <div style="padding:1.25rem;max-width:1400px;margin:0 auto;">
 
   <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem;margin-bottom:.5rem;">
-    <h1 style="margin:0;font-size:1.4rem;">分布快照筛选</h1>
+    <div style="display:flex;align-items:baseline;gap:.75rem;flex-wrap:wrap;">
+      <h1 style="margin:0;font-size:1.4rem;">{{ '历史周期趋势筛选' if mode == 'history' else '当前周期趋势筛选' }}</h1>
+      <!-- 两个页面互切：当前=看当下在涨/跌；历史=看历史均值特征 -->
+      <nav style="display:flex;gap:.35rem;font-size:.82rem;">
+        <a href="/screener/current" style="padding:.2rem .6rem;border-radius:9999px;text-decoration:none;{{ 'background:#2563eb;color:#fff;' if mode != 'history' else 'background:#f3f4f6;color:#374151;' }}">当前周期</a>
+        <a href="/screener/history" style="padding:.2rem .6rem;border-radius:9999px;text-decoration:none;{{ 'background:#7c3aed;color:#fff;' if mode == 'history' else 'background:#f3f4f6;color:#374151;' }}">历史周期</a>
+      </nav>
+    </div>
     <div style="display:flex;align-items:center;gap:.6rem;flex-wrap:wrap;">
       <span style="color:#6b7280;font-size:.85rem;">口径:</span>
       <select id="mergeSel" onchange="onMergeChange()" title="原始=每个信号周期独立统计；合并<X%=把振幅小于阈值的中间小周期与前后同向周期合并成大周期后再统计(去噪)"
@@ -42,13 +49,53 @@
 
       <div class="scr-fld">
         <span class="scr-lbl">方向</span>
-        <select id="dirSel" class="scr-sel" onchange="onDirChange()">
-          <option value="">不限</option>
-          <option value="up">↑ 上涨</option>
-          <option value="down">↓ 下跌</option>
+        {% if mode == 'history' %}
+        <select id="dirSel" class="scr-sel" onchange="onDirChange()" title="按哪个方向的历史已完成周期统计筛选（不限当下方向）">
+          <option value="up">↑ 历史上涨趋势</option>
+          <option value="down">↓ 历史下跌趋势</option>
         </select>
+        {% else %}
+        <select id="dirSel" class="scr-sel" onchange="onDirChange()" title="按当下未完成周期方向筛选">
+          <option value="">不限</option>
+          <option value="up">↑ 当前上涨</option>
+          <option value="down">↓ 当前下跌</option>
+        </select>
+        {% endif %}
       </div>
 
+      {% if mode == 'history' %}
+      <!-- 历史口径：三个「平均值 ≥ 阈值」下限筛选（振幅% / 长度根 / 量能万），留空即不限 -->
+      <div class="scr-fld">
+        <span class="scr-lbl" title="同方向历史已完成周期的平均振幅下限，例：≥10%">平均振幅 ≥</span>
+        <div style="display:flex;align-items:center;gap:.25rem;">
+          <input id="ampMeanTarget" type="number" step="any" min="0" placeholder="如 10"
+                 class="scr-inp scr-meanin" style="width:72px;"
+                 oninput="runFilterDebounced()" onkeydown="if(event.key==='Enter')runFilter()">
+          <span style="color:#6b7280;font-size:.8rem;">%</span>
+        </div>
+      </div>
+
+      <div class="scr-fld">
+        <span class="scr-lbl" title="同方向历史已完成周期的平均长度下限(15m K线根数)">平均长度 ≥</span>
+        <div style="display:flex;align-items:center;gap:.25rem;">
+          <input id="lenMeanTarget" type="number" step="any" min="0" placeholder="如 50"
+                 class="scr-inp scr-meanin" style="width:72px;"
+                 oninput="runFilterDebounced()" onkeydown="if(event.key==='Enter')runFilter()">
+          <span style="color:#6b7280;font-size:.8rem;">根</span>
+        </div>
+      </div>
+
+      <div class="scr-fld">
+        <span class="scr-lbl" title="同方向历史已完成周期的平均量能峰值下限(1m成交量top5，万)">平均量能 ≥</span>
+        <div style="display:flex;align-items:center;gap:.25rem;">
+          <input id="volMeanTarget" type="number" step="any" min="0" placeholder="如 100"
+                 class="scr-inp scr-meanin" style="width:72px;"
+                 oninput="runFilterDebounced()" onkeydown="if(event.key==='Enter')runFilter()">
+          <span style="color:#6b7280;font-size:.8rem;">万</span>
+        </div>
+      </div>
+      {% else %}
+      <!-- 当前口径：长度/振幅/能量 的「当前 vs 历史」分位下拉 -->
       <div class="scr-fld">
         <span class="scr-lbl">长度</span>
         <select id="simpleLen" class="scr-sel scr-metric" onchange="runFilter()" disabled>
@@ -78,6 +125,7 @@
           <option value="le0.3">缩量（≤30%）</option>
         </select>
       </div>
+      {% endif %}
 
       <div class="scr-fld">
         <span class="scr-lbl">板块趋势</span>
@@ -114,9 +162,17 @@
       <button onclick="resetFilter()" class="scr-btn">重置</button>
     </div>
 
+    {% if mode == 'history' %}
     <div style="color:#9ca3af;font-size:.78rem;margin-top:.5rem;">
-      长度 / 振幅 / 能量 按「当前方向」的历史分位筛选，需<b>先选方向</b>；样本不足 8 个自动排除。
+      <b style="color:#7c3aed;">历史周期趋势</b>：不限个股当下在涨还是跌，只按所选方向<b>历史已完成周期的均值下限</b>筛选（振幅 / 长度 / 量能，<b>≥ 阈值</b>，留空即不限）。
+      例：方向「历史上涨趋势」+ 平均振幅 ≥ 10%，可找出"上涨时通常摆动 10% 以上"的股票。指标列展示所选方向的历史统计；样本不足 8 个自动排除。
     </div>
+    {% else %}
+    <div style="color:#9ca3af;font-size:.78rem;margin-top:.5rem;">
+      <b>当前周期趋势</b>：按个股<b>当下未完成周期</b>的方向，以及"当前值相对历史的分位"筛选（长度 / 振幅 / 能量，需<b>先选方向</b>）。
+      想按历史均值（如"上涨平均振幅≈10%"）筛选，请切到 <a href="/screener/history" style="color:#7c3aed;">历史周期</a> 页。样本不足 8 个自动排除。
+    </div>
+    {% endif %}
 
     <details style="margin-top:.6rem;">
       <summary style="cursor:pointer;font-size:.82rem;color:#2563eb;user-select:none;">高级：自定义字段 AND 条件 / 预设</summary>
@@ -192,25 +248,45 @@
     <div style="flex:1 1 auto;min-width:0;background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:.5rem;overflow-x:auto;">
     <table style="width:100%;border-collapse:collapse;font-size:.85rem;">
       <thead style="background:#f9fafb;position:sticky;top:0;">
+        {% if mode == 'history' %}
         <tr>
           <th style="padding:.5rem;text-align:left;">代码</th>
           <th style="padding:.5rem;text-align:left;">名称</th>
           <th style="padding:.5rem;text-align:center;">方向</th>
-          <th style="padding:.5rem;text-align:right;" title="长度：当前已走根数 / 历史均值（同方向已完成周期）">长度 当前/均值</th>
+          <th style="padding:.5rem;text-align:right;" title="该方向历史已完成周期的平均长度（15m K线根数）">长度 均值</th>
+          <th style="padding:.5rem;text-align:right;" title="长度标准差：越小说明每次该方向周期长度越稳定">长度 标准差</th>
+          <th style="padding:.5rem;text-align:right;" title="该方向历史已完成周期的平均振幅（涨跌幅）">振幅 均值</th>
+          <th style="padding:.5rem;text-align:right;" title="振幅标准差：越小说明每次该方向摆动幅度越一致">振幅 标准差</th>
+          <th style="padding:.5rem;text-align:right;" title="该方向历史已完成周期的平均量能峰值（万）">量能 均值</th>
+          <th style="padding:.5rem;text-align:right;" title="量能标准差（万）">量能 标准差</th>
+          <th style="padding:.5rem;text-align:right;" title="参与统计的该方向历史已完成周期样本数；&lt;8 不计入">样本 n</th>
+          <th style="padding:.5rem;text-align:left;" title="该股所属东财行业板块">板块</th>
+          <th style="padding:.5rem;text-align:left;" title="所属板块的最新趋势阶段 / 综合分（来自板块趋势打分）">板块趋势</th>
+        </tr>
+        {% else %}
+        <tr>
+          <th style="padding:.5rem;text-align:left;">代码</th>
+          <th style="padding:.5rem;text-align:left;">名称</th>
+          <th style="padding:.5rem;text-align:center;">方向</th>
+          <th style="padding:.5rem;text-align:right;" title="长度：当前未完成周期已走根数">长度 当前</th>
+          <th style="padding:.5rem;text-align:right;" title="长度：历史均值（同方向已完成周期）">长度 均值</th>
           <th style="padding:.5rem;text-align:right;" title="长度 z 分数：(当前−均值)/标准差。正=比平均长，负=比平均短">长度 z</th>
           <th style="padding:.5rem;text-align:right;" title="长度经验分位：历史中 ≤ 当前 的占比。100% = 历史最长">长度 分位</th>
-          <th style="padding:.5rem;text-align:right;" title="振幅：当前周期已涨跌幅 / 历史均值（同方向已完成周期）">振幅 当前/均值</th>
+          <th style="padding:.5rem;text-align:right;" title="振幅：当前周期已涨/跌幅">振幅 当前</th>
+          <th style="padding:.5rem;text-align:right;" title="振幅：历史均值（同方向已完成周期涨跌幅）">振幅 均值</th>
           <th style="padding:.5rem;text-align:right;" title="振幅 z 分数：(当前涨跌幅−历史均值)/标准差">振幅 z</th>
           <th style="padding:.5rem;text-align:right;" title="振幅经验分位：100% = 历史最大涨跌幅">振幅 分位</th>
-          <th style="padding:.5rem;text-align:right;" title="量能：当前周期 1m 量峰值 / 历史均值（万）">量能 当前/均值</th>
+          <th style="padding:.5rem;text-align:right;" title="量能：当前周期 1m 量峰值（万）">量能 当前</th>
+          <th style="padding:.5rem;text-align:right;" title="量能：历史均值（万）">量能 均值</th>
           <th style="padding:.5rem;text-align:right;" title="量能 z 分数：周期内 1m 成交量峰值，偏离历史均值的标准差倍数">量能 z</th>
           <th style="padding:.5rem;text-align:right;" title="量能经验分位：100% = 历史最大放量">量能 分位</th>
           <th style="padding:.5rem;text-align:right;" title="参与拟合的历史已完成同向周期样本数；&lt;8 不算 z/分位">样本 n</th>
           <th style="padding:.5rem;text-align:left;" title="该股所属东财行业板块">板块</th>
           <th style="padding:.5rem;text-align:left;" title="所属板块的最新趋势阶段 / 综合分（来自板块趋势打分）">板块趋势</th>
         </tr>
+        {% endif %}
       </thead>
-      <tbody id="resultBody"><tr><td colspan="15" style="text-align:center;color:#9ca3af;padding:1rem;">点击"筛选"开始</td></tr></tbody>
+      <tbody id="resultBody"><tr><td colspan="{{ 12 if mode == 'history' else 18 }}" style="text-align:center;color:#9ca3af;padding:1rem;">点击"筛选"开始</td></tr></tbody>
     </table>
     </div><!-- /左：结果表 -->
 
@@ -281,6 +357,9 @@ const FIELD_LABELS = {
   len_up_z:   '上涨周期长度 z 分数',  len_dn_z:   '下跌周期长度 z 分数',
   amp_up_pct: '上涨振幅 经验分位',     amp_dn_pct: '下跌振幅 经验分位',
   amp_up_z:   '上涨振幅 z 分数',       amp_dn_z:   '下跌振幅 z 分数',
+  amp_up_mean:'上涨平均振幅',          amp_dn_mean:'下跌平均振幅',
+  len_up_mean:'上涨平均长度',          len_dn_mean:'下跌平均长度',
+  v5_up_mean: '上涨平均量能',          v5_dn_mean: '下跌平均量能',
   v5_up_pct:  '上涨量能 v5 经验分位',  v5_dn_pct:  '下跌量能 v5 经验分位',
   v5_up_z:    '上涨量能 v5 z 分数',    v5_dn_z:    '下跌量能 v5 z 分数',
   len_up_n:   '上涨样本数',            len_dn_n:   '下跌样本数',
@@ -291,52 +370,108 @@ async function fetchJson(url) {
   catch (e) { return { success:false, message:e.message }; }
 }
 
-// ---------------- 简易筛选：方向 + 长度/振幅/能量 下拉 ----------------
+// 页面口径（模板注入）：'current'=当前周期趋势页 / 'history'=历史周期趋势页
+const MODE = '{{ mode }}';
+const IS_HIST = MODE === 'history';
+const NCOL = IS_HIST ? 12 : 18;   // 结果表列数（历史页精简：只看均值/标准差/样本）
+
+// ---------------- 简易筛选：方向 + 指标 ----------------
 const SIMPLE_METRICS = [['simpleLen', 'len'], ['simpleAmp', 'amp'], ['simpleVol', 'v5']];
 
-// 指标下拉只在选了方向后可用（分位是按 up/dn 分组的）
+// 解析方向选择（两页 dirSel 都只有 ''|up|down）：
+//   metricDir  : 'up'|'dn'|null —— 指标/均值用哪组方向列
+//   currentDir : 'up'|'down'|'' —— 是否约束「当前周期方向」（仅当前页发给后端）
+//   isHist     : 历史页恒 true（不约束当下，结果表按所选方向展示列）
+function dirState() {
+  const v = document.getElementById('dirSel').value;
+  const metricDir = v === 'up' ? 'up' : v === 'down' ? 'dn' : null;
+  return {
+    v, isHist: IS_HIST, metricDir,
+    currentDir: IS_HIST ? '' : (v === 'up' ? 'up' : v === 'down' ? 'down' : ''),
+  };
+}
+
+// 当前页：分位下拉需先选方向才可用。历史页：均值输入始终可用（方向必选），无需处理。
 function syncMetricDisabled() {
-  const dir = document.getElementById('dirSel').value;
+  const { metricDir } = dirState();
   document.querySelectorAll('.scr-metric').forEach(s => {
-    s.disabled = !dir;
-    if (!dir) s.value = '';
+    s.disabled = !metricDir;
+    if (!metricDir) s.value = '';
   });
+}
+
+// 均值输入按键即触发太频繁，做个 400ms 防抖
+let _ampMeanTimer = null;
+function runFilterDebounced() {
+  clearTimeout(_ampMeanTimer);
+  _ampMeanTimer = setTimeout(runFilter, 400);
 }
 
 function onDirChange() { syncMetricDisabled(); runFilter(); }
 
-// 3 个指标下拉 + 方向 → 后端字段条件（分位口径 + 自动排除小样本 n<8）
+// 方向 + 指标 → 后端字段条件（自动排除小样本 n<8）
+//   当前页：长度/振幅/能量 分位；历史页：振幅/长度/量能 均值区间
 function simpleConds() {
-  const dir = document.getElementById('dirSel').value;
-  if (!dir) return [];
-  const d = dir === 'up' ? 'up' : 'dn';
+  const { metricDir: d } = dirState();
+  if (!d) return [];
   const out = [];
-  SIMPLE_METRICS.forEach(([selId, metric]) => {
-    const v = document.getElementById(selId).value;   // '' | geX | leX
-    if (!v) return;
-    const op = v.startsWith('ge') ? 'min' : 'max';
-    out.push(`${metric}_${d}_pct_${op}=${v.slice(2)}`);
-    out.push(`${metric}_${d}_n_min=8`);
-  });
+  if (!IS_HIST) {
+    SIMPLE_METRICS.forEach(([selId, metric]) => {
+      const el = document.getElementById(selId);
+      const v = el ? el.value : '';                       // '' | geX | leX
+      if (!v) return;
+      const op = v.startsWith('ge') ? 'min' : 'max';
+      out.push(`${metric}_${d}_pct_${op}=${v.slice(2)}`);
+      out.push(`${metric}_${d}_n_min=8`);
+    });
+  } else {
+    // 均值下限：振幅按 %→小数；长度按根(原值)；量能按 万→原值
+    addMeanCond(out, 'ampMeanTarget', `amp_${d}_mean`, v => v / 100);
+    addMeanCond(out, 'lenMeanTarget', `len_${d}_mean`, v => v);
+    addMeanCond(out, 'volMeanTarget', `v5_${d}_mean`, v => v * 1e4);
+  }
   return out;
 }
 
-// 简易筛选写进 URL 的可读编码（len/amp/vol = geX|leX），便于分享/刷新
+// 「均值 ≥ 阈值」→ field_min（按 scale 换算单位），并带 n≥8 样本守卫；留空即不加
+function addMeanCond(out, tgtId, field, scale) {
+  const te = document.getElementById(tgtId);
+  if (!te || te.value === '') return;
+  const v = parseFloat(te.value);
+  if (isNaN(v)) return;
+  out.push(`${field}_min=${Math.max(0, scale(v))}`);
+  out.push(`${field.replace('_mean', '_n')}_min=8`);
+}
+
+// 简易筛选写进 URL 的可读编码，便于分享/刷新
+//   当前页：len/amp/vol = geX|leX ；历史页：ampmean/lenmean/volmean（均值下限）
+const MEAN_URL = [['amp', 'ampMeanTarget'],
+                  ['len', 'lenMeanTarget'],
+                  ['vol', 'volMeanTarget']];
 function simpleUrlParts() {
   const out = [];
-  [['simpleLen', 'len'], ['simpleAmp', 'amp'], ['simpleVol', 'vol']].forEach(([selId, key]) => {
-    const v = document.getElementById(selId).value;
-    if (v) out.push(`${key}=${v}`);
-  });
+  if (!IS_HIST) {
+    [['simpleLen', 'len'], ['simpleAmp', 'amp'], ['simpleVol', 'vol']].forEach(([selId, key]) => {
+      const el = document.getElementById(selId);
+      if (el && el.value) out.push(`${key}=${el.value}`);
+    });
+  } else {
+    MEAN_URL.forEach(([key, tgtId]) => {
+      const te = document.getElementById(tgtId);
+      if (te && te.value !== '') out.push(`${key}mean=${te.value}`);
+    });
+  }
   return out;
 }
 
 function resetFilter() {
-  document.getElementById('dirSel').value = '';
+  // 当前页方向默认不限；历史页方向必选 → 重置回首项 up
+  document.getElementById('dirSel').value = IS_HIST ? 'up' : '';
   document.getElementById('qInput').value = '';
   document.getElementById('poolSel').value = '';
   document.getElementById('boardStage').value = '';
   document.querySelectorAll('.scr-metric').forEach(s => s.value = '');
+  document.querySelectorAll('.scr-meanin').forEach(i => { i.value = ''; });
   clearConds();
   syncMetricDisabled();
   runFilter();
@@ -470,8 +605,10 @@ async function runFilter(silent) {
   const kw = (document.getElementById('qInput').value || '').trim();
   const boardStage = document.getElementById('boardStage').value;
   if (!date) { alert('选择快照日期'); return; }
+  const ds = dirState();
   const parts = [`date=${date}`, 'limit=300', `merge_below=${getMerge()}`];
-  if (dir) parts.push(`direction=${dir}`);
+  // 只有「当前」口径才约束 current_direction；「历史趋势」口径不发，按全集匹配历史统计
+  if (ds.currentDir) parts.push(`direction=${ds.currentDir}`);
   if (pool) parts.push(`pool_type=${pool}`);
   if (kw) parts.push(`q=${encodeURIComponent(kw)}`);
   if (boardStage) parts.push(`board_stage=${boardStage}`);
@@ -498,28 +635,94 @@ async function runFilter(silent) {
   const j = await fetchJson(url);
   const body = document.getElementById('resultBody');
   if (!j.success) {
-    body.innerHTML = `<tr><td colspan="15" style="text-align:center;color:#dc2626;padding:1rem;">${j.message || '查询失败'}</td></tr>`;
+    body.innerHTML = `<tr><td colspan="${NCOL}" style="text-align:center;color:#dc2626;padding:1rem;">${j.message || '查询失败'}</td></tr>`;
     document.getElementById('resultMeta').innerText = '';
     return;
   }
   // 条件展示：隐藏内部的 *_n 样本守卫（自动加的 n≥8，非用户选择），字段名换中文标签
   const shownConds = (j.conditions || [])
     .filter(c => !c.field.endsWith('_n'))
-    .map(c => `${FIELD_LABELS[c.field] || c.field} ${c.op === '>=' ? '≥' : '≤'} ${c.value}`);
+    .map(c => {
+      // 均值按单位还原显示：振幅小数→% ；量能 v5→万 ；长度→根（原值）
+      let val = c.value;
+      if (c.field === 'amp_up_mean' || c.field === 'amp_dn_mean') val = (c.value * 100).toFixed(1) + '%';
+      else if (c.field === 'v5_up_mean' || c.field === 'v5_dn_mean') val = (c.value / 1e4).toFixed(1) + '万';
+      else if (c.field === 'len_up_mean' || c.field === 'len_dn_mean') val = Math.round(c.value) + '根';
+      return `${FIELD_LABELS[c.field] || c.field} ${c.op === '>=' ? '≥' : '≤'} ${val}`;
+    });
+  // 历史页：指标列锁定所选方向（与 current_direction 无关）
+  const forceUp = ds.isHist ? (ds.metricDir === 'up') : null;
+  const histTag = ds.isHist
+    ? `　|　<span style="color:#7c3aed;">历史${forceUp ? '上涨' : '下跌'}趋势：下表为该方向历史已完成周期统计</span>`
+    : '';
   document.getElementById('resultMeta').innerHTML =
     `快照 <b>${j.date}</b>　|　命中 <b>${j.count}</b> / ${j.total}`
-    + (shownConds.length ? `　|　条件：${shownConds.join('；')}` : '');
+    + (shownConds.length ? `　|　条件：${shownConds.join('；')}` : '') + histTag;
   if (!j.data.length) {
-    body.innerHTML = '<tr><td colspan="15" style="text-align:center;color:#9ca3af;padding:1rem;">无符合条件的股票</td></tr>';
+    body.innerHTML = `<tr><td colspan="${NCOL}" style="text-align:center;color:#9ca3af;padding:1rem;">无符合条件的股票</td></tr>`;
     return;
   }
+
+  // ---- 公共格式化 / 单元格 ----
+  const fmtZ = v => v == null ? '—' : `<span style="font-family:monospace;color:${v>0?'#b91c1c':'#15803d'};">${v>0?'+':''}${v.toFixed(2)}</span>`;
+  const fmtPct = v => v == null ? '—' : `<span style="font-family:monospace;">${(v*100).toFixed(0)}%</span>`;
+  const fmtNum = v => v == null ? '—' : `<span style="font-family:monospace;">${v.toFixed(v<1?3:0)}</span>`;
+  const fmtPct1 = v => v == null ? '—' : `<span style="font-family:monospace;">${(v*100).toFixed(1)}%</span>`;
+  const fmtWan = v => v == null ? '—' : `<span style="font-family:monospace;">${(v/1e4).toFixed(1)}</span>`;
+  const STAGE_LABEL = {up_early:'上涨初期', up_late:'上涨末期', down_early:'下跌初期', down_late:'下跌末期'};
+  const codeNameCells = r => `<td style="padding:.4rem .5rem;font-family:monospace;font-weight:600;">
+        <a href="/stock/?code=${r.stock_code}" target="_blank" style="color:#2563eb;text-decoration:none;">${r.stock_code}</a></td>
+      <td style="padding:.4rem .5rem;">${r.stock_name || '—'}</td>`;
+  const boardCells = r => {
+    const boardCell = r.board_name
+      ? `<a href="/board_data/board?code=${r.board_code}" target="_blank" style="color:#2563eb;text-decoration:none;">${r.board_name}</a>`
+      : '<span style="color:#9ca3af;">—</span>';
+    let boardTrendCell = '<span style="color:#9ca3af;">—</span>';
+    if (r.board_trend_stage) {
+      const up = String(r.board_trend_stage).startsWith('up');
+      const lbl = STAGE_LABEL[r.board_trend_stage] || r.board_trend_stage;
+      const sc = r.board_trend_score == null ? '' : ' ' + Math.round(r.board_trend_score);
+      boardTrendCell = `<span style="color:${up?'#b91c1c':'#15803d'};font-weight:600;">${lbl}</span><span style="color:#6b7280;">${sc}</span>`;
+    }
+    return `<td style="padding:.4rem .5rem;">${boardCell}</td><td style="padding:.4rem .5rem;">${boardTrendCell}</td>`;
+  };
+
+  if (IS_HIST) {
+    // 历史页：方向固定为所选方向；只展示 均值 / 标准差 / 样本（无当前/z/分位）
+    const dirChip = forceUp
+      ? '<span style="color:#b91c1c;font-weight:600;">↑ 上涨</span>'
+      : '<span style="color:#15803d;font-weight:600;">↓ 下跌</span>';
+    body.innerHTML = j.data.map(r => {
+      const lenMean = forceUp ? r.len_up_mean : r.len_dn_mean;
+      const lenStd  = forceUp ? r.len_up_std  : r.len_dn_std;
+      const ampMean = forceUp ? r.amp_up_mean : r.amp_dn_mean;
+      const ampStd  = forceUp ? r.amp_up_std  : r.amp_dn_std;
+      const v5Mean  = forceUp ? r.v5_up_mean  : r.v5_dn_mean;
+      const v5Std   = forceUp ? r.v5_up_std   : r.v5_dn_std;
+      const n       = forceUp ? r.len_up_n    : r.len_dn_n;
+      return `<tr style="border-top:1px solid #f3f4f6;">
+      ${codeNameCells(r)}
+      <td style="padding:.4rem .5rem;text-align:center;">${dirChip}</td>
+      <td style="padding:.4rem .5rem;text-align:right;">${fmtNum(lenMean)}</td>
+      <td style="padding:.4rem .5rem;text-align:right;color:#6b7280;">${fmtNum(lenStd)}</td>
+      <td style="padding:.4rem .5rem;text-align:right;">${fmtPct1(ampMean)}</td>
+      <td style="padding:.4rem .5rem;text-align:right;color:#6b7280;">${fmtPct1(ampStd)}</td>
+      <td style="padding:.4rem .5rem;text-align:right;">${fmtWan(v5Mean)}</td>
+      <td style="padding:.4rem .5rem;text-align:right;color:#6b7280;">${fmtWan(v5Std)}</td>
+      <td style="padding:.4rem .5rem;text-align:right;color:#6b7280;">${n || '—'}</td>
+      ${boardCells(r)}
+    </tr>`;
+    }).join('');
+    return;
+  }
+
+  // 当前页：随该股当前方向展示（默认下跌组），含 当前/均值/z/分位
   body.innerHTML = j.data.map(r => {
     const dirChip = r.current_direction === 1
       ? '<span style="color:#b91c1c;font-weight:600;">↑ 上涨</span>'
       : r.current_direction === -1
       ? '<span style="color:#15803d;font-weight:600;">↓ 下跌</span>'
       : '<span style="color:#9ca3af;">·</span>';
-    // 根据方向取对应那组字段展示（默认取下跌组，因为大部分场景看下跌）
     const isUp = r.current_direction === 1;
     const lenCur = isUp ? r.len_up_current : r.len_dn_current;
     const lenMean = isUp ? r.len_up_mean : r.len_dn_mean;
@@ -534,44 +737,23 @@ async function runFilter(silent) {
     const v5Z = isUp ? r.v5_up_z : r.v5_dn_z;
     const v5Pct = isUp ? r.v5_up_pct : r.v5_dn_pct;
     const n = isUp ? r.len_up_n : r.len_dn_n;
-    const fmtZ = v => v == null ? '—' : `<span style="font-family:monospace;color:${v>0?'#b91c1c':'#15803d'};">${v>0?'+':''}${v.toFixed(2)}</span>`;
-    const fmtPct = v => v == null ? '—' : `<span style="font-family:monospace;">${(v*100).toFixed(0)}%</span>`;
-    const fmtCM = (c, m) => (c==null && m==null) ? '—'
-        : `<span style="font-family:monospace;">${c==null?'—':c.toFixed(c<1?3:0)} / ${m==null?'—':m.toFixed(m<1?3:0)}</span>`;
-    // 振幅按 % 显示，量能按「万」显示
-    const fmtCMpct = (c, m) => (c==null && m==null) ? '—'
-        : `<span style="font-family:monospace;">${c==null?'—':(c*100).toFixed(1)+'%'} / ${m==null?'—':(m*100).toFixed(1)+'%'}</span>`;
-    const fmtCMwan = (c, m) => (c==null && m==null) ? '—'
-        : `<span style="font-family:monospace;">${c==null?'—':(c/1e4).toFixed(1)} / ${m==null?'—':(m/1e4).toFixed(1)}</span>`;
-    // 板块 + 板块趋势（涨红跌绿，与方向列一致）
-    const STAGE_LABEL = {up_early:'上涨初期', up_late:'上涨末期', down_early:'下跌初期', down_late:'下跌末期'};
-    const boardCell = r.board_name
-      ? `<a href="/board_data/board?code=${r.board_code}" target="_blank" style="color:#2563eb;text-decoration:none;">${r.board_name}</a>`
-      : '<span style="color:#9ca3af;">—</span>';
-    let boardTrendCell = '<span style="color:#9ca3af;">—</span>';
-    if (r.board_trend_stage) {
-      const up = String(r.board_trend_stage).startsWith('up');
-      const lbl = STAGE_LABEL[r.board_trend_stage] || r.board_trend_stage;
-      const sc = r.board_trend_score == null ? '' : ' ' + Math.round(r.board_trend_score);
-      boardTrendCell = `<span style="color:${up?'#b91c1c':'#15803d'};font-weight:600;">${lbl}</span><span style="color:#6b7280;">${sc}</span>`;
-    }
     return `<tr style="border-top:1px solid #f3f4f6;">
-      <td style="padding:.4rem .5rem;font-family:monospace;font-weight:600;">
-        <a href="/stock/?code=${r.stock_code}" target="_blank" style="color:#2563eb;text-decoration:none;">${r.stock_code}</a></td>
-      <td style="padding:.4rem .5rem;">${r.stock_name || '—'}</td>
+      ${codeNameCells(r)}
       <td style="padding:.4rem .5rem;text-align:center;">${dirChip}</td>
-      <td style="padding:.4rem .5rem;text-align:right;">${fmtCM(lenCur, lenMean)}</td>
+      <td style="padding:.4rem .5rem;text-align:right;">${fmtNum(lenCur)}</td>
+      <td style="padding:.4rem .5rem;text-align:right;color:#6b7280;">${fmtNum(lenMean)}</td>
       <td style="padding:.4rem .5rem;text-align:right;">${fmtZ(lenZ)}</td>
       <td style="padding:.4rem .5rem;text-align:right;">${fmtPct(lenPct)}</td>
-      <td style="padding:.4rem .5rem;text-align:right;">${fmtCMpct(ampCur, ampMean)}</td>
+      <td style="padding:.4rem .5rem;text-align:right;">${fmtPct1(ampCur)}</td>
+      <td style="padding:.4rem .5rem;text-align:right;color:#6b7280;">${fmtPct1(ampMean)}</td>
       <td style="padding:.4rem .5rem;text-align:right;">${fmtZ(ampZ)}</td>
       <td style="padding:.4rem .5rem;text-align:right;">${fmtPct(ampPct)}</td>
-      <td style="padding:.4rem .5rem;text-align:right;">${fmtCMwan(v5Cur, v5Mean)}</td>
+      <td style="padding:.4rem .5rem;text-align:right;">${fmtWan(v5Cur)}</td>
+      <td style="padding:.4rem .5rem;text-align:right;color:#6b7280;">${fmtWan(v5Mean)}</td>
       <td style="padding:.4rem .5rem;text-align:right;">${fmtZ(v5Z)}</td>
       <td style="padding:.4rem .5rem;text-align:right;">${fmtPct(v5Pct)}</td>
       <td style="padding:.4rem .5rem;text-align:right;color:#6b7280;">${n || '—'}</td>
-      <td style="padding:.4rem .5rem;">${boardCell}</td>
-      <td style="padding:.4rem .5rem;">${boardTrendCell}</td>
+      ${boardCells(r)}
     </tr>`;
   }).join('');
 }
@@ -598,10 +780,21 @@ function applyUrlState() {
   if (p.has('board_stage')) {
     document.getElementById('boardStage').value = p.get('board_stage'); hasAny = true;
   }
-  // 简易筛选编码（len/amp/vol = geX|leX）→ 还原指标下拉
-  [['len', 'simpleLen'], ['amp', 'simpleAmp'], ['vol', 'simpleVol']].forEach(([key, id]) => {
-    if (p.has(key)) { document.getElementById(id).value = p.get(key); hasAny = true; }
-  });
+  // 当前页：分位下拉编码（len/amp/vol = geX|leX）→ 还原指标下拉
+  if (!IS_HIST) {
+    [['len', 'simpleLen'], ['amp', 'simpleAmp'], ['vol', 'simpleVol']].forEach(([key, id]) => {
+      const el = document.getElementById(id);
+      if (el && p.has(key)) { el.value = p.get(key); hasAny = true; }
+    });
+  } else {
+    // 历史页：均值下限编码（ampmean/lenmean/volmean）→ 还原均值输入（兼容旧链接的 *meantol，忽略即可）
+    MEAN_URL.forEach(([key, tgtId]) => {
+      if (p.has(`${key}mean`)) {
+        const te = document.getElementById(tgtId);
+        if (te) { te.value = p.get(`${key}mean`); hasAny = true; }
+      }
+    });
+  }
   // 数值条件：所有 <field>_min/_max= 参数都加成条件行（兼容旧链接）
   let condAdded = 0;
   for (const [k, v] of p.entries()) {

@@ -139,7 +139,10 @@
                     <a href="{{ url_for('RnnData.rnn_data_page') }}" {% if request.endpoint == 'RnnData.rnn_data_page' %}class="active"{% endif %}>RNN模型</a>
                 </li>
                 <li class="nav-item">
-                    <a href="{{ url_for('screener.page') }}" {% if request.endpoint == 'screener.page' %}class="active"{% endif %}>个股筛选</a>
+                    <a href="{{ url_for('screener.page') }}" {% if request.endpoint == 'screener.page' %}class="active"{% endif %}>个股筛选(当前)</a>
+                </li>
+                <li class="nav-item">
+                    <a href="{{ url_for('screener.page_history') }}" {% if request.endpoint == 'screener.page_history' %}class="active"{% endif %}>个股筛选(历史)</a>
                 </li>
                 <li class="nav-item">
                     <a href="{{ url_for('stock_stats.page') }}" {% if request.endpoint == 'stock_stats.page' %}class="active"{% endif %}>个股统计</a>

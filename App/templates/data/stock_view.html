@@ -228,28 +228,51 @@
     </div>
   </div>
 
-  <!-- ========== ①″ 周期(Cycle)长度量化（移到分布图之后） ========== -->
+  <!-- ========== ①″ 历史局数据表（每个周期的长度/振幅/量能，可筛选排序） ========== -->
   <div class="card" style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:1.25rem;margin-bottom:1rem;">
     <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem;margin-bottom:.75rem;">
-      <h2 style="margin:0;font-size:1.125rem;">①″ 每个周期的 CycleLengthMax（信号周期K线根数）</h2>
+      <h2 style="margin:0;font-size:1.125rem;">①″ 历史局数据表（每个周期的长度 / 振幅 / 量能，可筛选排序）</h2>
       <span id="cycleStats" style="color:#6b7280;font-size:.85rem;"></span>
     </div>
-    <div style="max-height:360px;overflow-y:auto;border:1px solid #f3f4f6;border-radius:6px;margin-top:.75rem;">
-      <table style="width:100%;border-collapse:collapse;font-size:.85rem;">
+    <!-- 筛选控件：方向 / 状态（点表头可按 长度/根数/振幅/量能 排序）-->
+    <style>
+      #cycleTable th.cyc-sort { cursor:pointer; user-select:none; white-space:nowrap; }
+      #cycleTable th.cyc-sort:hover { color:#2563eb; }
+      .cyc-ctl { padding:.3rem .5rem;border:1px solid #d1d5db;border-radius:6px;font-size:.82rem;background:#fff; }
+    </style>
+    <div style="display:flex;gap:.55rem;align-items:center;flex-wrap:wrap;margin-bottom:.6rem;">
+      <span style="color:#6b7280;font-size:.82rem;">方向</span>
+      <select id="cycDirFilter" class="cyc-ctl" onchange="onCycFilterChange()">
+        <option value="">全部</option>
+        <option value="up">↑ 上涨</option>
+        <option value="dn">↓ 下跌</option>
+      </select>
+      <span style="color:#6b7280;font-size:.82rem;">状态</span>
+      <select id="cycStatusFilter" class="cyc-ctl" onchange="onCycFilterChange()">
+        <option value="">全部</option>
+        <option value="done">已完成</option>
+        <option value="active">进行中</option>
+      </select>
+      <span style="color:#9ca3af;font-size:.78rem;">点表头排序</span>
+      <span id="cycleFilterMeta" style="color:#6b7280;font-size:.82rem;margin-left:auto;"></span>
+    </div>
+    <div style="max-height:360px;overflow-y:auto;border:1px solid #f3f4f6;border-radius:6px;margin-top:.25rem;">
+      <table id="cycleTable" style="width:100%;border-collapse:collapse;font-size:.85rem;">
         <thead style="background:#f9fafb;position:sticky;top:0;">
           <tr>
             <th style="padding:.5rem;text-align:left;">#</th>
             <th style="padding:.5rem;text-align:left;">趋势名</th>
             <th style="padding:.5rem;text-align:center;">方向</th>
-            <th style="padding:.5rem;text-align:left;">周期起点(信号)</th>
+            <th class="cyc-sort" style="padding:.5rem;text-align:left;" onclick="cycSortBy('time')">周期起点(信号)<span class="cyc-ind" data-key="time"></span></th>
             <th style="padding:.5rem;text-align:left;">末根</th>
-            <th style="padding:.5rem;text-align:right;">CycleLengthMax</th>
-            <th style="padding:.5rem;text-align:right;">实际根数</th>
-            <th style="padding:.5rem;text-align:right;">周期振幅</th>
+            <th class="cyc-sort" style="padding:.5rem;text-align:right;" onclick="cycSortBy('len')">CycleLengthMax<span class="cyc-ind" data-key="len"></span></th>
+            <th class="cyc-sort" style="padding:.5rem;text-align:right;" onclick="cycSortBy('barcount')">实际根数<span class="cyc-ind" data-key="barcount"></span></th>
+            <th class="cyc-sort" style="padding:.5rem;text-align:right;" onclick="cycSortBy('amp')">周期振幅<span class="cyc-ind" data-key="amp"></span></th>
+            <th class="cyc-sort" style="padding:.5rem;text-align:right;" onclick="cycSortBy('vol')">量能(万)<span class="cyc-ind" data-key="vol"></span></th>
             <th style="padding:.5rem;text-align:center;">状态</th>
           </tr>
         </thead>
-        <tbody id="cycleBody"><tr><td colspan="9" style="text-align:center;color:#9ca3af;padding:1rem;">…</td></tr></tbody>
+        <tbody id="cycleBody"><tr><td colspan="10" style="text-align:center;color:#9ca3af;padding:1rem;">…</td></tr></tbody>
       </table>
     </div>
   </div>
@@ -1099,7 +1122,7 @@ async function loadCycles() {
         if (el) el.innerHTML = `<div style="color:#dc2626;padding:2rem;text-align:center;">渲染失败：${(e && e.message) || e}</div>`;
       });
     const body = document.getElementById('cycleBody');
-    if (body) body.innerHTML = `<tr><td colspan="9" style="text-align:center;color:#dc2626;padding:1rem;">渲染失败：${(e && e.message) || e}</td></tr>`;
+    if (body) body.innerHTML = `<tr><td colspan="10" style="text-align:center;color:#dc2626;padding:1rem;">渲染失败：${(e && e.message) || e}</td></tr>`;
   }
 }
 let MERGE_BELOW = 5;   // 默认开启合并(去噪)：合并振幅 < 5% 的小周期；取消勾选 → 0 看原始
@@ -1109,6 +1132,87 @@ function onMergeToggle() {
   loadCycles();
   load15m();   // K 线底色也按同口径重画
 }
+// ---------------- 历史局数据表：筛选 + 排序（纯前端，基于已加载的 cycles）----------------
+let CYCLES_DATA = [];
+let CYC_FILTER = { dir: '', status: '' };          // dir: ''|up|dn ; status: ''|done|active
+let CYC_SORT = { key: 'time', dir: 'desc' };       // key: time|len|barcount|amp|vol
+
+function onCycFilterChange() {
+  CYC_FILTER.dir = document.getElementById('cycDirFilter').value;
+  CYC_FILTER.status = document.getElementById('cycStatusFilter').value;
+  renderCycleTable();
+}
+
+// 点表头：同列再点切换升/降；换列默认降序（看"最大的几局"更常用）
+function cycSortBy(key) {
+  if (CYC_SORT.key === key) CYC_SORT.dir = CYC_SORT.dir === 'asc' ? 'desc' : 'asc';
+  else { CYC_SORT.key = key; CYC_SORT.dir = 'desc'; }
+  renderCycleTable();
+}
+
+function renderCycleTable() {
+  const body = document.getElementById('cycleBody');
+  if (!body) return;
+  const dirBadge = (dir) => dir > 0 ? '<span style="color:#dc2626;font-weight:600;">↑ 上涨</span>'
+    : dir < 0 ? '<span style="color:#16a34a;font-weight:600;">↓ 下跌</span>'
+    : '<span style="color:#9ca3af;">—</span>';
+
+  // 原始时间序编号（#1 = 最早），过滤/排序后仍展示这个编号
+  let rows = CYCLES_DATA.map((c, i) => ({ c, n: i + 1 }));
+  if (CYC_FILTER.dir === 'up') rows = rows.filter(r => r.c.direction > 0);
+  else if (CYC_FILTER.dir === 'dn') rows = rows.filter(r => r.c.direction < 0);
+  if (CYC_FILTER.status === 'done') rows = rows.filter(r => r.c.completed === true);
+  else if (CYC_FILTER.status === 'active') rows = rows.filter(r => r.c.completed === false);
+
+  const getv = r => {
+    switch (CYC_SORT.key) {
+      case 'len': return r.c.cycle_length_max;
+      case 'barcount': return r.c.bar_count;
+      case 'amp': return r.c.amplitude_max;
+      case 'vol': return r.c.cycle_1m_vol_max5;
+      default: return r.n;                  // time：n 与时间同序
+    }
+  };
+  const sgn = CYC_SORT.dir === 'asc' ? 1 : -1;
+  rows.sort((a, b) => {
+    const va = getv(a), vb = getv(b);
+    if (va == null && vb == null) return 0;
+    if (va == null) return 1;               // 空值始终沉底
+    if (vb == null) return -1;
+    return (va - vb) * sgn;
+  });
+
+  // 表头排序指示箭头
+  document.querySelectorAll('#cycleTable .cyc-ind').forEach(s => {
+    s.textContent = s.dataset.key === CYC_SORT.key ? (CYC_SORT.dir === 'asc' ? ' ▲' : ' ▼') : '';
+  });
+
+  const meta = document.getElementById('cycleFilterMeta');
+  if (meta) meta.innerText = (CYC_FILTER.dir || CYC_FILTER.status)
+    ? `筛选后 ${rows.length} / ${CYCLES_DATA.length} 局` : `共 ${CYCLES_DATA.length} 局`;
+
+  if (!rows.length) {
+    body.innerHTML = '<tr><td colspan="10" style="text-align:center;color:#9ca3af;padding:1rem;">无符合条件的周期</td></tr>';
+    return;
+  }
+  body.innerHTML = rows.map(({ c, n }) => `
+    <tr style="border-top:1px solid #f3f4f6;${c.completed === false ? 'background:#fffbeb;' : ''}">
+      <td style="padding:.4rem .5rem;color:#9ca3af;">${n}</td>
+      <td style="padding:.4rem .5rem;font-family:monospace;font-weight:600;color:${c.direction > 0 ? '#b91c1c' : c.direction < 0 ? '#15803d' : '#6b7280'};">${c.signal_name || '—'}</td>
+      <td style="padding:.4rem .5rem;text-align:center;">${dirBadge(c.direction)}</td>
+      <td style="padding:.4rem .5rem;font-family:monospace;">${c.signal_start}</td>
+      <td style="padding:.4rem .5rem;font-family:monospace;color:#6b7280;">${c.last_bar}</td>
+      <td style="padding:.4rem .5rem;text-align:right;font-family:monospace;font-weight:600;">${c.cycle_length_max ?? '—'}</td>
+      <td style="padding:.4rem .5rem;text-align:right;font-family:monospace;color:#6b7280;">${c.bar_count}</td>
+      <td style="padding:.4rem .5rem;text-align:right;font-family:monospace;">${c.amplitude_max != null ? (c.amplitude_max * 100).toFixed(1) + '%' : '—'}</td>
+      <td style="padding:.4rem .5rem;text-align:right;font-family:monospace;color:#6b7280;">${c.cycle_1m_vol_max5 != null ? (c.cycle_1m_vol_max5 / 1e4).toFixed(1) : '—'}</td>
+      <td style="padding:.4rem .5rem;text-align:center;">${c.completed === false
+        ? '<span style="background:#fef3c7;color:#92400e;padding:.1rem .5rem;border-radius:9999px;font-size:.78rem;">进行中</span>'
+        : c.completed === true ? '<span style="background:#dcfce7;color:#15803d;padding:.1rem .5rem;border-radius:9999px;font-size:.78rem;">已完成</span>'
+        : '—'}</td>
+    </tr>`).join('');
+}
+
 async function _loadCyclesImpl() {
   let cyclesUrl = withAsOf(`${API}/cycles`);
   if (MERGE_BELOW > 0) cyclesUrl += (cyclesUrl.includes('?') ? '&' : '?') + 'merge_below=' + MERGE_BELOW;
@@ -1138,18 +1242,18 @@ async function _loadCyclesImpl() {
   if (!j.success) {
     statsEl.innerText = '';
     const retryBtn = `<button onclick="loadCycles()" style="margin-left:.5rem;padding:.15rem .6rem;border:1px solid #cbd5e1;border-radius:6px;cursor:pointer;background:#fff;font-size:.8rem;">↻ 重试</button>`;
-    body.innerHTML = `<tr><td colspan="9" style="text-align:center;color:#dc2626;padding:1rem;">${j.message || '加载失败'}${retryBtn}</td></tr>`;
+    body.innerHTML = `<tr><td colspan="10" style="text-align:center;color:#dc2626;padding:1rem;">${j.message || '加载失败'}${retryBtn}</td></tr>`;
     distMsg(`${j.message || '加载失败'}<br>${retryBtn}`, '#dc2626');
     return;
   }
   if (typeof Plotly === 'undefined') {
     statsEl.innerText = '';
-    body.innerHTML = '<tr><td colspan="9" style="text-align:center;color:#dc2626;padding:1rem;">Plotly 未加载（强制刷新页面 Ctrl+F5）</td></tr>';
+    body.innerHTML = '<tr><td colspan="10" style="text-align:center;color:#dc2626;padding:1rem;">Plotly 未加载（强制刷新页面 Ctrl+F5）</td></tr>';
     distMsg('Plotly 未加载（强制刷新 Ctrl+F5）', '#dc2626');
     return;
   }
   if (!j.count) {
-    body.innerHTML = '<tr><td colspan="9" style="text-align:center;color:#9ca3af;padding:1rem;">无周期数据</td></tr>';
+    body.innerHTML = '<tr><td colspan="10" style="text-align:center;color:#9ca3af;padding:1rem;">无周期数据</td></tr>';
     distMsg('无周期数据', '#9ca3af');
     return;
   }
@@ -1159,30 +1263,9 @@ async function _loadCyclesImpl() {
 
   const d = j.data;
 
-  const dirBadge = (dir) => {
-    if (dir > 0) return '<span style="color:#dc2626;font-weight:600;">↑ 上涨</span>';
-    if (dir < 0) return '<span style="color:#16a34a;font-weight:600;">↓ 下跌</span>';
-    return '<span style="color:#9ca3af;">—</span>';
-  };
-  // 表格按时间倒序展示：最新周期排最前；编号仍保留原始时间序的 #1 = 最早
-  // （这样最新那个的编号 = d.length，方便看"一共多少周期"）
-  body.innerHTML = d.map((c, i) => ({ c, n: i + 1 }))
-    .slice().reverse()
-    .map(({ c, n }) => `
-    <tr style="border-top:1px solid #f3f4f6;${c.completed === false ? 'background:#fffbeb;' : ''}">
-      <td style="padding:.4rem .5rem;color:#9ca3af;">${n}</td>
-      <td style="padding:.4rem .5rem;font-family:monospace;font-weight:600;color:${c.direction > 0 ? '#b91c1c' : c.direction < 0 ? '#15803d' : '#6b7280'};">${c.signal_name || '—'}</td>
-      <td style="padding:.4rem .5rem;text-align:center;">${dirBadge(c.direction)}</td>
-      <td style="padding:.4rem .5rem;font-family:monospace;">${c.signal_start}</td>
-      <td style="padding:.4rem .5rem;font-family:monospace;color:#6b7280;">${c.last_bar}</td>
-      <td style="padding:.4rem .5rem;text-align:right;font-family:monospace;font-weight:600;">${c.cycle_length_max ?? '—'}</td>
-      <td style="padding:.4rem .5rem;text-align:right;font-family:monospace;color:#6b7280;">${c.bar_count}</td>
-      <td style="padding:.4rem .5rem;text-align:right;font-family:monospace;">${c.amplitude_max != null ? c.amplitude_max.toFixed(2) : '—'}</td>
-      <td style="padding:.4rem .5rem;text-align:center;">${c.completed === false
-        ? '<span style="background:#fef3c7;color:#92400e;padding:.1rem .5rem;border-radius:9999px;font-size:.78rem;">进行中</span>'
-        : c.completed === true ? '<span style="background:#dcfce7;color:#15803d;padding:.1rem .5rem;border-radius:9999px;font-size:.78rem;">已完成</span>'
-        : '—'}</td>
-    </tr>`).join('');
+  // 历史局数据表：把整段 cycles 存全局，由筛选/排序状态驱动渲染（见 renderCycleTable）
+  CYCLES_DATA = d;
+  renderCycleTable();
 
   const all = d.filter(c => c.cycle_length_max != null);
   // 当前周期 = 最新那个（通常"进行中"），只标在与其方向一致的图上
