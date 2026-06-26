@@ -78,6 +78,9 @@ class TradeRecord(db.Model):
     execute_time = db.Column(db.DateTime, nullable=True, comment='执行时间')
     cancel_time = db.Column(db.DateTime, nullable=True, comment='取消时间')
     
+    # 操作理由/想法（手动填写，复盘用；与系统自动写入的 remarks 区分开）
+    trade_reason = db.Column(db.Text, nullable=True, comment='操作理由/想法(手动填写)')
+
     # 备注信息
     remarks = db.Column(db.Text, nullable=True, comment='备注')
     
@@ -237,6 +240,7 @@ class TradeRecord(db.Model):
             'strategy_name': self.strategy_name,
             'signal_source': self.signal_source,
             'confidence_score': self.confidence_score,
+            'trade_reason': self.trade_reason,
             'order_time': self.order_time.strftime('%Y-%m-%d %H:%M:%S') if self.order_time else None,
             'execute_time': self.execute_time.strftime('%Y-%m-%d %H:%M:%S') if self.execute_time else None,
             'cancel_time': self.cancel_time.strftime('%Y-%m-%d %H:%M:%S') if self.cancel_time else None,

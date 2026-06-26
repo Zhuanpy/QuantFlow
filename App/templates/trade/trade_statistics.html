@@ -1,0 +1,317 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="ts-container">
+    <div class="ts-header">
+        <div>
+            <h1>历史交易统计</h1>
+            <p class="ts-sub">按"持仓 0→正→0"周期切分；每个周期 = 一次完整开平仓。数据源：成交记录 trade_records。</p>
+        </div>
+        <div class="ts-actions">
+            <a class="ts-btn" href="{{ url_for('trade_plan.real_trade_page') }}">← 返回交易管理</a>
+            <button class="ts-btn" onclick="loadTradeStatistics()">刷新</button>
+        </div>
+    </div>
+
+    <!-- 模式切换 -->
+    <div class="ts-tabs" id="modeTabs">
+        <button class="ts-tab active" data-mode="">全部</button>
+        <button class="ts-tab" data-mode="simulate">模拟交易</button>
+        <button class="ts-tab" data-mode="real">实盘交易</button>
+    </div>
+
+    <!-- 汇总卡片 -->
+    <div class="ts-section">
+        <h2>总览</h2>
+        <div id="tradeStatsPanel" class="ts-cards">
+            <div class="ts-loading">加载中…</div>
+        </div>
+    </div>
+
+    <!-- 按年份 -->
+    <div class="ts-section">
+        <h2>按年份汇总</h2>
+        <div id="tradeByYearPanel"></div>
+    </div>
+
+    <!-- 明细 -->
+    <div class="ts-section">
+        <h2>已完成交易明细</h2>
+        <div id="tradeAllControls"></div>
+        <div id="tradeAllList"></div>
+    </div>
+</div>
+
+<style>
+    .ts-container { max-width: 1800px; margin: 0 auto; }
+    .ts-header { display:flex; justify-content:space-between; align-items:flex-start; gap:1rem; margin-bottom:1rem; flex-wrap:wrap; }
+    .ts-header h1 { font-size:1.5rem; }
+    .ts-sub { color:#6b7280; font-size:.85rem; margin-top:.25rem; }
+    .ts-actions { display:flex; gap:.5rem; flex-shrink:0; }
+    .ts-btn { padding:.45rem .9rem; border:1px solid #d1d5db; background:#fff; color:#374151; border-radius:.4rem;
+              font-size:.85rem; cursor:pointer; text-decoration:none; display:inline-block; transition:all .2s; }
+    .ts-btn:hover { background:#f3f4f6; border-color:#9ca3af; }
+    .ts-tabs { display:inline-flex; gap:.25rem; background:#fff; border-radius:.6rem; padding:.35rem;
+               box-shadow:0 1px 2px rgba(0,0,0,.05); margin-bottom:1.25rem; }
+    .ts-tab { padding:.45rem 1.25rem; border:none; background:transparent; color:#6b7280; font-size:.9rem;
+              font-weight:500; cursor:pointer; border-radius:.45rem; transition:all .2s; }
+    .ts-tab:hover { background:#f3f4f6; }
+    .ts-tab.active { background:#2563eb; color:#fff; }
+    .ts-section { background:#fff; border-radius:.6rem; padding:1rem 1.25rem; margin-bottom:1.25rem; box-shadow:0 1px 3px rgba(0,0,0,.08); }
+    .ts-section h2 { font-size:1.05rem; margin-bottom:.75rem; }
+    .ts-cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:.75rem; }
+    .ts-loading { grid-column:1/-1; text-align:center; color:#6b7280; padding:1rem; }
+    .ts-table { width:100%; border-collapse:collapse; font-size:.82rem; }
+    .ts-table thead tr { background:#f3f4f6; }
+    .ts-table th { padding:.4rem .35rem; }
+    .ts-table td { padding:.4rem .35rem; border-bottom:1px solid #f1f5f9; }
+    .ts-btn-sm { padding:.25rem .6rem; border:1px solid #d1d5db; background:#fff; border-radius:.3rem; font-size:.8rem; cursor:pointer; }
+    .ts-btn-sm:disabled { opacity:.5; cursor:not-allowed; }
+    .stock-link { color:#2563eb; text-decoration:none; }
+    .stock-link:hover { text-decoration:underline; }
+    .ts-yearsel { padding:.2rem .5rem; border:1px solid #d1d5db; border-radius:.25rem; font-size:.82rem; }
+</style>
+
+<script>
+// 当前模式：'' 全部 | 'simulate' | 'real'
+let currentMode = '{{ trade_mode or "" }}';
+let _tradeStatsCache = null;
+let _tradeYearFilter = 'all';
+let _tradeStockFilter = '';      // 股票代码/名称模糊匹配
+let _tradeResultFilter = 'all';  // 'all' | 'win' | 'loss' | 'break_even'
+let _completedPage = 1;
+const _COMPLETED_PAGE_SIZE = 15;
+
+document.addEventListener('DOMContentLoaded', () => {
+    // 初始化模式 tab 高亮
+    document.querySelectorAll('#modeTabs .ts-tab').forEach(btn => {
+        btn.classList.toggle('active', (btn.dataset.mode || '') === currentMode);
+        btn.addEventListener('click', () => {
+            currentMode = btn.dataset.mode || '';
+            document.querySelectorAll('#modeTabs .ts-tab').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            _tradeYearFilter = 'all';
+            loadTradeStatistics();
+        });
+    });
+    loadTradeStatistics();
+});
+
+async function loadTradeStatistics() {
+    const panel = document.getElementById('tradeStatsPanel');
+    const yearPanel = document.getElementById('tradeByYearPanel');
+    const allDiv = document.getElementById('tradeAllList');
+    const ctrlDiv = document.getElementById('tradeAllControls');
+    panel.innerHTML = `<div class="ts-loading">加载中…</div>`;
+    yearPanel.innerHTML = '';
+    allDiv.innerHTML = '';
+    ctrlDiv.innerHTML = '';
+    _completedPage = 1;
+    _tradeStockFilter = '';
+    _tradeResultFilter = 'all';
+    try {
+        const url = '/api/trade/records/statistics' + (currentMode ? ('?mode=' + currentMode) : '');
+        const r = await fetch(url).then(r => r.json());
+        if (!r.success) {
+            panel.innerHTML = `<div class="ts-loading" style="color:#dc2626;">加载失败：${r.message||''}</div>`;
+            return;
+        }
+        const s = r.data;
+        _tradeStatsCache = s;
+        if (!s || s.total_trades === 0) {
+            panel.innerHTML = `<div class="ts-loading">暂无已完成交易（需要至少一个完整的买→卖周期）</div>`;
+            return;
+        }
+        _renderStatsCards(s);
+        _renderByYearTable(s);
+        _renderAllCompletedTable(s);
+    } catch (e) {
+        panel.innerHTML = `<div class="ts-loading" style="color:#dc2626;">请求失败：${e}</div>`;
+    }
+}
+
+function _renderStatsCards(s) {
+    const panel = document.getElementById('tradeStatsPanel');
+    const pnlColor = s.total_profit_loss >= 0 ? '#059669' : '#dc2626';
+    const winRateColor = s.win_rate >= 50 ? '#059669' : (s.win_rate >= 40 ? '#f59e0b' : '#dc2626');
+    const card = (label, value, color, sub) =>
+        `<div style="padding:.5rem .75rem;background:#f9fafb;border-radius:.4rem;border:1px solid #e5e7eb;">`
+      + `  <div style="font-size:.72rem;color:#6b7280;">${label}</div>`
+      + `  <div style="font-size:1.15rem;font-weight:700;color:${color||'#111827'};">${value}</div>`
+      + (sub ? `  <div style="font-size:.7rem;color:#9ca3af;margin-top:.1rem;">${sub}</div>` : '')
+      + `</div>`;
+    panel.innerHTML =
+        card('总交易笔数（含全部年份）', s.total_trades, '#111827', `胜 ${s.win_count} / 负 ${s.loss_count}${s.break_even_count?(' / 平 '+s.break_even_count):''}`)
+      + card('胜率', s.win_rate.toFixed(2)+'%', winRateColor)
+      + card('总盈亏', (s.total_profit_loss>=0?'+':'')+'¥'+s.total_profit_loss.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}), pnlColor, `投入 ¥${s.total_invested.toLocaleString()}`)
+      + card('收益率 ROI', (s.roi_pct>=0?'+':'')+s.roi_pct.toFixed(2)+'%', pnlColor)
+      + card('平均盈利 / 亏损', `+¥${s.avg_profit.toFixed(0)} / -¥${s.avg_loss.toFixed(0)}`, '#374151', `盈亏比 ${s.profit_factor.toFixed(2)}`)
+      + card('最大盈利 / 亏损', `+¥${s.max_profit.toFixed(0)} / ¥${s.max_loss.toFixed(0)}`, '#374151')
+      + card('平均持仓天数', s.avg_hold_days + ' 天', '#374151');
+}
+
+function _renderByYearTable(s) {
+    const div = document.getElementById('tradeByYearPanel');
+    const years = s.by_year || [];
+    if (!years.length) { div.innerHTML = '<div class="ts-loading">暂无年份数据</div>'; return; }
+    const rows = years.map(y => {
+        const pnlC = y.total_profit_loss >= 0 ? '#059669' : '#dc2626';
+        const wrC = y.win_rate >= 50 ? '#059669' : '#f59e0b';
+        const sign = y.total_profit_loss >= 0 ? '+' : '';
+        const rsign = y.roi_pct >= 0 ? '+' : '';
+        return `<tr>
+            <td><strong>${y.year} 年</strong></td>
+            <td style="text-align:center;">${y.total_trades}</td>
+            <td style="text-align:center;color:#059669;">${y.win_count}</td>
+            <td style="text-align:center;color:#dc2626;">${y.loss_count}</td>
+            <td style="text-align:right;color:${wrC};font-weight:600;">${y.win_rate.toFixed(2)}%</td>
+            <td style="text-align:right;color:#6b7280;">¥${y.total_invested.toLocaleString()}</td>
+            <td style="text-align:right;color:${pnlC};font-weight:600;">${sign}¥${y.total_profit_loss.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</td>
+            <td style="text-align:right;color:${pnlC};font-weight:600;">${rsign}${y.roi_pct.toFixed(2)}%</td>
+            <td style="text-align:right;color:#9ca3af;">+¥${y.avg_profit.toFixed(0)} / -¥${y.avg_loss.toFixed(0)}</td>
+        </tr>`;
+    }).join('');
+    div.innerHTML =
+        `<table class="ts-table">`
+      + `<thead><tr>`
+      + `<th style="text-align:left;">年份</th>`
+      + `<th>笔数</th><th>胜</th><th>负</th>`
+      + `<th style="text-align:right;">胜率</th>`
+      + `<th style="text-align:right;">投入</th>`
+      + `<th style="text-align:right;">盈亏</th>`
+      + `<th style="text-align:right;">ROI</th>`
+      + `<th style="text-align:right;">平均盈/亏</th>`
+      + `</tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+// 入口：渲染筛选条（仅一次）+ 表格行
+function _renderAllCompletedTable(s) {
+    _renderCompletedControls(s);
+    _renderCompletedRows();
+}
+
+// 把当前各项筛选应用到 all_completed，返回过滤后的数组
+function _filterCompleted() {
+    const all = (_tradeStatsCache && _tradeStatsCache.all_completed) || [];
+    const kw = _tradeStockFilter.trim().toLowerCase();
+    return all.filter(t => {
+        if (_tradeYearFilter !== 'all' && (t.exit_time||'').slice(0,4) !== String(_tradeYearFilter)) return false;
+        if (_tradeResultFilter !== 'all' && t.result !== _tradeResultFilter) return false;
+        if (kw) {
+            const hay = ((t.stock_code||'') + ' ' + (t.stock_name||'')).toLowerCase();
+            if (!hay.includes(kw)) return false;
+        }
+        return true;
+    });
+}
+
+// 渲染筛选条（年份/盈亏下拉 + 股票输入框）。只在加载数据时渲染一次，避免输入框失焦。
+function _renderCompletedControls(s) {
+    const div = document.getElementById('tradeAllControls');
+    const all = s.all_completed || [];
+    if (!all.length) { div.innerHTML = ''; return; }
+    const yearsSet = new Set();
+    all.forEach(t => { if (t.exit_time) yearsSet.add(t.exit_time.slice(0,4)); });
+    const yearOpts = ['<option value="all">全部年份</option>']
+        .concat([...yearsSet].sort().reverse().map(y => `<option value="${y}" ${_tradeYearFilter==y?'selected':''}>${y} 年</option>`))
+        .join('');
+    const resultOpts =
+        `<option value="all" ${_tradeResultFilter=='all'?'selected':''}>全部盈亏</option>`
+      + `<option value="win" ${_tradeResultFilter=='win'?'selected':''}>盈利</option>`
+      + `<option value="loss" ${_tradeResultFilter=='loss'?'selected':''}>亏损</option>`
+      + `<option value="break_even" ${_tradeResultFilter=='break_even'?'selected':''}>持平</option>`;
+
+    div.innerHTML =
+        `<div style="display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;margin-bottom:.6rem;">`
+      + `  <input id="tsStockFilter" class="ts-yearsel" style="min-width:160px;" placeholder="筛选股票代码/名称" value="${_tradeStockFilter.replace(/"/g,'&quot;')}" oninput="_onTradeStockChange(this.value)">`
+      + `  <select class="ts-yearsel" onchange="_onTradeResultChange(this.value)">${resultOpts}</select>`
+      + `  <select class="ts-yearsel" onchange="_onTradeYearChange(this.value)">${yearOpts}</select>`
+      + `  <button class="ts-btn-sm" onclick="_resetCompletedFilters()">重置</button>`
+      + `  <span id="tsCompletedCount" style="margin-left:auto;font-weight:600;font-size:.85rem;color:#374151;"></span>`
+      + `</div>`;
+}
+
+// 渲染表格 + 分页（筛选变化时只重渲染这部分，输入框不丢焦点）
+function _renderCompletedRows() {
+    const div = document.getElementById('tradeAllList');
+    const filtered = _filterCompleted();
+    const countEl = document.getElementById('tsCompletedCount');
+    if (countEl) countEl.textContent = `共 ${filtered.length} 笔`;
+
+    if (!filtered.length) {
+        div.innerHTML = '<div class="ts-loading">没有符合筛选条件的交易</div>';
+        return;
+    }
+
+    const totalPages = Math.max(1, Math.ceil(filtered.length / _COMPLETED_PAGE_SIZE));
+    if (_completedPage > totalPages) _completedPage = totalPages;
+    if (_completedPage < 1) _completedPage = 1;
+    const startIdx = (_completedPage - 1) * _COMPLETED_PAGE_SIZE;
+    const pageItems = filtered.slice(startIdx, startIdx + _COMPLETED_PAGE_SIZE);
+
+    const rows = pageItems.map(t => {
+        const pnlC = t.profit_loss >= 0 ? '#059669' : '#dc2626';
+        const sign = t.profit_loss >= 0 ? '+' : '';
+        const e = (t.entry_time||'').slice(0,10);
+        const x = (t.exit_time||'').slice(0,10);
+        return `<tr>
+            <td><a class="stock-link" href="/stock/?code=${t.stock_code}&period=15m" target="_blank" title="打开 15m 趋势页">${t.stock_code}</a> <span style="color:#6b7280;">${t.stock_name||''}</span></td>
+            <td style="font-size:.78rem;">${e} → ${x}</td>
+            <td style="text-align:right;">${t.hold_days||'-'}天</td>
+            <td style="text-align:right;">${t.avg_entry_price} → ${t.avg_exit_price}</td>
+            <td style="text-align:right;color:#6b7280;">¥${(t.cost_basis||0).toLocaleString()}</td>
+            <td style="text-align:right;color:${pnlC};font-weight:600;">${sign}${t.profit_loss.toFixed(2)} (${sign}${t.profit_loss_pct.toFixed(2)}%)</td>
+        </tr>`;
+    }).join('');
+
+    const pager = (totalPages > 1)
+        ? `<div style="padding:.5rem;text-align:center;font-size:.82rem;color:#6b7280;display:flex;justify-content:center;align-items:center;gap:.5rem;">`
+          + `  <button class="ts-btn-sm" ${_completedPage<=1?'disabled':''} onclick="_completedGoPage(${_completedPage-1})">上一页</button>`
+          + `  <span>第 ${_completedPage} / ${totalPages} 页 · 共 ${filtered.length} 笔</span>`
+          + `  <button class="ts-btn-sm" ${_completedPage>=totalPages?'disabled':''} onclick="_completedGoPage(${_completedPage+1})">下一页</button>`
+          + `</div>`
+        : '';
+
+    div.innerHTML =
+        `<table class="ts-table">`
+      + `<thead><tr>`
+      + `<th style="text-align:left;">股票</th>`
+      + `<th>区间</th><th>持仓</th><th>入/出价</th>`
+      + `<th style="text-align:right;">投入</th>`
+      + `<th style="text-align:right;">盈亏</th>`
+      + `</tr></thead><tbody>${rows}</tbody></table>`
+      + pager;
+}
+
+function _onTradeYearChange(v) {
+    _tradeYearFilter = v;
+    _completedPage = 1;
+    _renderCompletedRows();
+}
+
+function _onTradeResultChange(v) {
+    _tradeResultFilter = v;
+    _completedPage = 1;
+    _renderCompletedRows();
+}
+
+function _onTradeStockChange(v) {
+    _tradeStockFilter = v;
+    _completedPage = 1;
+    _renderCompletedRows();
+}
+
+function _resetCompletedFilters() {
+    _tradeYearFilter = 'all';
+    _tradeResultFilter = 'all';
+    _tradeStockFilter = '';
+    _completedPage = 1;
+    if (_tradeStatsCache) _renderAllCompletedTable(_tradeStatsCache);
+}
+
+function _completedGoPage(p) {
+    _completedPage = p;
+    _renderCompletedRows();
+}
+</script>
+{% endblock %}

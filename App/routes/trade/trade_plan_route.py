@@ -34,6 +34,18 @@ def real_trade_page():
     return render_template('trade/trade_plan.html', trade_mode='real')
 
 
+@trade_plan_bp.route('/trade/statistics')
+def trade_statistics_page():
+    """历史交易统计独立页面。
+
+    复用 /api/trade/records/statistics 接口，按"持仓 0→正→0"周期切分展示
+    胜率/盈亏比/ROI、按年份汇总、已完成交易明细。
+    可选 query 参数 mode=simulate|real 作为初始模式。
+    """
+    trade_mode = (request.args.get('mode') or '').strip()
+    return render_template('trade/trade_statistics.html', trade_mode=trade_mode)
+
+
 # ============ 交易记录导入 ============
 
 @trade_plan_bp.route('/api/trade/records/import', methods=['POST'])
@@ -221,6 +233,30 @@ def list_trade_records():
         })
     except Exception as e:
         logger.exception('查询交易记录失败')
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@trade_plan_bp.route('/api/trade/records/<int:record_id>/reason', methods=['PATCH'])
+def update_trade_record_reason(record_id):
+    """更新单条成交记录的操作理由（trade_reason）。
+
+    Body (JSON): {"trade_reason": "..."}  空字符串视为清空（存 NULL）。
+    """
+    try:
+        from App.models.trade.trade_records import TradeRecord
+        rec = TradeRecord.query.get(record_id)
+        if not rec:
+            return jsonify({'success': False, 'message': '成交记录不存在'}), 404
+
+        data = request.get_json(silent=True) or {}
+        reason = (data.get('trade_reason') or '').strip()
+        rec.trade_reason = reason or None
+        rec.updated_at = datetime.utcnow()
+        db.session.commit()
+        return jsonify({'success': True, 'data': {'id': rec.id, 'trade_reason': rec.trade_reason}})
+    except Exception as e:
+        db.session.rollback()
+        logger.exception('更新操作理由失败')
         return jsonify({'success': False, 'message': str(e)}), 500
 
 
