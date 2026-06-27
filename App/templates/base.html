@@ -62,27 +62,118 @@
 
         .nav-menu {
             display: flex;
-            gap: 2rem;
+            gap: 0.4rem;
             list-style: none;
+            align-items: center;
         }
 
-        .nav-item a {
-            color: var(--text-primary);
+        .nav-item {
+            position: relative;
+        }
+
+        /* 每个分组一个主题色（按顺序），顶层标题 + 下拉强调都用它 */
+        .nav-menu > .nav-item:nth-child(1) { --accent: #2563eb; }  /* 数据 蓝 */
+        .nav-menu > .nav-item:nth-child(2) { --accent: #0891b2; }  /* 筛选统计 青 */
+        .nav-menu > .nav-item:nth-child(3) { --accent: #7c3aed; }  /* RNN模型 紫 */
+        .nav-menu > .nav-item:nth-child(4) { --accent: #d97706; }  /* 板块 橙 */
+        .nav-menu > .nav-item:nth-child(5) { --accent: #059669; }  /* 交易 绿 */
+        .nav-menu > .nav-item:nth-child(6) { --accent: #db2777; }  /* 资讯帮助 玫红 */
+
+        /* 顶层链接 / 下拉触发 —— 字号加大、用分组主题色 */
+        .nav-link {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.2rem;
+            color: var(--accent, var(--text-primary));
             text-decoration: none;
-            font-weight: 500;
+            font-weight: 600;
+            font-size: 1.08rem;
             padding: 0.5rem 1rem;
             border-radius: 0.5rem;
-            transition: all 0.3s ease;
+            transition: all 0.2s ease;
+            cursor: pointer;
+            white-space: nowrap;
         }
 
-        .nav-item a:hover {
-            background-color: var(--background-color);
-            color: var(--primary-color);
+        /* 悬停：浅色底（主题色 12% 透明）+ 主题色文字 */
+        .nav-link:hover {
+            background-color: color-mix(in srgb, var(--accent, #2563eb) 12%, transparent);
+            color: var(--accent, var(--primary-color));
         }
 
-        .nav-item a.active {
-            background-color: var(--primary-color);
+        /* 当前所在分组：主题色实底高亮 */
+        .nav-link.active {
+            background-color: var(--accent, var(--primary-color));
+            color: #fff;
+        }
+
+        .nav-link.dropdown-toggle::after {
+            content: "▾";
+            font-size: 0.7em;
+            opacity: 0.7;
+            margin-left: 0.1rem;
+        }
+
+        /* 下拉面板 —— 选择器统一 .navbar 前缀，提高优先级，避免被页面内
+           自定义的 .dropdown-menu（如股票池页的行内操作菜单）覆盖导致顶部导航失效。
+           显式 display:block + opacity/visibility 控制显隐（不依赖默认 display）。 */
+        .navbar .dropdown-menu {
+            display: block;
+            position: absolute;
+            top: 100%;
+            left: 0;
+            min-width: 200px;
+            background-color: var(--card-background);
+            border: 1px solid #e5e7eb;
+            border-top: 3px solid var(--accent, var(--primary-color));
+            border-radius: 0.6rem;
+            box-shadow: var(--shadow-md);
+            padding: 0.35rem;
+            list-style: none;
+            opacity: 0;
+            visibility: hidden;
+            transform: translateY(-6px);
+            transition: opacity 0.15s ease, transform 0.15s ease, visibility 0.15s;
+            z-index: 200;
+        }
+
+        /* 鼠标悬停或键盘聚焦时展开（无需 JS） */
+        .navbar .nav-item.dropdown:hover > .dropdown-menu,
+        .navbar .nav-item.dropdown:focus-within > .dropdown-menu {
+            opacity: 1;
+            visibility: visible;
+            transform: translateY(0);
+        }
+
+        .navbar .dropdown-menu li a {
+            display: block;
+            padding: 0.55rem 0.8rem;
+            border-radius: 0.4rem;
+            color: var(--text-primary);
+            text-decoration: none;
+            font-size: 0.98rem;
+            font-weight: 500;
+            white-space: nowrap;
+            transition: all 0.15s ease;
+        }
+
+        .navbar .dropdown-menu li a:hover {
+            background-color: color-mix(in srgb, var(--accent, #2563eb) 12%, transparent);
+            color: var(--accent, var(--primary-color));
+        }
+
+        .navbar .dropdown-menu li a.active {
+            background-color: var(--accent, var(--primary-color));
             color: white;
+        }
+
+        .navbar .dropdown-menu li a.is-real {
+            color: var(--success-color);
+            font-weight: 600;
+        }
+        .navbar .dropdown-menu li a.is-real:hover {
+            background-color: #ecfdf5;
+            color: var(--success-color);
         }
 
         main {
@@ -99,13 +190,23 @@
             box-shadow: var(--shadow-md);
         }
 
-        @media (max-width: 768px) {
-            .nav-menu {
-                gap: 1rem;
+        @media (max-width: 900px) {
+            .nav-container {
+                flex-wrap: wrap;
+                gap: 0.5rem;
             }
-
-            .nav-item a {
-                padding: 0.5rem;
+            .nav-menu {
+                flex-wrap: wrap;
+                gap: 0.25rem;
+            }
+            .nav-link {
+                padding: 0.4rem 0.6rem;
+                font-size: 0.92rem;
+            }
+            /* 小屏下拉右侧可能溢出：靠右组的面板右对齐 */
+            .navbar .nav-item.dropdown:last-child .dropdown-menu {
+                left: auto;
+                right: 0;
             }
         }
 
@@ -132,23 +233,79 @@
         <div class="nav-container">
             <a href="{{ url_for('main_bp.index') }}" class="nav-logo">智能股票交易系统</a>
             <ul class="nav-menu">
-                <li class="nav-item">
-                    <a href="{{ url_for('dl_bp.dl') }}" {% if request.endpoint == 'dl_bp.dl' %}class="active"{% endif %}>数据获取</a>
+                {# 数据：获取 / 处理 / 管理 #}
+                {% set data_eps = ['dl_bp.dl', 'dl_funds_awkward_bp.download_funds_awake_index', 'process_data.process_15m_data_page', 'data_bp.stock_classification', 'data_bp.stock_market_data', 'data_bp.record_stock_minute', 'daily_viewer.daily_viewer_page', 'stock_detail_bp.stock_onemin_check_page', 'task_status.task_status_page'] %}
+                <li class="nav-item dropdown">
+                    <span class="nav-link dropdown-toggle {% if request.endpoint in data_eps %}active{% endif %}" tabindex="0">数据</span>
+                    <ul class="dropdown-menu">
+                        <li><a href="{{ url_for('dl_bp.dl') }}" {% if request.endpoint == 'dl_bp.dl' %}class="active"{% endif %}>股票数据下载</a></li>
+                        <li><a href="{{ url_for('dl_funds_awkward_bp.download_funds_awake_index') }}" {% if request.endpoint == 'dl_funds_awkward_bp.download_funds_awake_index' %}class="active"{% endif %}>基金数据分析</a></li>
+                        <li><a href="{{ url_for('process_data.process_15m_data_page') }}" {% if request.endpoint == 'process_data.process_15m_data_page' %}class="active"{% endif %}>15分钟数据处理</a></li>
+                        <li><a href="{{ url_for('data_bp.stock_classification') }}" {% if request.endpoint == 'data_bp.stock_classification' %}class="active"{% endif %}>股票分类管理</a></li>
+                        <li><a href="{{ url_for('data_bp.stock_market_data') }}" {% if request.endpoint == 'data_bp.stock_market_data' %}class="active"{% endif %}>股票市场数据管理</a></li>
+                        <li><a href="{{ url_for('data_bp.record_stock_minute') }}" {% if request.endpoint == 'data_bp.record_stock_minute' %}class="active"{% endif %}>股票分钟数据记录</a></li>
+                        <li><a href="{{ url_for('daily_viewer.daily_viewer_page') }}" {% if request.endpoint == 'daily_viewer.daily_viewer_page' %}class="active"{% endif %}>日线数据查看器</a></li>
+                        <li><a href="{{ url_for('stock_detail_bp.stock_onemin_check_page') }}" {% if request.endpoint == 'stock_detail_bp.stock_onemin_check_page' %}class="active"{% endif %}>1分钟完整性检测</a></li>
+                        <li><a href="{{ url_for('task_status.task_status_page') }}" {% if request.endpoint == 'task_status.task_status_page' %}class="active"{% endif %}>每日任务状态看板</a></li>
+                    </ul>
                 </li>
-                <li class="nav-item">
-                    <a href="{{ url_for('RnnData.rnn_data_page') }}" {% if request.endpoint == 'RnnData.rnn_data_page' %}class="active"{% endif %}>RNN模型</a>
+
+                {# 筛选 / 统计 #}
+                {% set screen_eps = ['screener.page', 'screener.page_history', 'stock_stats.page', 'stock_trend.page'] %}
+                <li class="nav-item dropdown">
+                    <span class="nav-link dropdown-toggle {% if request.endpoint in screen_eps %}active{% endif %}" tabindex="0">筛选统计</span>
+                    <ul class="dropdown-menu">
+                        <li><a href="{{ url_for('screener.page') }}" {% if request.endpoint == 'screener.page' %}class="active"{% endif %}>个股筛选(当前)</a></li>
+                        <li><a href="{{ url_for('screener.page_history') }}" {% if request.endpoint == 'screener.page_history' %}class="active"{% endif %}>个股筛选(历史)</a></li>
+                        <li><a href="{{ url_for('stock_stats.page') }}" {% if request.endpoint == 'stock_stats.page' %}class="active"{% endif %}>个股统计列表</a></li>
+                        <li><a href="{{ url_for('stock_trend.page') }}" {% if request.endpoint == 'stock_trend.page' %}class="active"{% endif %}>个股打分历史</a></li>
+                    </ul>
                 </li>
-                <li class="nav-item">
-                    <a href="{{ url_for('screener.page') }}" {% if request.endpoint == 'screener.page' %}class="active"{% endif %}>个股筛选(当前)</a>
+
+                {# RNN 模型 #}
+                {% set rnn_eps = ['RnnData.rnn_data_page', 'rnn_strategies_bp.training_page', 'rnn_strategies_bp.prediction_page'] %}
+                <li class="nav-item dropdown">
+                    <span class="nav-link dropdown-toggle {% if request.endpoint in rnn_eps %}active{% endif %}" tabindex="0">RNN模型</span>
+                    <ul class="dropdown-menu">
+                        <li><a href="{{ url_for('RnnData.rnn_data_page') }}" {% if request.endpoint == 'RnnData.rnn_data_page' %}class="active"{% endif %}>模型数据</a></li>
+                        <li><a href="{{ url_for('rnn_strategies_bp.training_page') }}" {% if request.endpoint == 'rnn_strategies_bp.training_page' %}class="active"{% endif %}>模型训练</a></li>
+                        <li><a href="{{ url_for('rnn_strategies_bp.prediction_page') }}" {% if request.endpoint == 'rnn_strategies_bp.prediction_page' %}class="active"{% endif %}>模型预测</a></li>
+                    </ul>
                 </li>
-                <li class="nav-item">
-                    <a href="{{ url_for('screener.page_history') }}" {% if request.endpoint == 'screener.page_history' %}class="active"{% endif %}>个股筛选(历史)</a>
+
+                {# 板块分析 #}
+                {% set board_eps = ['board_overview.page', 'board_data.page', 'board_trend.page', 'board_pref.page'] %}
+                <li class="nav-item dropdown">
+                    <span class="nav-link dropdown-toggle {% if request.endpoint in board_eps %}active{% endif %}" tabindex="0">板块</span>
+                    <ul class="dropdown-menu">
+                        <li><a href="{{ url_for('board_overview.page') }}" {% if request.endpoint == 'board_overview.page' %}class="active"{% endif %}>板块整体预览</a></li>
+                        <li><a href="{{ url_for('board_data.page') }}" {% if request.endpoint == 'board_data.page' %}class="active"{% endif %}>板块数据管理</a></li>
+                        <li><a href="{{ url_for('board_trend.page') }}" {% if request.endpoint == 'board_trend.page' %}class="active"{% endif %}>板块趋势打分</a></li>
+                        <li><a href="{{ url_for('board_pref.page') }}" {% if request.endpoint == 'board_pref.page' %}class="active"{% endif %}>板块偏好评分</a></li>
+                    </ul>
                 </li>
-                <li class="nav-item">
-                    <a href="{{ url_for('stock_stats.page') }}" {% if request.endpoint == 'stock_stats.page' %}class="active"{% endif %}>个股统计</a>
+
+                {# 交易系统 #}
+                {% set trade_eps = ['stock_pool.stock_pool_page', 'trade_plan.trade_page', 'trade_plan.simulate_trade_page', 'trade_plan.real_trade_page', 'trade_plan.trade_statistics_page'] %}
+                <li class="nav-item dropdown">
+                    <span class="nav-link dropdown-toggle {% if request.endpoint in trade_eps %}active{% endif %}" tabindex="0">交易</span>
+                    <ul class="dropdown-menu">
+                        <li><a href="{{ url_for('stock_pool.stock_pool_page') }}" {% if request.endpoint == 'stock_pool.stock_pool_page' %}class="active"{% endif %}>股票池管理</a></li>
+                        <li><a href="{{ url_for('trade_plan.trade_page') }}" {% if request.endpoint == 'trade_plan.trade_page' %}class="active"{% endif %}>交易管理</a></li>
+                        <li><a href="{{ url_for('trade_plan.simulate_trade_page') }}" {% if request.endpoint == 'trade_plan.simulate_trade_page' %}class="active"{% endif %}>模拟交易</a></li>
+                        <li><a href="{{ url_for('trade_plan.real_trade_page') }}" class="is-real {% if request.endpoint == 'trade_plan.real_trade_page' %}active{% endif %}">实盘交易</a></li>
+                        <li><a href="{{ url_for('trade_plan.trade_statistics_page') }}" {% if request.endpoint == 'trade_plan.trade_statistics_page' %}class="active"{% endif %}>历史交易统计</a></li>
+                    </ul>
                 </li>
-                <li class="nav-item">
-                    <a href="{{ url_for('issue_bp.issues') }}" {% if request.endpoint == 'issue_bp.issues' %}class="active"{% endif %}>问题管理</a>
+
+                {# 资讯 / 帮助 #}
+                {% set more_eps = ['news_hotspots_bp.hotspots_page', 'issue_bp.issues'] %}
+                <li class="nav-item dropdown">
+                    <span class="nav-link dropdown-toggle {% if request.endpoint in more_eps %}active{% endif %}" tabindex="0">资讯帮助</span>
+                    <ul class="dropdown-menu">
+                        <li><a href="{{ url_for('news_hotspots_bp.hotspots_page') }}" {% if request.endpoint == 'news_hotspots_bp.hotspots_page' %}class="active"{% endif %}>新闻热点话题</a></li>
+                        <li><a href="{{ url_for('issue_bp.issues') }}" {% if request.endpoint == 'issue_bp.issues' %}class="active"{% endif %}>问题与解决方案</a></li>
+                    </ul>
                 </li>
             </ul>
         </div>
