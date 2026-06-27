@@ -288,6 +288,22 @@
       </thead>
       <tbody id="resultBody"><tr><td colspan="{{ 12 if mode == 'history' else 18 }}" style="text-align:center;color:#9ca3af;padding:1rem;">点击"筛选"开始</td></tr></tbody>
     </table>
+    <!-- 分页条（结果 > 每页条数时显示）-->
+    <div id="pager" style="display:none;align-items:center;justify-content:flex-end;gap:.5rem;padding:.5rem .25rem 0;flex-wrap:wrap;font-size:.85rem;">
+      <span style="color:#6b7280;">每页</span>
+      <select id="pageSizeSel" onchange="onPageSizeChange()" style="padding:.25rem .4rem;border:1px solid #d1d5db;border-radius:6px;font-size:.82rem;">
+        <option value="30">30</option>
+        <option value="50" selected>50</option>
+        <option value="100">100</option>
+      </select>
+      <button id="pgPrev" class="pg-btn" onclick="pageStep(-1)">‹ 上一页</button>
+      <span id="pagerInfo" style="color:#374151;"></span>
+      <button id="pgNext" class="pg-btn" onclick="pageStep(1)">下一页 ›</button>
+    </div>
+    <style>
+      .pg-btn { padding:.25rem .7rem;border:1px solid #d1d5db;background:#fff;color:#374151;border-radius:6px;font-size:.82rem;cursor:pointer; }
+      .pg-btn:disabled { color:#cbd5e1;cursor:not-allowed;background:#f9fafb; }
+    </style>
     </div><!-- /左：结果表 -->
 
     <!-- 字段说明：折叠在结果表下方，默认收起，不再占用右侧整列空间 -->
@@ -658,104 +674,141 @@ async function runFilter(silent) {
   document.getElementById('resultMeta').innerHTML =
     `快照 <b>${j.date}</b>　|　命中 <b>${j.count}</b> / ${j.total}`
     + (shownConds.length ? `　|　条件：${shownConds.join('；')}` : '') + histTag;
-  if (!j.data.length) {
-    body.innerHTML = `<tr><td colspan="${NCOL}" style="text-align:center;color:#9ca3af;padding:1rem;">无符合条件的股票</td></tr>`;
-    return;
-  }
 
-  // ---- 公共格式化 / 单元格 ----
-  const fmtZ = v => v == null ? '—' : `<span style="font-family:monospace;color:${v>0?'#b91c1c':'#15803d'};">${v>0?'+':''}${v.toFixed(2)}</span>`;
-  const fmtPct = v => v == null ? '—' : `<span style="font-family:monospace;">${(v*100).toFixed(0)}%</span>`;
-  const fmtNum = v => v == null ? '—' : `<span style="font-family:monospace;">${v.toFixed(v<1?3:0)}</span>`;
-  const fmtPct1 = v => v == null ? '—' : `<span style="font-family:monospace;">${(v*100).toFixed(1)}%</span>`;
-  const fmtWan = v => v == null ? '—' : `<span style="font-family:monospace;">${(v/1e4).toFixed(1)}</span>`;
-  const STAGE_LABEL = {up_early:'上涨初期', up_late:'上涨末期', down_early:'下跌初期', down_late:'下跌末期'};
-  const codeNameCells = r => `<td style="padding:.4rem .5rem;font-family:monospace;font-weight:600;">
+  // 存结果全集 + 分页上下文，渲染第 1 页（实际渲染/分页见 renderResultPage）
+  RESULT_ROWS = j.data || [];
+  RESULT_FORCE_UP = forceUp;
+  RESULT_PAGE = 1;
+  renderResultPage();
+}
+
+// ---------------- 结果表渲染 + 客户端分页 ----------------
+let RESULT_ROWS = [];          // 当前筛选结果全集（≤ limit）
+let RESULT_FORCE_UP = null;    // 历史页锁定方向：true=上涨 / false=下跌 / null=随当前
+let RESULT_PAGE = 1;
+let PAGE_SIZE = 50;
+
+const _fmtZ = v => v == null ? '—' : `<span style="font-family:monospace;color:${v>0?'#b91c1c':'#15803d'};">${v>0?'+':''}${v.toFixed(2)}</span>`;
+const _fmtPct = v => v == null ? '—' : `<span style="font-family:monospace;">${(v*100).toFixed(0)}%</span>`;
+const _fmtNum = v => v == null ? '—' : `<span style="font-family:monospace;">${v.toFixed(v<1?3:0)}</span>`;
+const _fmtPct1 = v => v == null ? '—' : `<span style="font-family:monospace;">${(v*100).toFixed(1)}%</span>`;
+const _fmtWan = v => v == null ? '—' : `<span style="font-family:monospace;">${(v/1e4).toFixed(1)}</span>`;
+const _STAGE_LABEL = {up_early:'上涨初期', up_late:'上涨末期', down_early:'下跌初期', down_late:'下跌末期'};
+function _codeNameCells(r) {
+  return `<td style="padding:.4rem .5rem;font-family:monospace;font-weight:600;">
         <a href="/stock/?code=${r.stock_code}" target="_blank" style="color:#2563eb;text-decoration:none;">${r.stock_code}</a></td>
       <td style="padding:.4rem .5rem;">${r.stock_name || '—'}</td>`;
-  const boardCells = r => {
-    const boardCell = r.board_name
-      ? `<a href="/board_data/board?code=${r.board_code}" target="_blank" style="color:#2563eb;text-decoration:none;">${r.board_name}</a>`
-      : '<span style="color:#9ca3af;">—</span>';
-    let boardTrendCell = '<span style="color:#9ca3af;">—</span>';
-    if (r.board_trend_stage) {
-      const up = String(r.board_trend_stage).startsWith('up');
-      const lbl = STAGE_LABEL[r.board_trend_stage] || r.board_trend_stage;
-      const sc = r.board_trend_score == null ? '' : ' ' + Math.round(r.board_trend_score);
-      boardTrendCell = `<span style="color:${up?'#b91c1c':'#15803d'};font-weight:600;">${lbl}</span><span style="color:#6b7280;">${sc}</span>`;
-    }
-    return `<td style="padding:.4rem .5rem;">${boardCell}</td><td style="padding:.4rem .5rem;">${boardTrendCell}</td>`;
-  };
-
-  if (IS_HIST) {
-    // 历史页：方向固定为所选方向；只展示 均值 / 标准差 / 样本（无当前/z/分位）
-    const dirChip = forceUp
-      ? '<span style="color:#b91c1c;font-weight:600;">↑ 上涨</span>'
-      : '<span style="color:#15803d;font-weight:600;">↓ 下跌</span>';
-    body.innerHTML = j.data.map(r => {
-      const lenMean = forceUp ? r.len_up_mean : r.len_dn_mean;
-      const lenStd  = forceUp ? r.len_up_std  : r.len_dn_std;
-      const ampMean = forceUp ? r.amp_up_mean : r.amp_dn_mean;
-      const ampStd  = forceUp ? r.amp_up_std  : r.amp_dn_std;
-      const v5Mean  = forceUp ? r.v5_up_mean  : r.v5_dn_mean;
-      const v5Std   = forceUp ? r.v5_up_std   : r.v5_dn_std;
-      const n       = forceUp ? r.len_up_n    : r.len_dn_n;
-      return `<tr style="border-top:1px solid #f3f4f6;">
-      ${codeNameCells(r)}
+}
+function _boardCells(r) {
+  const boardCell = r.board_name
+    ? `<a href="/board_data/board?code=${r.board_code}" target="_blank" style="color:#2563eb;text-decoration:none;">${r.board_name}</a>`
+    : '<span style="color:#9ca3af;">—</span>';
+  let boardTrendCell = '<span style="color:#9ca3af;">—</span>';
+  if (r.board_trend_stage) {
+    const up = String(r.board_trend_stage).startsWith('up');
+    const lbl = _STAGE_LABEL[r.board_trend_stage] || r.board_trend_stage;
+    const sc = r.board_trend_score == null ? '' : ' ' + Math.round(r.board_trend_score);
+    boardTrendCell = `<span style="color:${up?'#b91c1c':'#15803d'};font-weight:600;">${lbl}</span><span style="color:#6b7280;">${sc}</span>`;
+  }
+  return `<td style="padding:.4rem .5rem;">${boardCell}</td><td style="padding:.4rem .5rem;">${boardTrendCell}</td>`;
+}
+// 历史页行：方向固定所选方向；只展示 均值 / 标准差 / 样本
+function _rowHistory(r) {
+  const up = RESULT_FORCE_UP;
+  const dirChip = up ? '<span style="color:#b91c1c;font-weight:600;">↑ 上涨</span>'
+                     : '<span style="color:#15803d;font-weight:600;">↓ 下跌</span>';
+  const lenMean = up ? r.len_up_mean : r.len_dn_mean, lenStd = up ? r.len_up_std : r.len_dn_std;
+  const ampMean = up ? r.amp_up_mean : r.amp_dn_mean, ampStd = up ? r.amp_up_std : r.amp_dn_std;
+  const v5Mean  = up ? r.v5_up_mean  : r.v5_dn_mean,  v5Std  = up ? r.v5_up_std  : r.v5_dn_std;
+  const n = up ? r.len_up_n : r.len_dn_n;
+  return `<tr style="border-top:1px solid #f3f4f6;">
+      ${_codeNameCells(r)}
       <td style="padding:.4rem .5rem;text-align:center;">${dirChip}</td>
-      <td style="padding:.4rem .5rem;text-align:right;">${fmtNum(lenMean)}</td>
-      <td style="padding:.4rem .5rem;text-align:right;color:#6b7280;">${fmtNum(lenStd)}</td>
-      <td style="padding:.4rem .5rem;text-align:right;">${fmtPct1(ampMean)}</td>
-      <td style="padding:.4rem .5rem;text-align:right;color:#6b7280;">${fmtPct1(ampStd)}</td>
-      <td style="padding:.4rem .5rem;text-align:right;">${fmtWan(v5Mean)}</td>
-      <td style="padding:.4rem .5rem;text-align:right;color:#6b7280;">${fmtWan(v5Std)}</td>
+      <td style="padding:.4rem .5rem;text-align:right;">${_fmtNum(lenMean)}</td>
+      <td style="padding:.4rem .5rem;text-align:right;color:#6b7280;">${_fmtNum(lenStd)}</td>
+      <td style="padding:.4rem .5rem;text-align:right;">${_fmtPct1(ampMean)}</td>
+      <td style="padding:.4rem .5rem;text-align:right;color:#6b7280;">${_fmtPct1(ampStd)}</td>
+      <td style="padding:.4rem .5rem;text-align:right;">${_fmtWan(v5Mean)}</td>
+      <td style="padding:.4rem .5rem;text-align:right;color:#6b7280;">${_fmtWan(v5Std)}</td>
       <td style="padding:.4rem .5rem;text-align:right;color:#6b7280;">${n || '—'}</td>
-      ${boardCells(r)}
+      ${_boardCells(r)}
     </tr>`;
-    }).join('');
+}
+// 当前页行：随该股当前方向，含 当前/均值/z/分位
+function _rowCurrent(r) {
+  const dirChip = r.current_direction === 1 ? '<span style="color:#b91c1c;font-weight:600;">↑ 上涨</span>'
+    : r.current_direction === -1 ? '<span style="color:#15803d;font-weight:600;">↓ 下跌</span>'
+    : '<span style="color:#9ca3af;">·</span>';
+  const isUp = r.current_direction === 1;
+  const lenCur = isUp ? r.len_up_current : r.len_dn_current, lenMean = isUp ? r.len_up_mean : r.len_dn_mean;
+  const lenZ = isUp ? r.len_up_z : r.len_dn_z, lenPct = isUp ? r.len_up_pct : r.len_dn_pct;
+  const ampCur = isUp ? r.amp_up_current : r.amp_dn_current, ampMean = isUp ? r.amp_up_mean : r.amp_dn_mean;
+  const ampZ = isUp ? r.amp_up_z : r.amp_dn_z, ampPct = isUp ? r.amp_up_pct : r.amp_dn_pct;
+  const v5Cur = isUp ? r.v5_up_current : r.v5_dn_current, v5Mean = isUp ? r.v5_up_mean : r.v5_dn_mean;
+  const v5Z = isUp ? r.v5_up_z : r.v5_dn_z, v5Pct = isUp ? r.v5_up_pct : r.v5_dn_pct;
+  const n = isUp ? r.len_up_n : r.len_dn_n;
+  return `<tr style="border-top:1px solid #f3f4f6;">
+      ${_codeNameCells(r)}
+      <td style="padding:.4rem .5rem;text-align:center;">${dirChip}</td>
+      <td style="padding:.4rem .5rem;text-align:right;">${_fmtNum(lenCur)}</td>
+      <td style="padding:.4rem .5rem;text-align:right;color:#6b7280;">${_fmtNum(lenMean)}</td>
+      <td style="padding:.4rem .5rem;text-align:right;">${_fmtZ(lenZ)}</td>
+      <td style="padding:.4rem .5rem;text-align:right;">${_fmtPct(lenPct)}</td>
+      <td style="padding:.4rem .5rem;text-align:right;">${_fmtPct1(ampCur)}</td>
+      <td style="padding:.4rem .5rem;text-align:right;color:#6b7280;">${_fmtPct1(ampMean)}</td>
+      <td style="padding:.4rem .5rem;text-align:right;">${_fmtZ(ampZ)}</td>
+      <td style="padding:.4rem .5rem;text-align:right;">${_fmtPct(ampPct)}</td>
+      <td style="padding:.4rem .5rem;text-align:right;">${_fmtWan(v5Cur)}</td>
+      <td style="padding:.4rem .5rem;text-align:right;color:#6b7280;">${_fmtWan(v5Mean)}</td>
+      <td style="padding:.4rem .5rem;text-align:right;">${_fmtZ(v5Z)}</td>
+      <td style="padding:.4rem .5rem;text-align:right;">${_fmtPct(v5Pct)}</td>
+      <td style="padding:.4rem .5rem;text-align:right;color:#6b7280;">${n || '—'}</td>
+      ${_boardCells(r)}
+    </tr>`;
+}
+
+function onPageSizeChange() {
+  PAGE_SIZE = parseInt(document.getElementById('pageSizeSel').value, 10) || 50;
+  RESULT_PAGE = 1;
+  renderResultPage();
+}
+function pageStep(delta) { gotoPage(RESULT_PAGE + delta); }
+function gotoPage(p) {
+  const pages = Math.max(1, Math.ceil(RESULT_ROWS.length / PAGE_SIZE));
+  const np = Math.min(Math.max(1, p), pages);
+  if (np === RESULT_PAGE) return;
+  RESULT_PAGE = np;
+  renderResultPage();
+  // 翻页后把结果表顶部带回视野
+  const wrap = document.getElementById('resultBody');
+  if (wrap) wrap.scrollIntoView({ block: 'nearest' });
+}
+function renderResultPage() {
+  const body = document.getElementById('resultBody');
+  const pager = document.getElementById('pager');
+  if (!body) return;
+  const total = RESULT_ROWS.length;
+  if (!total) {
+    body.innerHTML = `<tr><td colspan="${NCOL}" style="text-align:center;color:#9ca3af;padding:1rem;">无符合条件的股票</td></tr>`;
+    if (pager) pager.style.display = 'none';
     return;
   }
-
-  // 当前页：随该股当前方向展示（默认下跌组），含 当前/均值/z/分位
-  body.innerHTML = j.data.map(r => {
-    const dirChip = r.current_direction === 1
-      ? '<span style="color:#b91c1c;font-weight:600;">↑ 上涨</span>'
-      : r.current_direction === -1
-      ? '<span style="color:#15803d;font-weight:600;">↓ 下跌</span>'
-      : '<span style="color:#9ca3af;">·</span>';
-    const isUp = r.current_direction === 1;
-    const lenCur = isUp ? r.len_up_current : r.len_dn_current;
-    const lenMean = isUp ? r.len_up_mean : r.len_dn_mean;
-    const lenZ = isUp ? r.len_up_z : r.len_dn_z;
-    const lenPct = isUp ? r.len_up_pct : r.len_dn_pct;
-    const ampCur = isUp ? r.amp_up_current : r.amp_dn_current;
-    const ampMean = isUp ? r.amp_up_mean : r.amp_dn_mean;
-    const ampZ = isUp ? r.amp_up_z : r.amp_dn_z;
-    const ampPct = isUp ? r.amp_up_pct : r.amp_dn_pct;
-    const v5Cur = isUp ? r.v5_up_current : r.v5_dn_current;
-    const v5Mean = isUp ? r.v5_up_mean : r.v5_dn_mean;
-    const v5Z = isUp ? r.v5_up_z : r.v5_dn_z;
-    const v5Pct = isUp ? r.v5_up_pct : r.v5_dn_pct;
-    const n = isUp ? r.len_up_n : r.len_dn_n;
-    return `<tr style="border-top:1px solid #f3f4f6;">
-      ${codeNameCells(r)}
-      <td style="padding:.4rem .5rem;text-align:center;">${dirChip}</td>
-      <td style="padding:.4rem .5rem;text-align:right;">${fmtNum(lenCur)}</td>
-      <td style="padding:.4rem .5rem;text-align:right;color:#6b7280;">${fmtNum(lenMean)}</td>
-      <td style="padding:.4rem .5rem;text-align:right;">${fmtZ(lenZ)}</td>
-      <td style="padding:.4rem .5rem;text-align:right;">${fmtPct(lenPct)}</td>
-      <td style="padding:.4rem .5rem;text-align:right;">${fmtPct1(ampCur)}</td>
-      <td style="padding:.4rem .5rem;text-align:right;color:#6b7280;">${fmtPct1(ampMean)}</td>
-      <td style="padding:.4rem .5rem;text-align:right;">${fmtZ(ampZ)}</td>
-      <td style="padding:.4rem .5rem;text-align:right;">${fmtPct(ampPct)}</td>
-      <td style="padding:.4rem .5rem;text-align:right;">${fmtWan(v5Cur)}</td>
-      <td style="padding:.4rem .5rem;text-align:right;color:#6b7280;">${fmtWan(v5Mean)}</td>
-      <td style="padding:.4rem .5rem;text-align:right;">${fmtZ(v5Z)}</td>
-      <td style="padding:.4rem .5rem;text-align:right;">${fmtPct(v5Pct)}</td>
-      <td style="padding:.4rem .5rem;text-align:right;color:#6b7280;">${n || '—'}</td>
-      ${boardCells(r)}
-    </tr>`;
-  }).join('');
+  const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  if (RESULT_PAGE > pages) RESULT_PAGE = pages;
+  if (RESULT_PAGE < 1) RESULT_PAGE = 1;
+  const start = (RESULT_PAGE - 1) * PAGE_SIZE;
+  const slice = RESULT_ROWS.slice(start, start + PAGE_SIZE);
+  const rowFn = IS_HIST ? _rowHistory : _rowCurrent;
+  body.innerHTML = slice.map(rowFn).join('');
+  if (pager) {
+    // 结果超过最小档(30)才显示分页条，避免少量结果也占位
+    pager.style.display = total > 30 ? 'flex' : 'none';
+    const info = document.getElementById('pagerInfo');
+    if (info) info.innerHTML = `第 <b>${RESULT_PAGE}</b> / ${pages} 页　·　共 <b>${total}</b> 条`;
+    const prev = document.getElementById('pgPrev'), next = document.getElementById('pgNext');
+    if (prev) prev.disabled = RESULT_PAGE <= 1;
+    if (next) next.disabled = RESULT_PAGE >= pages;
+  }
 }
 
 // ---------------- 从 URL 参数恢复 UI 状态 ----------------
