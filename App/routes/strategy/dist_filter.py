@@ -108,6 +108,45 @@ def _run_compute_all(app, target_date, merge_below=0):
             _compute_state['running'] = False
 
 
+@screener_bp.route('/api/add_to_pool', methods=['POST'])
+def api_add_to_pool():
+    """把选中的代码批量加入股票池（仅入池，不带任何状态标签）。
+
+    body: { codes: [...] }
+    不在池 → 新建为"在池但无状态"（pool_states 为空）；已在池(活跃) → 跳过。
+    """
+    data = request.get_json(silent=True) or {}
+    codes = [str(c).strip() for c in (data.get('codes') or []) if str(c).strip()]
+    if not codes:
+        return jsonify({'success': False, 'message': '未选择股票'}), 400
+    # 批量取名字
+    name_map = {}
+    try:
+        from App.models.data.basic_info import StockInfo
+        for r in (StockInfo.query.filter(StockInfo.code.in_(codes))
+                  .with_entities(StockInfo.code, StockInfo.name).all()):
+            name_map.setdefault(r.code, r.name)
+    except Exception:
+        logger.exception('[screener] 取股票名失败')
+    added = skipped = 0
+    try:
+        for code in codes:
+            existing = StockPool.query.filter_by(stock_code=code, is_active=True).first()
+            if existing:
+                skipped += 1
+            else:
+                # pool_type='' → 不在 VALID_STATES，create_manual 不设状态，入池但无标签
+                StockPool.create_manual(code, name_map.get(code), pool_type='')  # 内部已 commit
+                added += 1
+        db.session.commit()
+        return jsonify({'success': True, 'added': added, 'skipped': skipped,
+                        'total': len(codes)})
+    except Exception as e:
+        db.session.rollback()
+        logger.exception('[screener] 加入股票池失败')
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
 @screener_bp.route('/api/snapshots/compute', methods=['POST'])
 def api_compute():
     """启动后台计算：对全部收集个股生成今日分布快照（同日同口径重跑覆盖）。

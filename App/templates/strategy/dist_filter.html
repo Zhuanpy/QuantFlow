@@ -241,6 +241,14 @@
   <!-- 结果信息栏（紧贴结果表上方）-->
   <div id="resultMeta" style="color:#6b7280;font-size:.85rem;margin:.25rem 0 .6rem;"></div>
 
+  <!-- 批量操作栏：勾选后出现，一键加入股票池（按所选状态打标签）-->
+  <div id="scrBatchBar" style="display:none;align-items:center;gap:.6rem;flex-wrap:wrap;background:#eef2ff;border:1px solid #c7d2fe;border-radius:8px;padding:.5rem .8rem;margin-bottom:.6rem;font-size:.85rem;">
+    <span>已选 <b id="scrSelCount">0</b> 只</span>
+    <button onclick="scrAddToPool()" class="scr-btn-primary">加入股票池</button>
+    <button onclick="scrClearSel()" class="scr-btn">取消</button>
+    <span style="color:#9ca3af;font-size:.78rem;">仅入池，不带状态标签（状态可在股票池页再打）</span>
+  </div>
+
   <!-- ========== 结果区：结果表（整宽）+ 下方可折叠字段说明 ========== -->
   <div id="resultFlex">
 
@@ -250,6 +258,7 @@
       <thead style="background:#f9fafb;position:sticky;top:0;">
         {% if mode == 'history' %}
         <tr>
+          <th style="padding:.5rem;width:28px;text-align:center;"><input type="checkbox" onchange="scrToggleAll(this)" title="全选本页"></th>
           <th style="padding:.5rem;text-align:left;">代码</th>
           <th style="padding:.5rem;text-align:left;">名称</th>
           <th style="padding:.5rem;text-align:center;">方向</th>
@@ -265,6 +274,7 @@
         </tr>
         {% else %}
         <tr>
+          <th style="padding:.5rem;width:28px;text-align:center;"><input type="checkbox" onchange="scrToggleAll(this)" title="全选本页"></th>
           <th style="padding:.5rem;text-align:left;">代码</th>
           <th style="padding:.5rem;text-align:left;">名称</th>
           <th style="padding:.5rem;text-align:center;">方向</th>
@@ -286,7 +296,7 @@
         </tr>
         {% endif %}
       </thead>
-      <tbody id="resultBody"><tr><td colspan="{{ 12 if mode == 'history' else 18 }}" style="text-align:center;color:#9ca3af;padding:1rem;">点击"筛选"开始</td></tr></tbody>
+      <tbody id="resultBody"><tr><td colspan="{{ 13 if mode == 'history' else 19 }}" style="text-align:center;color:#9ca3af;padding:1rem;">点击"筛选"开始</td></tr></tbody>
     </table>
     <!-- 分页条（结果 > 每页条数时显示）-->
     <div id="pager" style="display:none;align-items:center;justify-content:flex-end;gap:.5rem;padding:.5rem .25rem 0;flex-wrap:wrap;font-size:.85rem;">
@@ -381,15 +391,48 @@ const FIELD_LABELS = {
   len_up_n:   '上涨样本数',            len_dn_n:   '下跌样本数',
 };
 
-async function fetchJson(url) {
-  try { const r = await fetch(url); return await r.json(); }
+async function fetchJson(url, opts) {
+  try { const r = await fetch(url, opts); return await r.json(); }
   catch (e) { return { success:false, message:e.message }; }
 }
 
 // 页面口径（模板注入）：'current'=当前周期趋势页 / 'history'=历史周期趋势页
 const MODE = '{{ mode }}';
 const IS_HIST = MODE === 'history';
-const NCOL = IS_HIST ? 12 : 18;   // 结果表列数（历史页精简：只看均值/标准差/样本）
+const NCOL = IS_HIST ? 13 : 19;   // 结果表列数（含勾选列；历史页精简：只看均值/标准差/样本）
+
+// ---------------- 多选 + 一键加入股票池 ----------------
+const SCR_SEL = new Set();   // 选中的 stock_code（跨分页保留）
+function scrToggleSel(code) { SCR_SEL.has(code) ? SCR_SEL.delete(code) : SCR_SEL.add(code); scrUpdateBar(); }
+function scrToggleAll(cb) {
+  document.querySelectorAll('#resultBody input[type=checkbox]').forEach(c => {
+    c.checked = cb.checked;
+    cb.checked ? SCR_SEL.add(c.value) : SCR_SEL.delete(c.value);
+  });
+  scrUpdateBar();
+}
+function scrClearSel() { SCR_SEL.clear(); renderResultPage(); scrUpdateBar(); }
+function scrUpdateBar() {
+  const bar = document.getElementById('scrBatchBar');
+  if (!bar) return;
+  bar.style.display = SCR_SEL.size ? 'flex' : 'none';
+  const c = document.getElementById('scrSelCount');
+  if (c) c.textContent = SCR_SEL.size;
+}
+async function scrAddToPool() {
+  if (!SCR_SEL.size) return;
+  const codes = [...SCR_SEL];
+  const j = await fetchJson('/screener/api/add_to_pool', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ codes })
+  });
+  if (j && j.success) {
+    alert(`已加入股票池：新增 ${j.added} 只、已在池跳过 ${j.skipped} 只（共选 ${j.total}）`);
+    SCR_SEL.clear(); renderResultPage(); scrUpdateBar();
+  } else {
+    alert('加入失败：' + (j && j.message || '未知错误'));
+  }
+}
 
 // ---------------- 简易筛选：方向 + 指标 ----------------
 const SIMPLE_METRICS = [['simpleLen', 'len'], ['simpleAmp', 'amp'], ['simpleVol', 'v5']];
@@ -679,6 +722,7 @@ async function runFilter(silent) {
   RESULT_ROWS = j.data || [];
   RESULT_FORCE_UP = forceUp;
   RESULT_PAGE = 1;
+  SCR_SEL.clear(); scrUpdateBar();   // 新一轮筛选 → 清空已选
   renderResultPage();
 }
 
@@ -722,6 +766,7 @@ function _rowHistory(r) {
   const v5Mean  = up ? r.v5_up_mean  : r.v5_dn_mean,  v5Std  = up ? r.v5_up_std  : r.v5_dn_std;
   const n = up ? r.len_up_n : r.len_dn_n;
   return `<tr style="border-top:1px solid #f3f4f6;">
+      <td style="padding:.4rem .5rem;text-align:center;"><input type="checkbox" value="${r.stock_code}" ${SCR_SEL.has(r.stock_code)?'checked':''} onchange="scrToggleSel('${r.stock_code}')"></td>
       ${_codeNameCells(r)}
       <td style="padding:.4rem .5rem;text-align:center;">${dirChip}</td>
       <td style="padding:.4rem .5rem;text-align:right;">${_fmtNum(lenMean)}</td>
@@ -748,6 +793,7 @@ function _rowCurrent(r) {
   const v5Z = isUp ? r.v5_up_z : r.v5_dn_z, v5Pct = isUp ? r.v5_up_pct : r.v5_dn_pct;
   const n = isUp ? r.len_up_n : r.len_dn_n;
   return `<tr style="border-top:1px solid #f3f4f6;">
+      <td style="padding:.4rem .5rem;text-align:center;"><input type="checkbox" value="${r.stock_code}" ${SCR_SEL.has(r.stock_code)?'checked':''} onchange="scrToggleSel('${r.stock_code}')"></td>
       ${_codeNameCells(r)}
       <td style="padding:.4rem .5rem;text-align:center;">${dirChip}</td>
       <td style="padding:.4rem .5rem;text-align:right;">${_fmtNum(lenCur)}</td>
