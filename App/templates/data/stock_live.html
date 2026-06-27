@@ -887,9 +887,9 @@ function buildEstimateShells() {
     + `  <div id="${curId}" style="color:#6b7280;line-height:1.8;margin-bottom:.7rem;">—</div>`
     + `  <div style="font-weight:700;margin-bottom:.35rem;color:#374151;">🎯 ${title}</div>`
     + `  <div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.55rem;">`
-    + `    <span style="color:#6b7280;font-size:.8rem;white-space:nowrap;">分布分位</span>`
-    + `    <input id="${sliderId}" type="range" min="5" max="95" step="5" value="${pct}" oninput="${onInput}(this.value)" style="flex:1;accent-color:#4f46e5;">`
-    + `    <span id="${labelId}" style="font-family:monospace;min-width:3rem;text-align:right;font-weight:600;color:#4f46e5;">P${pct}</span>`
+    + `    <span style="color:#6b7280;font-size:.8rem;white-space:nowrap;">分布分位 P</span>`
+    + `    <input id="${labelId}" type="number" min="1" max="99" step="1" value="${pct}" oninput="${onInput}(this.value,'input')" onchange="${onInput}(this.value)" title="可直接输入 1-99 的分位，或拖右侧滑块" style="width:3.4rem;padding:.2rem .3rem;border:1px solid #d1d5db;border-radius:5px;font-family:monospace;text-align:center;font-weight:600;color:#4f46e5;">`
+    + `    <input id="${sliderId}" type="range" min="1" max="99" step="1" value="${pct}" oninput="${onInput}(this.value,'slider')" style="flex:1;accent-color:#4f46e5;">`
     + `  </div>`
     + `  <div id="${estId}" style="line-height:1.9;">—</div>`
     + `</div>`;
@@ -899,8 +899,16 @@ function buildEstimateShells() {
   if (lenEl) lenEl.innerHTML = shell('lenPctSlider','lenPctLabel',LEN_PCT,'onLenPct','lenCurBlock','lenEstBlock','预估周期与结束时间');
 }
 
-function onAmpPct(v) { AMP_PCT = +v; const l = document.getElementById('ampPctLabel'); if (l) l.innerText = 'P' + v; renderEstimateAmp(); renderTradePanels(); drawKline(); }
-function onLenPct(v) { LEN_PCT = +v; const l = document.getElementById('lenPctLabel'); if (l) l.innerText = 'P' + v; renderEstimateLen(); drawKline(); }
+// 分位 P：拖滑块「选择」或直接「输入」数字皆可（1-99）；两个控件保持同步，
+// 且 src='input'（正在输入）时不回写输入框本身，避免打断输入。onchange(失焦/回车)再夹紧。
+function clampPct(v) { v = Math.round(+v); return isNaN(v) ? 50 : Math.min(99, Math.max(1, v)); }
+function syncPct(sliderId, inputId, n, src) {
+  const s = document.getElementById(sliderId), i = document.getElementById(inputId);
+  if (src !== 'slider' && s) s.value = n;
+  if (src !== 'input' && i) i.value = n;
+}
+function onAmpPct(v, src) { AMP_PCT = clampPct(v); syncPct('ampPctSlider','ampPctLabel',AMP_PCT,src); renderEstimateAmp(); renderTradePanels(); drawKline(); }
+function onLenPct(v, src) { LEN_PCT = clampPct(v); syncPct('lenPctSlider','lenPctLabel',LEN_PCT,src); renderEstimateLen(); drawKline(); }
 
 // 当前方向、所选分位下，整段周期的预估振幅(%) 与目标价（上涨=顶 / 下跌=底）。
 // 振幅预估面板与"空仓建议买入价"共用，保证两处口径一致。
