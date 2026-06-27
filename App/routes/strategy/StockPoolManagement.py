@@ -69,10 +69,70 @@ def get_pool_boards():
                 names[bc] = bn
         boards = [{'board_code': bc, 'board_name': names.get(bc) or bc, 'count': n}
                   for bc, n in cnt.items()]
-        boards.sort(key=lambda x: (-x['count'], x['board_name'] or ''))
+        # 富集：板块趋势打分（最新一条）+ 个人偏好分，供参考筛选
+        bcs = [b['board_code'] for b in boards]
+        trend, prefs = {}, {}
+        if bcs:
+            try:
+                from App.models.evaluation.BoardTrendScore import BoardTrendScore
+                for r in (BoardTrendScore.query
+                          .filter(BoardTrendScore.board_code.in_(bcs))
+                          .order_by(BoardTrendScore.board_code,
+                                    BoardTrendScore.record_date.desc()).all()):
+                    trend.setdefault(r.board_code, {
+                        'stage': r.trend_stage, 'score': r.total_score, 'signal': r.signal})
+            except Exception:
+                logger.exception('[pool] 取板块趋势分失败')
+            try:
+                from App.models.evaluation.BoardPreference import BoardPreference
+                prefs = {p.board_code: p.preference_score for p in
+                         BoardPreference.query.filter(BoardPreference.board_code.in_(bcs)).all()}
+            except Exception:
+                logger.exception('[pool] 取板块偏好分失败')
+        for b in boards:
+            t = trend.get(b['board_code'])
+            b['trend_stage'] = t['stage'] if t else None
+            b['trend_score'] = t['score'] if t else None
+            b['signal'] = t['signal'] if t else None
+            b['pref_score'] = prefs.get(b['board_code'])
+        # 排序：偏好分降序(未打分沉底) → 趋势分降序 → 数量
+        boards.sort(key=lambda x: (-(x['pref_score'] or -1),
+                                   -(x['trend_score'] or -1), -x['count']))
         return jsonify({'success': True, 'data': boards})
     except Exception as e:
         logger.error(f"获取股票池板块失败: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@stock_pool_bp.route('/api/remove_board', methods=['POST'])
+def api_remove_board():
+    """把某板块在池的股票全部移出股票池（is_active=False + 清空状态，不再跟踪）。
+
+    body: { board_code: 'BK....' }
+    """
+    data = request.get_json(silent=True) or {}
+    board = (data.get('board_code') or '').strip()
+    if not board:
+        return jsonify({'success': False, 'message': '缺少 board_code'}), 400
+    try:
+        codes = [r.stock_code for r in
+                 StockPool.query.filter(StockPool.is_active == True,
+                                        StockPool.is_excluded == False)
+                 .with_entities(StockPool.stock_code).all()]
+        cb = _codes_latest_boards(codes)
+        target = {c for c, (bc, _bn) in cb.items() if bc == board}
+        n = 0
+        if target:
+            for s in StockPool.query.filter(StockPool.stock_code.in_(target),
+                                            StockPool.is_active == True).all():
+                s.is_active = False
+                s.set_states([])
+                n += 1
+            db.session.commit()
+        return jsonify({'success': True, 'removed': n, 'board_code': board})
+    except Exception as e:
+        db.session.rollback()
+        logger.exception('[pool] 移除板块失败')
         return jsonify({'success': False, 'message': str(e)}), 500
 
 
@@ -180,6 +240,47 @@ def get_stocks():
                 else:
                     s['latest_close'] = None
                     s['latest_close_date'] = None
+
+            # 当前 15m 趋势 + 预估目标价：取每只股票最新一条分布快照（原始口径 merge_below=0）
+            try:
+                from App.models.strategy.StockDistSnapshot import StockDistSnapshot
+                snap_sub = (db.session.query(
+                                StockDistSnapshot.stock_code,
+                                func.max(StockDistSnapshot.snapshot_date).label('md'))
+                            .filter(StockDistSnapshot.stock_code.in_(codes),
+                                    StockDistSnapshot.merge_below == 0)
+                            .group_by(StockDistSnapshot.stock_code).subquery())
+                snap_rows = (db.session.query(StockDistSnapshot)
+                             .join(snap_sub, and_(
+                                 StockDistSnapshot.stock_code == snap_sub.c.stock_code,
+                                 StockDistSnapshot.snapshot_date == snap_sub.c.md))
+                             .filter(StockDistSnapshot.merge_below == 0).all())
+                snap_map = {r.stock_code: r for r in snap_rows}
+                for s in stocks:
+                    r = snap_map.get(s['stock_code'])
+                    if not r:
+                        s['cur_trend'] = None
+                        continue
+                    is_up = r.current_direction == 1
+                    amp_mean = r.amp_up_mean if is_up else r.amp_dn_mean
+                    target = None
+                    if r.cur_start_price and amp_mean is not None:
+                        target = (r.cur_start_price * (1 + amp_mean) if is_up
+                                  else r.cur_start_price * (1 - amp_mean))
+                    s['cur_trend'] = {
+                        'direction': r.current_direction,
+                        'signal_name': r.current_signal_name,
+                        'amp_current': r.amp_up_current if is_up else r.amp_dn_current,
+                        'amp_mean': amp_mean,
+                        'start_price': r.cur_start_price,
+                        'last_price': r.cur_last_price,
+                        'target_price': round(target, 2) if target is not None else None,
+                        'snapshot_date': r.snapshot_date.isoformat() if r.snapshot_date else None,
+                    }
+            except Exception:
+                logger.exception('[pool] 取 15m 趋势/预估目标价失败')
+                for s in stocks:
+                    s.setdefault('cur_trend', None)
 
             # 批量查所属板块（industry_eastmoney），优先用每只股票最新一条记录
             try:

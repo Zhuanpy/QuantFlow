@@ -42,6 +42,7 @@
         <button class="tab" data-type="watching" onclick="switchTab(this)">观察</button>
         <button class="tab" data-type="candidate" onclick="switchTab(this)">候选</button>
         <button class="tab" data-type="trading" onclick="switchTab(this)">交易中</button>
+        <button class="tab" data-type="board" onclick="switchTab(this)" title="按板块汇总，可整块移出股票池">板块</button>
         <div class="tab-right">
             <!-- 筛选 -->
             <select id="boardFilter" class="sort-select" onchange="loadStocks()" title="按所属板块（东财行业）筛选">
@@ -68,9 +69,8 @@
     <div class="batch-bar" id="batchBar">
         <span>已选 <strong id="selectedCount">0</strong> 项</span>
         <div class="batch-actions">
-            <button class="btn btn-sm" onclick="batchAddState('watching')" title="给选中的股票添加「观察」标签">+观察</button>
-            <button class="btn btn-sm" onclick="batchAddState('candidate')" title="给选中的股票添加「候选」标签">+候选</button>
-            <button class="btn btn-sm" onclick="batchAddState('trading')" title="给选中的股票添加「交易中」标签">+交易中</button>
+            <!-- 3 个状态按钮按当前标签动态渲染：当前标签那个=移除，其余=添加 -->
+            <span id="batchStateBtns"></span>
             <button class="btn btn-sm btn-danger" onclick="batchRemove()">移出股票池</button>
             <button class="btn btn-sm" onclick="clearSelection()">取消</button>
         </div>
@@ -461,6 +461,17 @@
 .stock-table .col-cb { width: 36px; }
 .stock-table .col-code { font-weight: 600; color: var(--text-primary); }
 
+/* 板块汇总：左右两个列表（两张表并排），铺满可用宽度，减少两侧留白 */
+.board-wrap { width: 100%; }
+.board-cols { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1.5rem; align-items: start; }
+.board-tbl { width: 100%; border-collapse: collapse; font-size: 0.86rem; }
+.board-tbl th { background: #f8fafc; padding: 0.5rem 0.7rem; text-align: left; font-size: 0.74rem; color: var(--text-secondary); font-weight: 600; border-bottom: 2px solid #e2e8f0; white-space: nowrap; }
+.board-tbl td { padding: 0.5rem 0.7rem; border-bottom: 1px solid #f1f5f9; vertical-align: middle; white-space: nowrap; }
+.board-tbl tr:hover { background: #f8fafc; }
+.board-tbl .c-num { text-align: right; }
+.board-tbl .c-mid { text-align: center; }
+@media (max-width: 760px) { .board-cols { grid-template-columns: 1fr; } }
+
 /* 池类型标签 */
 .pool-tag { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 1rem; font-size: 0.75rem; font-weight: 500; }
 .pool-tag.trading { background: #fef2f2; color: #dc2626; }
@@ -710,8 +721,95 @@ function resetFilters() {
     loadStocks();
 }
 
+// === 板块标签：按板块汇总股票池，可整块移出 ===
+async function loadBoardView() {
+    const list = document.getElementById('stockList');
+    list.innerHTML = '<div class="loading">加载中...</div>';
+    document.getElementById('pagination').innerHTML = '';
+    document.getElementById('pageInfo').textContent = '';
+    document.getElementById('batchBar').classList.remove('show');  // 板块视图无勾选
+    try {
+        const r = await fetch('/stock_pool/api/boards');
+        const d = await r.json();
+        if (!d.success) { list.innerHTML = '<div class="empty-state"><h3>加载失败</h3></div>'; return; }
+        const boards = d.data || [];
+        if (!boards.length) { list.innerHTML = '<div class="empty-state"><h3>股票池暂无板块数据</h3></div>'; return; }
+        const total = boards.reduce((a, b) => a + b.count, 0);
+        // 趋势阶段 / 信号 渲染（涨红跌绿，与全站一致）
+        const STAGE = {up_early:'上涨初期', up_late:'上涨末期', down_early:'下跌初期', down_late:'下跌末期', unknown:'—'};
+        const stageCell = (st, sc) => {
+            if (!st || st === 'unknown') return '<span style="color:#9ca3af;">—</span>';
+            const up = String(st).startsWith('up');
+            const scTxt = sc == null ? '' : ` <span style="color:#6b7280;font-size:.72rem;">${Math.round(sc)}</span>`;
+            return `<span style="color:${up?'#b91c1c':'#15803d'};font-weight:600;">${STAGE[st]||st}</span>${scTxt}`;
+        };
+        const SIGNAL = {
+            buy:  ['买入', '#b91c1c'], sell: ['卖出', '#15803d'],
+            hold: ['持有', '#2563eb'], wait: ['观望', '#6b7280'],
+        };
+        const signalCell = (sig) => {
+            const s = SIGNAL[sig];
+            return s ? `<span style="color:${s[1]};font-weight:600;">${s[0]}</span>`
+                     : '<span style="color:#9ca3af;">—</span>';
+        };
+        const prefCell = (p) => {
+            if (p == null) return '<span style="color:#cbd5e1;" title="未打分">—</span>';
+            const c = p >= 8 ? '#16a34a' : p >= 5 ? '#ca8a04' : '#dc2626';
+            return `<span style="color:${c};font-weight:700;font-family:monospace;">${p}</span><span style="color:#9ca3af;font-size:.72rem;">/10</span>`;
+        };
+        const rowHtml = (b) => `<tr>
+            <td><a href="/board_data/board?code=${b.board_code}" target="_blank" style="color:#2563eb;text-decoration:none;font-weight:600;">${b.board_name}</a>
+                <span style="color:#9ca3af;font-size:.7rem;margin-left:.25rem;">${b.board_code}</span></td>
+            <td class="c-num" style="font-weight:600;">${b.count}</td>
+            <td class="c-mid">${prefCell(b.pref_score)}</td>
+            <td>${stageCell(b.trend_stage, b.trend_score)}</td>
+            <td class="c-mid">${signalCell(b.signal)}</td>
+            <td class="c-mid">
+              <button class="btn btn-sm" onclick="viewBoardStocks('${b.board_code}')" title="查看该板块在池股票">查看</button>
+              <button class="btn btn-sm btn-danger" onclick="removeBoard('${b.board_code}','${b.board_name}',${b.count})" title="把该板块在池股票全部移出">移除</button>
+            </td></tr>`;
+        const tableHtml = (arr) => arr.length ? `<table class="board-tbl"><thead><tr>
+            <th>板块</th><th class="c-num">在池</th>
+            <th class="c-mid" title="个人偏好 1-10（/board_pref）">偏好</th>
+            <th title="最新趋势阶段+综合分（/board_trend）">趋势阶段/分</th>
+            <th class="c-mid" title="板块最新买卖信号">信号</th>
+            <th class="c-mid">操作</th>
+          </tr></thead><tbody>${arr.map(rowHtml).join('')}</tbody></table>` : '';
+        const mid = Math.ceil(boards.length / 2);   // 左列=前半（排名靠前），右列=后半
+        let html = `<div class="board-wrap"><div style="margin-bottom:.7rem;color:#6b7280;font-size:.85rem;">
+            按所属板块汇总（共 ${boards.length} 个板块、${total} 只），并附<b>板块趋势打分</b>与<b>个人偏好分</b>参考。
+            「移除」会把该板块在池股票<b>全部移出、不再跟踪</b>（记录保留，可重新添加）。
+            <a href="/board_trend/" target="_blank" style="color:#2563eb;">趋势打分↗</a>　<a href="/board_pref/" target="_blank" style="color:#2563eb;">偏好评分↗</a></div>
+          <div class="board-cols">${tableHtml(boards.slice(0, mid))}${tableHtml(boards.slice(mid))}</div></div>`;
+        list.innerHTML = html;
+    } catch (e) { list.innerHTML = '<div class="empty-state"><h3>加载失败</h3></div>'; }
+}
+
+// 查看某板块具体股票：切到「全部」并按该板块过滤
+function viewBoardStocks(code) {
+    setActiveTab('');
+    const bf = document.getElementById('boardFilter'); if (bf) bf.value = code;
+    syncTabUrl();
+    loadStocks();
+}
+
+// 移除整个板块：把该板块在池股票全部移出（不再跟踪）
+async function removeBoard(code, name, count) {
+    if (!confirm(`确定把「${name}」板块的 ${count} 只股票全部移出股票池？移出后不再跟踪（记录保留，可重新添加）。`)) return;
+    try {
+        const r = await fetch('/stock_pool/api/remove_board', {
+            method: 'POST', headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({ board_code: code })
+        });
+        const d = await r.json();
+        if (d.success) { toast(`已移出「${name}」板块 ${d.removed} 只`, 'ok'); loadStats(); loadBoards(); loadBoardView(); }
+        else toast(d.message, 'err');
+    } catch (e) { toast('操作失败', 'err'); }
+}
+
 // === 加载列表 ===
 async function loadStocks(page) {
+    if (currentPoolType === 'board') { loadBoardView(); return; }   // 板块标签 → 板块汇总视图
     if (page) currentPage = page;
     const list = document.getElementById('stockList');
     list.innerHTML = '<div class="loading">加载中...</div>';
@@ -767,10 +865,12 @@ function renderTable(stocks) {
             <th>名称</th>
             <th>池</th>
             <th>评分</th>
+            <th title="当前 15m 周期方向 + 已走振幅 / 均值振幅（来自最新分布快照）">当前趋势(15m)</th>
             ${healthCol}
             <th>优先级</th>
             <th>所属板块</th>
             <th>目标价</th>
+            <th title="预估目标价 = 当前周期起点价 ×(1±均值振幅)；上涨=预估顶 / 下跌=预估底">预估目标价</th>
             <th>止损价</th>
             <th>现价</th>
             <th>更新</th>
@@ -824,8 +924,8 @@ function renderTable(stocks) {
 
         html += `<tr>
             <td class="col-cb"><input type="checkbox" value="${s.id}" ${selectedIds.has(s.id)?'checked':''} onchange="toggleSel(${s.id})"></td>
-            <td class="col-code"><a href="/stock_trend/stock/${s.stock_code}" target="_blank" title="查看 ${s.stock_code} 个股详情" style="color:#2563eb;text-decoration:none;font-weight:600;">${s.stock_code}</a></td>
-            <td><a href="/stock_trend/stock/${s.stock_code}" target="_blank" title="查看 ${s.stock_name || s.stock_code} 个股详情" style="color:#2563eb;text-decoration:none;">${s.stock_name || '-'}</a></td>
+            <td class="col-code"><a href="/stock/?code=${s.stock_code}&period=15m" target="_blank" title="查看 ${s.stock_code} 15分钟趋势" style="color:#2563eb;text-decoration:none;font-weight:600;">${s.stock_code}</a></td>
+            <td><a href="/stock/?code=${s.stock_code}&period=15m" target="_blank" title="查看 ${s.stock_name || s.stock_code} 15分钟趋势" style="color:#2563eb;text-decoration:none;">${s.stock_name || '-'}</a></td>
             <td>${renderStateTags(s)}</td>
             <td><div class="score-cell">
                 <span class="score-val" style="color:${scoreColor}">${s.score.toFixed(1)}</span>
@@ -833,10 +933,12 @@ function renderTable(stocks) {
                 ${trendIcon}
                 <a href="/stock_trend/stock/${s.stock_code}" target="_blank" title="查看趋势打分历史与日 K" class="score-link">📊</a>
             </div></td>
+            <td>${renderCurTrend(s)}</td>
             ${healthCell}
             <td><span class="priority-stars">${stars}</span></td>
             <td>${boardCell}</td>
             <td>${s.target_price ? s.target_price.toFixed(2) : '-'}</td>
+            <td>${renderEstTarget(s)}</td>
             <td>${s.stop_loss_price ? s.stop_loss_price.toFixed(2) : '-'}</td>
             <td>${priceCell(s)}</td>
             <td>${s.updated_at || '-'}</td>
@@ -874,8 +976,38 @@ function toggleSel(id) { selectedIds.has(id) ? selectedIds.delete(id) : selected
 function clearSelection() { selectedIds.clear(); updateBatch(); }
 function updateBatch() {
     const bar = document.getElementById('batchBar');
+    renderBatchStateButtons();   // 按当前标签刷新"添加/移除"按钮
     if (selectedIds.size > 0) { bar.classList.add('show'); document.getElementById('selectedCount').textContent = selectedIds.size; }
     else { bar.classList.remove('show'); }
+}
+
+// 批量栏的 3 个状态按钮：当前所在标签那个 = 「− 移除该状态」；其余 = 「+ 添加该状态」。
+// 「全部」标签下（currentPoolType=''）全部是添加。
+function renderBatchStateButtons() {
+    const box = document.getElementById('batchStateBtns');
+    if (!box) return;
+    const labels = { watching: '观察', candidate: '候选', trading: '交易中' };
+    box.innerHTML = ['watching', 'candidate', 'trading'].map(st => {
+        if (st === currentPoolType) {
+            return `<button class="btn btn-sm" onclick="batchRemoveState('${st}')" title="从选中股票移除「${labels[st]}」标签">− ${labels[st]}</button>`;
+        }
+        return `<button class="btn btn-sm" onclick="batchAddState('${st}')" title="给选中股票添加「${labels[st]}」标签">+ ${labels[st]}</button>`;
+    }).join('');
+}
+
+// 批量"移除"某状态标签（保留其它状态；不离开股票池）
+async function batchRemoveState(state) {
+    if (!selectedIds.size) return;
+    try {
+        const r = await fetch('/stock_pool/api/remove_state', {
+            method: 'POST',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({ stock_ids: [...selectedIds], state })
+        });
+        const d = await r.json();
+        if (d.success) { toast(d.message, 'ok'); clearSelection(); loadStats(); loadStocks(); }
+        else toast(d.message, 'err');
+    } catch(e) { toast('批量操作失败', 'err'); }
 }
 
 // === 行内「⋯ 更多」菜单：编辑 / 移动到(去掉当前池) / 删除 ===
@@ -1349,6 +1481,30 @@ async function runHealthScan() {
 // === 工具 ===
 function poolName(t) {
     return { trading: '交易中', watching: '观察中', candidate: '候选', archived: '归档', general: '通用', training: '训练', testing: '测试', validation: '验证' }[t] || t;
+}
+
+// 「当前趋势(15m)」列：方向 + 已走振幅/均值振幅（来自最新分布快照）
+function renderCurTrend(s) {
+    const t = s.cur_trend;
+    if (!t || !t.direction) return '<span style="color:#9ca3af;font-size:.75rem;">—</span>';
+    const up = t.direction === 1;
+    const color = up ? '#b91c1c' : '#15803d';
+    const cur = t.amp_current != null ? (t.amp_current * 100).toFixed(1) + '%' : '—';
+    const mean = t.amp_mean != null ? (t.amp_mean * 100).toFixed(1) + '%' : '—';
+    return `<div style="white-space:nowrap;" title="趋势 ${t.signal_name || ''}｜已走振幅 ${cur} / 均值振幅 ${mean}｜快照 ${t.snapshot_date || '—'}">`
+        + `<span style="color:${color};font-weight:600;">${up ? '↑上涨' : '↓下跌'}</span>`
+        + `<div style="font-size:.72rem;color:#6b7280;font-family:monospace;">${cur} / ${mean}</div></div>`;
+}
+
+// 「预估目标价」列：当前周期起点 ×(1±均值振幅)
+function renderEstTarget(s) {
+    const t = s.cur_trend;
+    if (!t || t.target_price == null) return '<span style="color:#9ca3af;">—</span>';
+    const up = t.direction === 1;
+    const color = up ? '#b91c1c' : '#15803d';
+    const start = t.start_price != null ? t.start_price.toFixed(2) : '—';
+    const mean = t.amp_mean != null ? (t.amp_mean * 100).toFixed(1) + '%' : '—';
+    return `<span style="color:${color};font-weight:600;font-family:monospace;" title="起点 ${start} ×(1${up ? '+' : '-'}均值振幅 ${mean}) = 预估${up ? '顶' : '底'}">${t.target_price.toFixed(2)}</span>`;
 }
 
 // 「池」列：渲染该股全部状态标签（每个带 × 可单独移除）+ 一个 ＋ 添加按钮
