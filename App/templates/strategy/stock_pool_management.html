@@ -39,14 +39,14 @@
     <!-- Tab 切换 -->
     <div class="tab-bar">
         <button class="tab active" data-type="" onclick="switchTab(this)">全部</button>
+        <button class="tab" data-type="watching" onclick="switchTab(this)">观察</button>
+        <button class="tab" data-type="candidate" onclick="switchTab(this)">候选</button>
         <button class="tab" data-type="trading" onclick="switchTab(this)">交易中</button>
-        <button class="tab" data-type="watching" onclick="switchTab(this)">观察中</button>
-        <button class="tab" data-type="candidate" onclick="switchTab(this)">候选池</button>
         <div class="tab-right">
-            <div class="search-box">
-                <input type="text" id="searchInput" placeholder="搜索代码/名称/标签..." onkeypress="if(event.key==='Enter')loadStocks()">
-                <button onclick="loadStocks()">搜索</button>
-            </div>
+            <!-- 筛选 -->
+            <select id="boardFilter" class="sort-select" onchange="loadStocks()" title="按所属板块（东财行业）筛选">
+                <option value="">全部板块</option>
+            </select>
             <select id="sortBy" class="sort-select" onchange="loadStocks()">
                 <option value="priority">优先级排序</option>
                 <option value="score_desc">评分从高到低</option>
@@ -54,6 +54,13 @@
                 <option value="updated">最近更新</option>
                 <option value="name">代码排序</option>
             </select>
+            <!-- 搜索 -->
+            <div class="search-box">
+                <input type="text" id="searchInput" placeholder="搜索代码/名称/标签..." onkeypress="if(event.key==='Enter')loadStocks()">
+                <button onclick="loadStocks()">搜索</button>
+            </div>
+            <!-- 重置 -->
+            <button class="reset-btn" onclick="resetFilters()" title="清空板块/排序/搜索并回到「全部」">重置</button>
         </div>
     </div>
 
@@ -61,9 +68,9 @@
     <div class="batch-bar" id="batchBar">
         <span>已选 <strong id="selectedCount">0</strong> 项</span>
         <div class="batch-actions">
-            <button class="btn btn-sm" onclick="batchMove('trading')">移入交易</button>
-            <button class="btn btn-sm" onclick="batchMove('watching')">移入观察</button>
-            <button class="btn btn-sm" onclick="batchMove('candidate')">移入候选</button>
+            <button class="btn btn-sm" onclick="batchAddState('watching')" title="给选中的股票添加「观察」标签">+观察</button>
+            <button class="btn btn-sm" onclick="batchAddState('candidate')" title="给选中的股票添加「候选」标签">+候选</button>
+            <button class="btn btn-sm" onclick="batchAddState('trading')" title="给选中的股票添加「交易中」标签">+交易中</button>
             <button class="btn btn-sm btn-danger" onclick="batchRemove()">移出股票池</button>
             <button class="btn btn-sm" onclick="clearSelection()">取消</button>
         </div>
@@ -404,8 +411,10 @@
 .btn-primary:hover { background: var(--secondary-color); }
 .btn-outline { background: #fff; color: var(--text-primary); border: 1px solid #e2e8f0; }
 .btn-outline:hover { border-color: var(--primary-color); color: var(--primary-color); }
-.btn-danger { background: #ef4444; color: #fff; }
-.btn-danger:hover { background: #dc2626; }
+/* .btn.btn-danger 提高优先级，压过后面 .btn-sm 的 background:#fff，
+   否则「btn btn-sm btn-danger」会变成白底白字看不见。 */
+.btn.btn-danger { background: #ef4444; color: #fff; border: none; }
+.btn.btn-danger:hover { background: #dc2626; color: #fff; }
 .btn-sm { padding: 0.35rem 0.75rem; font-size: 0.8rem; background: #fff; border: 1px solid #e2e8f0; border-radius: 0.4rem; }
 .btn-sm:hover { border-color: var(--primary-color); color: var(--primary-color); }
 
@@ -435,6 +444,8 @@
 .search-box input { border: none; padding: 0.4rem 0.75rem; font-size: 0.85rem; width: 180px; outline: none; }
 .search-box button { background: var(--primary-color); color: #fff; border: none; padding: 0.4rem 0.75rem; cursor: pointer; font-size: 0.85rem; }
 .sort-select { padding: 0.4rem 0.6rem; border: 1px solid #e2e8f0; border-radius: 0.5rem; font-size: 0.85rem; background: #fff; cursor: pointer; }
+.reset-btn { padding: 0.4rem 0.85rem; border: 1px solid #e2e8f0; border-radius: 0.5rem; font-size: 0.85rem; background: #fff; color: var(--text-secondary); cursor: pointer; white-space: nowrap; }
+.reset-btn:hover { border-color: var(--primary-color); color: var(--primary-color); }
 
 /* 批量操作 */
 .batch-bar { display: none; align-items: center; justify-content: space-between; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 0.5rem; padding: 0.6rem 1rem; margin-bottom: 0.75rem; font-size: 0.9rem; color: var(--primary-color); }
@@ -456,6 +467,13 @@
 .pool-tag.watching { background: #fffbeb; color: #d97706; }
 .pool-tag.candidate { background: #eff6ff; color: #2563eb; }
 .pool-tag.archived { background: #f3f4f6; color: #6b7280; }
+/* 多状态：标签内的移除 × + 添加 ＋ 按钮 */
+.state-cell { display: flex; align-items: center; gap: 0.25rem; flex-wrap: wrap; }
+.pool-tag .tag-x { margin-left: 0.25rem; font-style: normal; cursor: pointer; opacity: 0.55; font-weight: 700; }
+.pool-tag .tag-x:hover { opacity: 1; }
+.tag-add { width: 18px; height: 18px; line-height: 16px; text-align: center; padding: 0; border: 1px dashed #cbd5e1; background: #fff; color: #64748b; border-radius: 50%; cursor: pointer; font-size: 0.8rem; }
+.tag-add:hover { border-color: var(--primary-color); color: var(--primary-color); }
+.no-state { color: #cbd5e1; font-size: 0.75rem; }
 
 /* 评分 */
 .score-cell { display: flex; align-items: center; gap: 0.4rem; }
@@ -584,16 +602,72 @@ let currentPoolType = '';
 let selectedIds = new Set();
 
 document.addEventListener('DOMContentLoaded', () => {
+    const params = new URLSearchParams(location.search);
     // 从 URL ?search=<code> 自动锚定（从 /trade/real 跳来时用）
-    const qsSearch = new URLSearchParams(location.search).get('search');
+    const qsSearch = params.get('search');
     if (qsSearch) {
         const input = document.getElementById('searchInput');
         if (input) input.value = qsSearch.trim();
     }
-    loadStats();
+    // 从 URL ?tab=all|trading|watching|candidate 选中对应标签（兼容 ?pool_type=）
+    let tab = (params.get('tab') || params.get('pool_type') || '').trim();
+    if (tab === 'all') tab = '';
+    setActiveTab(tab);
+    loadStats();   // 内部会 loadBoards()，故此处不再单独调用
     loadStocks();
     setupStockAutocomplete('addCode', 'addName', 'addCodeDropdown', 'addNameDropdown');
 });
+
+// 拉取股票池里实际出现的板块，填充板块筛选下拉。
+//   - 始终按当前活跃池重算（含数量），所以移除某板块全部股票后该项会消失/计数更新；
+//   - 若当前选中的板块已无股票 → 复位为「全部」并刷新列表，避免卡在空板块。
+async function loadBoards() {
+    try {
+        const r = await fetch('/stock_pool/api/boards');
+        const d = await r.json();
+        if (!d.success) return;
+        const sel = document.getElementById('boardFilter');
+        if (!sel) return;
+        const cur = sel.value;
+        const data = d.data || [];
+        const codes = new Set(data.map(b => b.board_code));
+        sel.innerHTML = '<option value="">全部板块</option>' +
+            data.map(b => `<option value="${b.board_code}">${b.board_name}（${b.count}）</option>`).join('');
+        if (cur && codes.has(cur)) {
+            sel.value = cur;            // 选中板块仍有股票 → 保留
+        } else if (cur) {
+            sel.value = '';            // 选中板块已无股票 → 回到「全部」并重载列表
+            loadStocks();
+        }
+    } catch (e) { /* 板块下拉失败不影响主列表 */ }
+}
+
+// 选中指定标签（type: ''=全部 / trading / watching / candidate；未知值回退到「全部」）
+function setActiveTab(type) {
+    let matched = false;
+    document.querySelectorAll('.tab').forEach(t => {
+        const on = (t.dataset.type || '') === (type || '');
+        t.classList.toggle('active', on);
+        if (on) matched = true;
+    });
+    if (!matched) {
+        const allBtn = document.querySelector('.tab[data-type=""]');
+        if (allBtn) allBtn.classList.add('active');
+        type = '';
+    }
+    currentPoolType = type || '';
+}
+
+// 把当前标签 + 搜索写回 URL，便于分享/刷新/前进后退
+function syncTabUrl() {
+    const params = new URLSearchParams(location.search);
+    if (currentPoolType) params.set('tab', currentPoolType);
+    else params.delete('tab');                 // 「全部」= 不带 tab，URL 干净
+    const sv = (document.getElementById('searchInput')?.value || '').trim();
+    if (sv) params.set('search', sv); else params.delete('search');
+    const qs = params.toString();
+    history.replaceState(null, '', qs ? location.pathname + '?' + qs : location.pathname);
+}
 
 // === 统计 ===
 async function loadStats() {
@@ -608,6 +682,9 @@ async function loadStats() {
         document.getElementById('statCandidate').textContent = dist.candidate || 0;
         document.getElementById('statAvgScore').textContent = d.data.avg_score || 0;
     } catch(e) { console.error(e); }
+    // 池子成分可能变了（增删/移出/移入）→ 同步刷新板块下拉。
+    // loadStats() 是所有变更操作后的统一刷新点，挂这里即可覆盖全部入口。
+    loadBoards();
 }
 
 // === Tab 切换 ===
@@ -617,6 +694,19 @@ function switchTab(el) {
     currentPoolType = el.dataset.type;
     currentPage = 1;
     clearSelection();
+    syncTabUrl();
+    loadStocks();
+}
+
+// 重置：清空 板块/排序/搜索，回到「全部」标签
+function resetFilters() {
+    document.getElementById('searchInput').value = '';
+    const bf = document.getElementById('boardFilter'); if (bf) bf.value = '';
+    document.getElementById('sortBy').value = 'priority';
+    setActiveTab('');
+    currentPage = 1;
+    clearSelection();
+    syncTabUrl();
     loadStocks();
 }
 
@@ -631,6 +721,7 @@ async function loadStocks(page) {
         page_size: 20,
         pool_type: currentPoolType,
         search: document.getElementById('searchInput').value,
+        board: (document.getElementById('boardFilter') || {}).value || '',
         sort_by: document.getElementById('sortBy').value,
         is_active: 'true'
     });
@@ -735,7 +826,7 @@ function renderTable(stocks) {
             <td class="col-cb"><input type="checkbox" value="${s.id}" ${selectedIds.has(s.id)?'checked':''} onchange="toggleSel(${s.id})"></td>
             <td class="col-code"><a href="/stock_trend/stock/${s.stock_code}" target="_blank" title="查看 ${s.stock_code} 个股详情" style="color:#2563eb;text-decoration:none;font-weight:600;">${s.stock_code}</a></td>
             <td><a href="/stock_trend/stock/${s.stock_code}" target="_blank" title="查看 ${s.stock_name || s.stock_code} 个股详情" style="color:#2563eb;text-decoration:none;">${s.stock_name || '-'}</a></td>
-            <td><span class="pool-tag ${s.pool_type}">${poolName(s.pool_type)}</span></td>
+            <td>${renderStateTags(s)}</td>
             <td><div class="score-cell">
                 <span class="score-val" style="color:${scoreColor}">${s.score.toFixed(1)}</span>
                 <div class="score-bar"><div class="score-fill" style="width:${s.score}%;background:${scoreColor}"></div></div>
@@ -793,14 +884,7 @@ function showRowMenu(e, stockId, poolType, code) {
     e.stopPropagation();
     document.querySelectorAll('.dropdown-menu.show').forEach(m => m.remove());
 
-    const moveItems = [
-        ['trading', '移到交易中'],
-        ['watching', '移到观察中'],
-        ['candidate', '移到候选池'],
-    ].filter(([t]) => t !== poolType)
-     .map(([t, label]) => `<button class="dropdown-item" onclick="confirmAndMove(${stockId},'${t}','${code}','${label}')">${label}</button>`)
-     .join('');
-
+    // 多状态下：加/减状态标签在「池」列用 ＋ / × 完成；此菜单只留 编辑 + 移出股票池
     const menu = document.createElement('div');
     menu.className = 'dropdown-menu show';
     menu.style.position = 'fixed';
@@ -809,10 +893,7 @@ function showRowMenu(e, stockId, poolType, code) {
     menu.innerHTML = `
         <button class="dropdown-item" onclick="editStock(${stockId})">&#9998; 编辑</button>
         <div class="dropdown-divider"></div>
-        <div class="dropdown-label">移动到</div>
-        ${moveItems}
-        <div class="dropdown-divider"></div>
-        <button class="dropdown-item danger" onclick="removeStock(${stockId},'${code}')">&#8592; 移出股票池</button>
+        <button class="dropdown-item danger" onclick="removeStock(${stockId},'${code}')">&#8592; 移出股票池（清空所有状态）</button>
     `;
     document.body.appendChild(menu);
 
@@ -847,17 +928,8 @@ async function moveStock(stockId, poolType) {
 // 观察 → 买入(交易) / 降级候选 / 排除
 // 每行只保留「主操作」= 该池最常见的下一步；其余移动入 ⋯ 菜单的"移动到"。
 //   候选 → ↑观察    观察 → ↑买入(交易)    交易 → ✓清仓(移出股票池)
-function renderPrimaryAction(s) {
-    const id = s.id, code = s.stock_code;
-    const btn = (target, label, color) =>
-        `<button class="act-btn ctx-${color}" onclick="confirmAndMove(${id},'${target}','${code}','${label}')" title="${label}">${label}</button>`;
-    if (s.pool_type === 'candidate') return btn('watching', '↑观察', 'green');
-    if (s.pool_type === 'watching')  return btn('trading', '↑买入', 'blue');
-    // 清仓 = 卖出后移出股票池(软删，记录保留)
-    if (s.pool_type === 'trading')
-        return `<button class="act-btn ctx-gray" onclick="removeStock(${id},'${code}')" title="清仓并移出股票池">✓清仓</button>`;
-    return '';
-}
+// 多状态后不再有单一"下一步"，加/减状态在「池」列完成；操作列只保留 ⋯ 菜单。
+function renderPrimaryAction(s) { return ''; }
 
 async function confirmAndMove(stockId, poolType, code, action) {
     // 关键操作（买入=入交易池）需要二次确认
@@ -867,13 +939,14 @@ async function confirmAndMove(stockId, poolType, code, action) {
 }
 
 // === 批量操作 ===
-async function batchMove(poolType) {
+// 批量"添加"状态标签（保留已有状态）
+async function batchAddState(state) {
     if (!selectedIds.size) return;
     try {
-        const r = await fetch('/stock_pool/api/batch_update', {
+        const r = await fetch('/stock_pool/api/add_state', {
             method: 'POST',
             headers: {'Content-Type':'application/json'},
-            body: JSON.stringify({ stock_ids: [...selectedIds], updates: { pool_type: poolType }})
+            body: JSON.stringify({ stock_ids: [...selectedIds], state })
         });
         const d = await r.json();
         if (d.success) { toast(d.message, 'ok'); clearSelection(); loadStats(); loadStocks(); }
@@ -881,14 +954,14 @@ async function batchMove(poolType) {
     } catch(e) { toast('批量操作失败', 'err'); }
 }
 
-// 批量移出股票池：软删(is_active=false)，保留记录，可重新添加恢复
+// 批量移出股票池：软删(is_active=false) + 清空所有状态，记录保留可重新添加恢复
 async function batchRemove() {
-    if (!selectedIds.size || !confirm(`确定将选中的 ${selectedIds.size} 只股票移出股票池？(记录保留，可重新添加恢复)`)) return;
+    if (!selectedIds.size || !confirm(`确定将选中的 ${selectedIds.size} 只股票移出股票池？(清空状态，记录保留可重新添加)`)) return;
     try {
         const r = await fetch('/stock_pool/api/batch_update', {
             method: 'POST',
             headers: {'Content-Type':'application/json'},
-            body: JSON.stringify({ stock_ids: [...selectedIds], updates: { is_active: false }})
+            body: JSON.stringify({ stock_ids: [...selectedIds], updates: { is_active: false, pool_states: '', pool_type: '' }})
         });
         const d = await r.json();
         if (d.success) { toast(`已移出 ${selectedIds.size} 只`, 'ok'); clearSelection(); loadStats(); loadStocks(); }
@@ -1276,6 +1349,61 @@ async function runHealthScan() {
 // === 工具 ===
 function poolName(t) {
     return { trading: '交易中', watching: '观察中', candidate: '候选', archived: '归档', general: '通用', training: '训练', testing: '测试', validation: '验证' }[t] || t;
+}
+
+// 「池」列：渲染该股全部状态标签（每个带 × 可单独移除）+ 一个 ＋ 添加按钮
+function renderStateTags(s) {
+    const states = s.pool_states || [];
+    const csv = states.join(',');
+    const tags = states.map(st =>
+        `<span class="pool-tag ${st}">${poolName(st)}<i class="tag-x" onclick="removeState(${s.id},'${st}')" title="移除${poolName(st)}">×</i></span>`
+    ).join(' ');
+    const add = `<button class="tag-add" onclick="showAddStateMenu(event,${s.id},'${csv}')" title="添加状态标签">＋</button>`;
+    return `<div class="state-cell">${tags || '<span class="no-state">无状态</span>'}${add}</div>`;
+}
+
+// ＋ 添加状态：弹出"该股尚未拥有的状态"供选择
+function showAddStateMenu(e, stockId, statesCsv) {
+    e.stopPropagation();
+    document.querySelectorAll('.dropdown-menu.show').forEach(m => m.remove());
+    const have = new Set((statesCsv || '').split(',').filter(Boolean));
+    const items = [['watching', '观察中'], ['candidate', '候选'], ['trading', '交易中']]
+        .filter(([t]) => !have.has(t))
+        .map(([t, label]) => `<button class="dropdown-item" onclick="addState(${stockId},'${t}')">+ ${label}</button>`)
+        .join('');
+    const menu = document.createElement('div');
+    menu.className = 'dropdown-menu show';
+    menu.style.position = 'fixed';
+    menu.style.left = e.clientX + 'px';
+    menu.style.top = e.clientY + 'px';
+    menu.innerHTML = items || '<div class="dropdown-item" style="color:#9ca3af;cursor:default;">已包含全部状态</div>';
+    document.body.appendChild(menu);
+    const rect = menu.getBoundingClientRect();
+    if (rect.bottom > window.innerHeight) menu.style.top = Math.max(8, e.clientY - rect.height) + 'px';
+    if (rect.right > window.innerWidth) menu.style.left = Math.max(8, e.clientX - rect.width) + 'px';
+    setTimeout(() => document.addEventListener('click', function h() { menu.remove(); document.removeEventListener('click', h); }), 0);
+}
+
+async function addState(stockId, state) {
+    try {
+        const r = await fetch('/stock_pool/api/add_state', {
+            method: 'POST', headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({ stock_ids: [stockId], state })
+        });
+        const d = await r.json();
+        if (d.success) { toast(d.message, 'ok'); loadStats(); loadStocks(); } else toast(d.message, 'err');
+    } catch (e) { toast('添加状态失败', 'err'); }
+}
+
+async function removeState(stockId, state) {
+    try {
+        const r = await fetch('/stock_pool/api/remove_state', {
+            method: 'POST', headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({ stock_ids: [stockId], state })
+        });
+        const d = await r.json();
+        if (d.success) { toast(d.message, 'ok'); loadStats(); loadStocks(); } else toast(d.message, 'err');
+    } catch (e) { toast('移除状态失败', 'err'); }
 }
 
 function toast(msg, type='ok') {

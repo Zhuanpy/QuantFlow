@@ -7,7 +7,7 @@ from App.exts import db
 from App.models.strategy.StockPool import StockPool
 from App.models.data.Stock1m import RecordStockMinute
 from App.models.data.basic_info import StockCodes
-from sqlalchemy import text, and_, or_
+from sqlalchemy import text, and_, or_, bindparam
 from datetime import datetime, date
 import logging
 import csv
@@ -23,6 +23,57 @@ stock_pool_bp = Blueprint('stock_pool', __name__, url_prefix='/stock_pool')
 def stock_pool_page():
     """股票池管理页面"""
     return render_template('strategy/stock_pool_management.html')
+
+
+def _codes_latest_boards(codes):
+    """codes → {stock_code: (board_code, board_name)}，按 industry_eastmoney 最新日期取一个板块。
+
+    与列表里展示的"所属板块"同口径（每只股票取 MAX(date) 那条），用于板块筛选/下拉。
+    """
+    codes = [c for c in codes if c]
+    if not codes:
+        return {}
+    eng = db.engines['quanttradingsystem']
+    stmt = text('''
+        SELECT t.stock_code, t.board_code, t.board_name
+          FROM industry_eastmoney t
+          JOIN (SELECT stock_code, MAX(date) mx FROM industry_eastmoney
+                 WHERE stock_code IN :codes GROUP BY stock_code) m
+            ON t.stock_code = m.stock_code AND t.date = m.mx
+         WHERE t.stock_code IN :codes
+    ''').bindparams(bindparam('codes', expanding=True))
+    out = {}
+    try:
+        with eng.connect() as conn:
+            for r in conn.execute(stmt, {'codes': codes}).fetchall():
+                out.setdefault(r.stock_code, (r.board_code, r.board_name))
+    except Exception:
+        logger.exception('[pool] 取板块映射失败')
+    return out
+
+
+@stock_pool_bp.route('/api/boards')
+def get_pool_boards():
+    """当前活跃股票池里出现的板块（最新口径）+ 计数，供板块筛选下拉用。"""
+    try:
+        from collections import Counter
+        codes = [r.stock_code for r in
+                 StockPool.query.filter(StockPool.is_active == True,
+                                        StockPool.is_excluded == False)
+                 .with_entities(StockPool.stock_code).all()]
+        cb = _codes_latest_boards(codes)
+        cnt, names = Counter(), {}
+        for _c, (bc, bn) in cb.items():
+            if bc:
+                cnt[bc] += 1
+                names[bc] = bn
+        boards = [{'board_code': bc, 'board_name': names.get(bc) or bc, 'count': n}
+                  for bc, n in cnt.items()]
+        boards.sort(key=lambda x: (-x['count'], x['board_name'] or ''))
+        return jsonify({'success': True, 'data': boards})
+    except Exception as e:
+        logger.error(f"获取股票池板块失败: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
 
 
 @stock_pool_bp.route('/api/statistics')
@@ -58,7 +109,8 @@ def get_stocks():
         query = StockPool.query
 
         if pool_type:
-            query = query.filter(StockPool.pool_type == pool_type)
+            # 多状态：标签页命中"拥有该状态"的股票（即使同时还在别的状态里）
+            query = query.filter(text("FIND_IN_SET(:pt, pool_states)").bindparams(pt=pool_type))
         if industry:
             query = query.filter(StockPool.industry == industry)
         if is_active.lower() == 'true':
@@ -75,6 +127,15 @@ def get_stocks():
                 StockPool.stock_name.like(f'%{search}%'),
                 StockPool.tags.like(f'%{search}%')
             ))
+
+        # 板块筛选：只保留"最新所属板块 == 选定 board_code"的池内股票
+        board = (request.args.get('board') or '').strip()
+        if board:
+            cur_codes = [r.stock_code for r in
+                         query.with_entities(StockPool.stock_code).all()]
+            cb = _codes_latest_boards(cur_codes)
+            keep = {c for c, (bc, _bn) in cb.items() if bc == board}
+            query = query.filter(StockPool.stock_code.in_(keep or {'__none__'}))
 
         # 排序
         if sort_by == 'score_desc':
@@ -122,7 +183,6 @@ def get_stocks():
 
             # 批量查所属板块（industry_eastmoney），优先用每只股票最新一条记录
             try:
-                from sqlalchemy import text
                 eng = db.engines['quanttradingsystem']
                 with eng.connect() as conn:
                     rows = conn.execute(text(
@@ -350,12 +410,63 @@ def remove_stock(stock_id):
     try:
         stock = StockPool.query.get_or_404(stock_id)
         stock.is_active = False
+        stock.set_states([])   # 移出股票池 → 清空所有状态标签
         db.session.commit()
         return jsonify({'success': True, 'message': f'已移出股票池：{stock.stock_code}'})
     except Exception as e:
         db.session.rollback()
         logger.error(f"移出股票池失败: {e}")
         return jsonify({'success': False, 'message': f'移出失败: {str(e)}'}), 500
+
+
+@stock_pool_bp.route('/api/add_state', methods=['POST'])
+def api_add_state():
+    """给一只或多只股票"添加"一个状态标签（保留已有状态）。
+    body: { stock_ids: [..], state: 'watching'|'candidate'|'trading' }
+    """
+    try:
+        data = request.get_json(silent=True) or {}
+        ids = [int(i) for i in (data.get('stock_ids') or []) if str(i).strip()]
+        state = (data.get('state') or '').strip()
+        if not ids or state not in StockPool.VALID_STATES:
+            return jsonify({'success': False, 'message': '参数有误（stock_ids / state）'}), 400
+        n = 0
+        for sid in ids:
+            stock = StockPool.query.get(sid)
+            if stock:
+                stock.add_state(state)
+                n += 1
+        db.session.commit()
+        return jsonify({'success': True, 'message': f'已为 {n} 只添加「{state}」标签', 'updated': n})
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"添加状态失败: {e}")
+        return jsonify({'success': False, 'message': f'添加状态失败: {str(e)}'}), 500
+
+
+@stock_pool_bp.route('/api/remove_state', methods=['POST'])
+def api_remove_state():
+    """移除一只或多只股票的某个状态标签（允许移到 0 标签，仍留在池中）。
+    body: { stock_ids: [..], state: '...' }
+    """
+    try:
+        data = request.get_json(silent=True) or {}
+        ids = [int(i) for i in (data.get('stock_ids') or []) if str(i).strip()]
+        state = (data.get('state') or '').strip()
+        if not ids or state not in StockPool.VALID_STATES:
+            return jsonify({'success': False, 'message': '参数有误（stock_ids / state）'}), 400
+        n = 0
+        for sid in ids:
+            stock = StockPool.query.get(sid)
+            if stock:
+                stock.remove_state(state)
+                n += 1
+        db.session.commit()
+        return jsonify({'success': True, 'message': f'已移除 {n} 只的「{state}」标签', 'updated': n})
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"移除状态失败: {e}")
+        return jsonify({'success': False, 'message': f'移除状态失败: {str(e)}'}), 500
 
 
 @stock_pool_bp.route('/api/delete/<int:stock_id>', methods=['DELETE'])

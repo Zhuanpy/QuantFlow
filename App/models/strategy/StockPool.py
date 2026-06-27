@@ -30,7 +30,11 @@ class StockPool(db.Model):
     stock_name = db.Column(db.String(50), nullable=True, comment='股票名称')
 
     # 股票池分类: trading(交易中) / watching(观察中) / candidate(候选) / archived(归档)
-    pool_type = db.Column(db.String(20), default='candidate', comment='股票池类型')
+    # pool_type 保留为"主状态"（按 STATE_PRIORITY 从 pool_states 派生），供 screener /
+    # stock_stats 等按单一 pool_type 过滤的页面继续使用，不破坏既有逻辑。
+    pool_type = db.Column(db.String(20), default='candidate', comment='主状态(由pool_states派生)')
+    # 多状态集合：一只股票可同时属于 观察/候选/交易 任意组合（逗号分隔）。允许为空（在池但无状态）。
+    pool_states = db.Column(db.String(64), nullable=True, comment='多状态集合,逗号分隔 watching/candidate/trading')
     pool_priority = db.Column(db.Integer, default=3, comment='优先级：1-5，5最高')
 
     # 综合评分
@@ -74,8 +78,34 @@ class StockPool(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow, comment='创建时间')
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, comment='更新时间')
 
+    # 三个可叠加的状态；STATE_PRIORITY 决定"主状态"(pool_type)取哪个：交易 > 观察 > 候选
+    VALID_STATES = ('watching', 'candidate', 'trading')
+    STATE_PRIORITY = ('trading', 'watching', 'candidate')
+
     def __repr__(self):
-        return f'<StockPool {self.stock_code}:{self.stock_name} - {self.pool_type}>'
+        return f'<StockPool {self.stock_code}:{self.stock_name} - {self.pool_states or "-"}>'
+
+    # ---------------- 多状态 helpers（均不 commit，由调用方负责）----------------
+    def get_states(self):
+        """当前状态列表（按 STATE_PRIORITY 排序，去掉非法值）。"""
+        raw = [s.strip() for s in (self.pool_states or '').split(',') if s.strip()]
+        return [s for s in self.STATE_PRIORITY if s in raw]
+
+    def set_states(self, states):
+        """整体设置状态集合：规范化 + 同步派生 pool_type（主状态）。空集合 → pool_type=''。"""
+        norm = [s for s in self.STATE_PRIORITY if s in set(states)]
+        self.pool_states = ','.join(norm)
+        self.pool_type = norm[0] if norm else ''
+        self.updated_at = datetime.utcnow()
+
+    def add_state(self, state):
+        """新增一个状态标签（已存在则无操作）。"""
+        if state in self.VALID_STATES:
+            self.set_states(self.get_states() + [state])
+
+    def remove_state(self, state):
+        """移除一个状态标签（允许移到空集合，仍留在池中）。"""
+        self.set_states([s for s in self.get_states() if s != state])
 
     @classmethod
     def create_from_record(cls, record_id: int, stock_code: str, stock_name: str = None,
@@ -89,6 +119,8 @@ class StockPool(db.Model):
                 pool_type=pool_type,
                 **kwargs
             )
+            if pool_type in cls.VALID_STATES:
+                stock_pool.set_states([pool_type])
             db.session.add(stock_pool)
             db.session.commit()
             logger.info(f"成功创建股票池条目: {stock_code}")
@@ -109,6 +141,8 @@ class StockPool(db.Model):
                 pool_type=pool_type,
                 **kwargs
             )
+            if pool_type in cls.VALID_STATES:
+                stock_pool.set_states([pool_type])
             db.session.add(stock_pool)
             db.session.commit()
             logger.info(f"手动添加股票池条目: {stock_code}")
@@ -258,11 +292,13 @@ class StockPool(db.Model):
             active_stocks = cls.query.filter_by(is_active=True, is_excluded=False).count()
             training_ready = cls.query.filter_by(is_training_ready=True, is_active=True).count()
 
-            # 按类型统计
-            type_stats = db.session.query(
-                cls.pool_type,
-                db.func.count(cls.id).label('count')
-            ).filter_by(is_active=True, is_excluded=False).group_by(cls.pool_type).all()
+            # 按状态统计（多状态：一只股票若同时在多个状态，会在每个里都计入）
+            type_distribution = {}
+            for st in cls.VALID_STATES:
+                type_distribution[st] = cls.query.filter(
+                    cls.is_active == True, cls.is_excluded == False,
+                    db.text("FIND_IN_SET(:st, pool_states)").bindparams(st=st)
+                ).count()
 
             # 按行业统计
             industry_stats = db.session.query(
@@ -281,7 +317,7 @@ class StockPool(db.Model):
                 'training_ready': training_ready,
                 'excluded_stocks': total_stocks - active_stocks,
                 'avg_score': round(avg_score, 1),
-                'type_distribution': {item.pool_type: item.count for item in type_stats},
+                'type_distribution': type_distribution,
                 'industry_distribution': {item.industry: item.count for item in industry_stats if item.industry}
             }
         except Exception as e:
@@ -296,6 +332,7 @@ class StockPool(db.Model):
             'stock_code': self.stock_code,
             'stock_name': self.stock_name,
             'pool_type': self.pool_type,
+            'pool_states': self.get_states(),
             'pool_priority': self.pool_priority,
             'score': self.score,
             'score_trend': self.score_trend,
