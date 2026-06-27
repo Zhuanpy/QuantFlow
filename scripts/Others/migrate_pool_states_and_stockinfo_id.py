@@ -5,6 +5,8 @@
    回填 = 原 pool_type。这是"股票池多状态"功能的前提，缺它股票池页会报错。
 2) data_stock_info 回填 id 为 NULL 的行（该表无自增主键，id 由应用层手动分配 = max+1）。
    这些 NULL-id 行无法在 /stock_market_data 按 id 编辑/删除/筛选。
+3) stock_dist_snapshot 新增 cur_start_price / cur_last_price（当前周期起点/最新价），
+   供股票池"预估目标价"。加完需重算快照才有值。
 
 两处都在 quanttradingsystem 库。换机器/部署后拉了新代码，跑一次本脚本即可。
 
@@ -54,6 +56,23 @@ def migrate_pool_states(engine):
         print('    活跃池主状态分布：' + ', '.join(f'{t or "(空)"}={n}' for t, n in rs))
 
 
+def migrate_dist_snapshot_cols(engine):
+    """stock_dist_snapshot 新增 cur_start_price / cur_last_price（当前周期起点/最新价），
+    供股票池"预估目标价"= 起点×(1±均值振幅)。加完需重算快照才有值：
+        python scripts/Others/compute_dist_snapshots.py            # 原始口径
+        python scripts/Others/compute_dist_snapshots.py --merge-below 5
+    """
+    table = 'stock_dist_snapshot'
+    cols = {c['name'] for c in inspect(engine).get_columns(table)}
+    with engine.begin() as conn:
+        for col in ('cur_start_price', 'cur_last_price'):
+            if col in cols:
+                print(f'OK  列 {table}.{col} 已存在，跳过')
+            else:
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} FLOAT NULL"))
+                print(f'OK  已新增列 {table}.{col}')
+
+
 def migrate_stockinfo_id(engine):
     table = 'data_stock_info'
     with engine.begin() as conn:
@@ -79,7 +98,9 @@ def main():
         migrate_pool_states(engine)
         print('== 2) data_stock_info.id 回填 ==')
         migrate_stockinfo_id(engine)
-        print('\n迁移完成。')
+        print('== 3) stock_dist_snapshot.cur_start_price / cur_last_price ==')
+        migrate_dist_snapshot_cols(engine)
+        print('\n迁移完成。若刚加了快照列，记得重算快照才有"预估目标价"。')
 
 
 if __name__ == '__main__':

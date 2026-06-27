@@ -145,6 +145,13 @@ def _build_cycles(df: pd.DataFrame, as_of_ts: Optional[pd.Timestamp]) -> list:
         else:
             completed = None
 
+        # 起点价 / 最新价（供"预估目标价"用）：起点=flip行StartPrice；最新=末根 close
+        last_price = None
+        if has_close:
+            _cl = pd.to_numeric(g['close'], errors='coerce').dropna()
+            if len(_cl):
+                last_price = float(_cl.iloc[-1])
+
         cycles.append({
             'direction': direction,
             'signal_start': sidx,          # 该周期的 SignalStartIndex（起始时间），用于拼趋势名
@@ -152,6 +159,8 @@ def _build_cycles(df: pd.DataFrame, as_of_ts: Optional[pd.Timestamp]) -> list:
             'amplitude_max': amp,
             'cycle_1m_vol_max5': v5,
             'completed': completed,
+            'start_price': sp_at_flip,
+            'last_price': last_price,
         })
     return cycles
 
@@ -272,6 +281,16 @@ def _build_cycles_merged(df: pd.DataFrame, as_of_ts: Optional[pd.Timestamp],
             completed = bool(g['SignalChoice'].notna().any())
         else:
             completed = None
+        # 起点价 / 最新价（供"预估目标价"用）
+        start_price = None
+        if has_sp:
+            _sp2 = pd.to_numeric(g['StartPrice'], errors='coerce').dropna()
+            if len(_sp2):
+                start_price = float(_sp2.iloc[0])
+        last_price = None
+        _cl = pd.to_numeric(g['close'], errors='coerce').dropna() if 'close' in g.columns else []
+        if len(_cl):
+            last_price = float(_cl.iloc[-1])
         cycles.append({
             'direction': direction,
             'signal_start': df['SignalStartIndex'].iloc[a],
@@ -279,6 +298,8 @@ def _build_cycles_merged(df: pd.DataFrame, as_of_ts: Optional[pd.Timestamp],
             'amplitude_max': amp,
             'cycle_1m_vol_max5': v5,
             'completed': completed,
+            'start_price': start_price,
+            'last_price': last_price,
         })
     return cycles
 
@@ -415,6 +436,9 @@ def compute_dist_snapshot(code: str,
     row.current_direction = current_direction
     # 当前周期趋势名（与 15m 页「当前趋势」一致）：方向词 + #起始时间(YYMMDD-HHMM)
     row.current_signal_name = _signal_name_of(current_direction, current_cycle.get('signal_start'))
+    # 当前周期起点价/最新价（供股票池"预估目标价"用）
+    row.cur_start_price = current_cycle.get('start_price')
+    row.cur_last_price = current_cycle.get('last_price')
 
     _assign(row, 'len_up', len_up)
     _assign(row, 'len_dn', len_dn)

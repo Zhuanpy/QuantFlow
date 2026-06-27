@@ -45,6 +45,9 @@ class StockDistSnapshot(db.Model):
                                   comment='当前未完成周期方向：1=上涨 / -1=下跌 / 0=未知')
     current_signal_name = db.Column(db.String(40), nullable=True,
                                     comment='当前周期趋势名（↑涨/↓跌#YYMMDD-HHMM，与15m页一致）')
+    # 当前(进行中)周期的起点价 / 最新价，用于算"预估目标价"= 起点×(1±均值振幅)
+    cur_start_price = db.Column(db.Float, nullable=True, comment='当前周期起点价')
+    cur_last_price = db.Column(db.Float, nullable=True, comment='当前周期最新价')
 
     # ---- 周期长度 CycleLengthMax ----
     # 上涨周期
