@@ -264,6 +264,11 @@ def _sync_static_info(rows: list, source: str = 'eastmoney_clist') -> Dict[str, 
     info_created = 0
     now = _dt.utcnow()
 
+    # data_stock_info 无自增主键，新行必须手动分配 id（= 当前 max+1 递增），否则会写入
+    # id=NULL 的"幽灵行"，无法在 /stock_market_data 按 id 编辑/删除/筛选。
+    from sqlalchemy import func as _func
+    _next_id = int((db.session.query(_func.max(StockInfo.id)).scalar() or 0)) + 1
+
     for r in rows:
         code = r.get('stock_code')
         new_name = r.get('stock_name')
@@ -271,9 +276,10 @@ def _sync_static_info(rows: list, source: str = 'eastmoney_clist') -> Dict[str, 
             continue
         cur = existing.get(code)
         if cur is None:
-            # 新股票（首次见到），补一条 data_stock_info
-            db.session.add(StockInfo(code=code, name=new_name,
+            # 新股票（首次见到），补一条 data_stock_info（显式分配 id）
+            db.session.add(StockInfo(id=_next_id, code=code, name=new_name,
                                      created_at=now, updated_at=now))
+            _next_id += 1
             info_created += 1
             continue
         old_name = (cur.name or '').strip()

@@ -10,21 +10,30 @@
         </button>
     </div>
 
-    <!-- 搜索和筛选 -->
-    <div class="search-section">
+    <!-- 搜索和筛选（服务端，按整表筛选）-->
+    <form class="search-section" method="get" action="{{ url_for('data_bp.stock_market_data') }}">
         <div class="search-box">
-            <input type="text" id="searchInput" placeholder="搜索股票代码或名称..." onkeyup="filterTable()">
-            <button class="btn btn-secondary" onclick="clearSearch()">清除</button>
+            <input type="text" name="search" value="{{ filters.search or '' }}" placeholder="搜索股票代码或名称...">
         </div>
         <div class="filter-box">
-            <select id="marketFilter" onchange="filterTable()">
-                <option value="">所有市场</option>
-                <option value="SH">上海</option>
-                <option value="SZ">深圳</option>
-                <option value="BJ">北京</option>
+            <label>收盘数据</label>
+            <select name="in_download">
+                <option value="" {% if not filters.in_download %}selected{% endif %}>全部</option>
+                <option value="yes" {% if filters.in_download == 'yes' %}selected{% endif %}>✓ 在收盘数据中</option>
+                <option value="no" {% if filters.in_download == 'no' %}selected{% endif %}>✗ 不在</option>
             </select>
         </div>
-    </div>
+        <div class="filter-box">
+            <label>股票池</label>
+            <select name="in_pool">
+                <option value="" {% if not filters.in_pool %}selected{% endif %}>全部</option>
+                <option value="yes" {% if filters.in_pool == 'yes' %}selected{% endif %}>✓ 在股票池中</option>
+                <option value="no" {% if filters.in_pool == 'no' %}selected{% endif %}>✗ 不在</option>
+            </select>
+        </div>
+        <button type="submit" class="btn btn-primary">筛选</button>
+        <a class="btn btn-secondary" href="{{ url_for('data_bp.stock_market_data') }}">清除</a>
+    </form>
 
     <!-- 数据表格 -->
     <div class="table-container">
@@ -34,6 +43,8 @@
                     <th>ID</th>
                     <th>股票名称</th>
                     <th>股票代码</th>
+                    <th>收盘数据</th>
+                    <th>股票池</th>
                     <th>东方财富代码</th>
                     <th>市场代码</th>
                     <th>通达信市场</th>
@@ -48,6 +59,8 @@
                     <td>{{ stock.id }}</td>
                     <td>{{ stock.name }}</td>
                     <td>{{ stock.code }}</td>
+                    <td>{% if stock.in_download %}<span class="mk-badge yes">✓ 已下载</span>{% else %}<span class="mk-badge no">—</span>{% endif %}</td>
+                    <td>{% if stock.in_pool %}<span class="mk-badge pool">✓ {{ {'trading':'交易','watching':'观察','candidate':'候选','archived':'归档'}.get(stock.pool_type, stock.pool_type or '在池') }}</span>{% else %}<span class="mk-badge no">—</span>{% endif %}</td>
                     <td>{{ stock.es_code or '-' }}</td>
                     <td>{{ stock.market_code or '-' }}</td>
                     <td>{{ stock.txd_market or '-' }}</td>
@@ -67,13 +80,13 @@
     <!-- 分页 -->
     <div class="pagination">
         {% if pagination.has_prev %}
-            <a href="{{ url_for('data_bp.stock_market_data', page=pagination.prev_num) }}" class="btn btn-secondary">上一页</a>
+            <a href="{{ url_for('data_bp.stock_market_data', page=pagination.prev_num, search=filters.search, in_download=filters.in_download, in_pool=filters.in_pool) }}" class="btn btn-secondary">上一页</a>
         {% endif %}
-        
-        <span class="page-info">第 {{ pagination.page }} 页，共 {{ pagination.pages }} 页</span>
-        
+
+        <span class="page-info">第 {{ pagination.page }} 页，共 {{ pagination.pages }} 页（命中 {{ pagination.total }} 条）</span>
+
         {% if pagination.has_next %}
-            <a href="{{ url_for('data_bp.stock_market_data', page=pagination.next_num) }}" class="btn btn-secondary">下一页</a>
+            <a href="{{ url_for('data_bp.stock_market_data', page=pagination.next_num, search=filters.search, in_download=filters.in_download, in_pool=filters.in_pool) }}" class="btn btn-secondary">下一页</a>
         {% endif %}
     </div>
 </div>
@@ -189,6 +202,16 @@
     font-size: 14px;
     min-width: 120px;
 }
+
+.search-section { flex-wrap: wrap; }
+.filter-box { display: flex; align-items: center; gap: 6px; }
+.filter-box label { font-size: 13px; color: #6b7280; white-space: nowrap; }
+
+/* 成员标记徽章：是否在收盘数据 / 股票池 */
+.mk-badge { display: inline-block; padding: 2px 8px; border-radius: 9999px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+.mk-badge.yes  { background: #dcfce7; color: #15803d; }   /* 已下载 = 绿 */
+.mk-badge.pool { background: #ede9fe; color: #6d28d9; }   /* 在池 = 紫 */
+.mk-badge.no   { background: transparent; color: #cbd5e1; font-weight: 400; }
 
 .table-container {
     background: white;
@@ -382,33 +405,57 @@
 <script>
 let currentStockId = null;
 
+// 表单共用：编辑/新增可写、查看只读（只读时隐藏「保存」按钮）
+function setModalEditable(editable) {
+    ['name','code','es_code','market_code','txd_market','hs_market'].forEach(f => {
+        document.getElementById(f).readOnly = !editable;
+    });
+    const saveBtn = document.querySelector('#stockForm button[type=submit]');
+    if (saveBtn) saveBtn.style.display = editable ? '' : 'none';
+}
+
+function fillStockForm(data) {
+    document.getElementById('name').value = data.name || '';
+    document.getElementById('code').value = data.code || '';
+    document.getElementById('es_code').value = data.es_code || '';
+    document.getElementById('market_code').value = data.market_code || '';
+    document.getElementById('txd_market').value = data.txd_market || '';
+    document.getElementById('hs_market').value = data.hs_market || '';
+}
+
 function showAddModal() {
     document.getElementById('modalTitle').textContent = '添加股票市场数据';
     document.getElementById('stockForm').reset();
     currentStockId = null;
+    setModalEditable(true);
     document.getElementById('stockModal').style.display = 'block';
 }
 
 function editStock(id) {
-    // 这里应该通过AJAX获取股票数据
     fetch(`/data/stock/${id}`)
         .then(response => response.json())
         .then(data => {
+            if (!data || data.success === false) { alert('加载失败：' + (data && data.message || '未找到')); return; }
             document.getElementById('modalTitle').textContent = '编辑股票市场数据';
-            document.getElementById('name').value = data.name;
-            document.getElementById('code').value = data.code;
-            document.getElementById('es_code').value = data.es_code || '';
-            document.getElementById('market_code').value = data.market_code || '';
-            document.getElementById('txd_market').value = data.txd_market || '';
-            document.getElementById('hs_market').value = data.hs_market || '';
+            fillStockForm(data);
             currentStockId = id;
+            setModalEditable(true);
             document.getElementById('stockModal').style.display = 'block';
         });
 }
 
 function viewStock(id) {
-    // 跳转到详情页面
-    window.location.href = `/data/stock/${id}`;
+    // 只读查看：复用同一弹窗，禁用输入并隐藏保存（不再跳到 JSON 接口）
+    fetch(`/data/stock/${id}`)
+        .then(response => response.json())
+        .then(data => {
+            if (!data || data.success === false) { alert('加载失败：' + (data && data.message || '未找到')); return; }
+            document.getElementById('modalTitle').textContent = '查看股票市场数据';
+            fillStockForm(data);
+            currentStockId = null;
+            setModalEditable(false);
+            document.getElementById('stockModal').style.display = 'block';
+        });
 }
 
 function deleteStock(id) {
@@ -441,29 +488,7 @@ function confirmDelete() {
     closeDeleteModal();
 }
 
-function filterTable() {
-    const searchTerm = document.getElementById('searchInput').value.toLowerCase();
-    const marketFilter = document.getElementById('marketFilter').value;
-    const table = document.getElementById('stockTable');
-    const rows = table.getElementsByTagName('tbody')[0].getElementsByTagName('tr');
-
-    for (let row of rows) {
-        const name = row.cells[1].textContent.toLowerCase();
-        const code = row.cells[2].textContent.toLowerCase();
-        const marketCode = row.cells[4].textContent;
-        
-        const matchesSearch = name.includes(searchTerm) || code.includes(searchTerm);
-        const matchesMarket = !marketFilter || marketCode.includes(marketFilter);
-        
-        row.style.display = matchesSearch && matchesMarket ? '' : 'none';
-    }
-}
-
-function clearSearch() {
-    document.getElementById('searchInput').value = '';
-    document.getElementById('marketFilter').value = '';
-    filterTable();
-}
+// 搜索/筛选已改为服务端（顶部 <form method=get> 提交），不再需要前端 filterTable
 
 // 表单提交处理
 document.getElementById('stockForm').addEventListener('submit', function(e) {

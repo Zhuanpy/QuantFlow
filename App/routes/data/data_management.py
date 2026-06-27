@@ -1,9 +1,10 @@
 from flask import Blueprint, render_template, request, jsonify, redirect, url_for, flash, send_file
 from App.models.data.basic_info import StockClassification, StockCodes
 from App.models.data.Stock1m import RecordStockMinute
+from App.models.strategy.StockPool import StockPool
 from App.exts import db
 from datetime import datetime
-from sqlalchemy import text
+from sqlalchemy import text, or_
 import csv
 import io
 import os
@@ -20,8 +21,156 @@ def stock_classification():
 @data_bp.route('/stock_market_data')
 def stock_market_data():
     page = request.args.get('page', 1, type=int)
-    pagination = StockCodes.query.order_by(StockCodes.id.desc()).paginate(page=page, per_page=20, error_out=False)
-    return render_template('data/stock_market_data.html', pagination=pagination, stocks=pagination.items)
+    search = (request.args.get('search') or '').strip()
+    in_download = (request.args.get('in_download') or '').strip()   # '' | yes | no
+    in_pool = (request.args.get('in_pool') or '').strip()           # '' | yes | no
+
+    # 两个"我的"集合（都在 quanttradingsystem 库，集合很小）：
+    #   下载/收盘数据 = data_download_records 里出现过的 stock_code_id
+    #   股票池        = strategy_stock_pool 里 is_active 的 code → pool_type
+    dl_ids = {r[0] for r in db.session.query(RecordStockMinute.stock_code_id).distinct().all()
+              if r[0] is not None}
+    pool_map = {r.stock_code: r.pool_type
+                for r in StockPool.query.filter(StockPool.is_active == True).all()}
+    pool_codes = set(pool_map.keys())
+
+    q = StockCodes.query
+    if search:
+        like = f'%{search}%'
+        q = q.filter(or_(StockCodes.code.like(like), StockCodes.name.like(like)))
+    if in_download == 'yes':
+        q = q.filter(StockCodes.id.in_(dl_ids or {-1}))
+    elif in_download == 'no':
+        # NULL id 的行 NOT IN 会得 NULL（被排除），显式并入"不在"，避免漏掉这些行
+        q = q.filter(or_(StockCodes.id.is_(None), ~StockCodes.id.in_(dl_ids or {-1})))
+    if in_pool == 'yes':
+        q = q.filter(StockCodes.code.in_(pool_codes or {'__none__'}))
+    elif in_pool == 'no':
+        q = q.filter(~StockCodes.code.in_(pool_codes or {'__none__'}))
+
+    pagination = q.order_by(StockCodes.id.desc()).paginate(page=page, per_page=20, error_out=False)
+    stocks = pagination.items
+    # 给当页每行打上"是否在收盘数据 / 是否在股票池"标记（瞬态属性，模板直接读）
+    for s in stocks:
+        s.in_download = s.id in dl_ids
+        s.in_pool = s.code in pool_codes
+        s.pool_type = pool_map.get(s.code)
+
+    return render_template('data/stock_market_data.html', pagination=pagination, stocks=stocks,
+                           filters={'search': search, 'in_download': in_download, 'in_pool': in_pool})
+
+
+# ---------------- data_stock_info（全市场代码表）CRUD ----------------
+# 配合 stock_market_data.html 的「添加 / 编辑 / 删除 / 查看」按钮。
+# data_bp 未设 url_prefix，故路径直接就是前端调用的 /data/stock[/<id>]。
+
+def _stock_info_to_dict(s):
+    """GET 用：字段放在顶层（前端 editStock/viewStock 直接读 data.name 等）。"""
+    return {
+        'success': True,
+        'id': s.id,
+        'name': s.name,
+        'code': s.code,
+        'es_code': s.EsCode,
+        'market_code': s.MarketCode,
+        'txd_market': s.TxdMarket,
+        'hs_market': s.HsMarket,
+        'created_at': s.created_at.strftime('%Y-%m-%d %H:%M:%S') if s.created_at else None,
+    }
+
+
+def _stock_info_payload():
+    """从 FormData(优先) 或 JSON 取字段并 strip。映射前端 snake_case → 模型字段名。"""
+    src = request.form if request.form else (request.get_json(silent=True) or {})
+
+    def g(k):
+        v = src.get(k)
+        return v.strip() if isinstance(v, str) else v
+
+    return {
+        'name': g('name'), 'code': g('code'),
+        'EsCode': g('es_code'), 'MarketCode': g('market_code'),
+        'TxdMarket': g('txd_market'), 'HsMarket': g('hs_market'),
+    }
+
+
+@data_bp.route('/data/stock', methods=['POST'])
+def add_stock_info():
+    """新增一条全市场股票/板块代码记录。
+
+    注意：data_stock_info 表无自增主键（id 仅为普通索引，由数据导入流程外部分配），
+    因此这里必须手动分配 id = max(id)+1，且不在 commit 后再访问实例属性（会触发
+    按 PK 重查而报 ObjectDeletedError）。
+    """
+    try:
+        from sqlalchemy import func
+        p = _stock_info_payload()
+        if not p['name'] or not p['code']:
+            return jsonify({'success': False, 'message': '股票名称和代码不能为空'}), 400
+        new_id = int((db.session.query(func.max(StockCodes.id)).scalar() or 0)) + 1
+        stock = StockCodes(id=new_id, name=p['name'], code=p['code'], EsCode=p['EsCode'],
+                           MarketCode=p['MarketCode'], TxdMarket=p['TxdMarket'],
+                           HsMarket=p['HsMarket'])
+        db.session.add(stock)
+        db.session.commit()
+        return jsonify({'success': True, 'message': '添加成功', 'id': new_id})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'message': f'添加失败: {e}'}), 500
+
+
+@data_bp.route('/data/stock/<int:id>', methods=['GET'])
+def get_stock_info(id):
+    """取单条（编辑/查看回填用）。"""
+    stock = StockCodes.query.get(id)
+    if not stock:
+        return jsonify({'success': False, 'message': '未找到该股票'}), 404
+    return jsonify(_stock_info_to_dict(stock))
+
+
+@data_bp.route('/data/stock/<int:id>', methods=['PUT'])
+def update_stock_info(id):
+    """更新单条。"""
+    try:
+        stock = StockCodes.query.get(id)
+        if not stock:
+            return jsonify({'success': False, 'message': '未找到该股票'}), 404
+        p = _stock_info_payload()
+        if not p['name'] or not p['code']:
+            return jsonify({'success': False, 'message': '股票名称和代码不能为空'}), 400
+        stock.name = p['name']
+        stock.code = p['code']
+        stock.EsCode = p['EsCode']
+        stock.MarketCode = p['MarketCode']
+        stock.TxdMarket = p['TxdMarket']
+        stock.HsMarket = p['HsMarket']
+        db.session.commit()
+        return jsonify({'success': True, 'message': '更新成功'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'message': f'更新失败: {e}'}), 500
+
+
+@data_bp.route('/data/stock/<int:id>', methods=['DELETE'])
+def delete_stock_info(id):
+    """删除单条。注意：data_download_records / data_1m_* 通过 stock_code_id 外键
+    (ondelete=CASCADE) 关联本表，删代码可能连带其下载记录/1m 数据，请谨慎。"""
+    try:
+        stock = StockCodes.query.get(id)
+        if not stock:
+            return jsonify({'success': False, 'message': '未找到该股票'}), 404
+        # 友好拦截：若仍有下载记录引用，提示先处理，避免误删连带数据
+        ref = RecordStockMinute.query.filter_by(stock_code_id=id).count()
+        if ref:
+            return jsonify({'success': False,
+                            'message': f'该代码下还有 {ref} 条下载记录，删除会连带清除其数据；'
+                                       f'请先在「股票分钟数据记录」处理后再删。'}), 409
+        db.session.delete(stock)
+        db.session.commit()
+        return jsonify({'success': True, 'message': '删除成功'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'message': f'删除失败: {e}'}), 500
 
 # RecordStockMinute 管理路由
 @data_bp.route('/record_stock_minute')
