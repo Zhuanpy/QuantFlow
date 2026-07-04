@@ -975,10 +975,17 @@ function _fmtDT(d) {
 // 以 15m 方向为「当前这一波」的基准，数更高周期(30m/60m)与之同向的确认数：
 //   0 个确认(逆势小回调) / 1 个 / 2 个(三周期共振) → P = 65 / 80 / 90。
 // 想调整口径直接改这张表；若想让 60m 比 30m 更重，可换成按权重打分（见下方注释）。
-// 振幅与长度用「不同」的分位表（长度对趋势没振幅那么敏感，整体取更低分位）：
-//   更高周期同向确认数 0/1/2 → 振幅 P 65/80/90，长度 P 50/65/75。
-const MTF_P_TABLE_AMP = { 0: 65, 1: 80, 2: 90 };
-const MTF_P_TABLE_LEN = { 0: 50, 1: 65, 2: 75 };
+// 分位表按「当前波方向」区分（上涨/下跌不对称），再按更高周期同向确认数 0/1/2 取值。
+//   下跌：振幅 P 65/80/90，长度 P 50/65/75
+//   上涨：振幅 P 55/65/80，长度 P 50/65/75（长度暂与下跌同表，待定）
+const MTF_P_TABLE_AMP = {
+  up:   { 0: 55, 1: 65, 2: 80 },
+  down: { 0: 65, 1: 80, 2: 90 },
+};
+const MTF_P_TABLE_LEN = {
+  up:   { 0: 50, 1: 65, 2: 75 },
+  down: { 0: 50, 1: 65, 2: 75 },
+};
 let MTF_DIRS = null;      // {'15m':±1,'30m':±1,'60m':±1}
 // 多周期自动定 P 始终生效（无需勾选）：每次 loadCycles 都按 15/30/60 趋势覆盖分位。
 
@@ -1019,8 +1026,9 @@ async function applyMtfP() {
   if (st) st.textContent = '读取 15m/30m/60m 趋势…';
   MTF_DIRS = await fetchMtfDirs();
   const conf = mtfConfirmCount(MTF_DIRS);
-  const pAmp = conf != null ? MTF_P_TABLE_AMP[conf] : null;
-  const pLen = conf != null ? MTF_P_TABLE_LEN[conf] : null;
+  const dir = MTF_DIRS['15m'] > 0 ? 'up' : MTF_DIRS['15m'] < 0 ? 'down' : null;
+  const pAmp = (conf != null && dir) ? MTF_P_TABLE_AMP[dir][conf] : null;
+  const pLen = (conf != null && dir) ? MTF_P_TABLE_LEN[dir][conf] : null;
   if (st) st.textContent = mtfStateText(MTF_DIRS, pAmp, pLen);
   if (conf == null) return;
   AMP_PCT = pAmp; LEN_PCT = pLen;
@@ -1038,7 +1046,7 @@ function mtfControlHtml() {
     + `    <button onclick="applyMtfP()" title="立即按 15m/30m/60m 当前趋势重算 P" style="margin-left:auto;padding:.12rem .5rem;border:1px solid #c4b5fd;background:#fff;border-radius:5px;cursor:pointer;font-size:.74rem;color:#4f46e5;">🎯 重新计算</button>`
     + `  </div>`
     + `  <div id="mtfStateTxt" style="color:#6b7280;margin-top:.35rem;font-family:monospace;font-size:.78rem;">读取 15m/30m/60m 趋势…</div>`
-    + `  <div style="color:#9ca3af;font-size:.72rem;margin-top:.2rem;">同向确认 0/1/2 → 振幅 P 65/80/90 · 长度 P 50/65/75（共振越多分位越高）</div>`
+    + `  <div style="color:#9ca3af;font-size:.72rem;margin-top:.2rem;">确认0/1/2 → 上涨 振幅P55/65/80 · 下跌 振幅P65/80/90 · 长度P50/65/75</div>`
     + `</div>`;
 }
 
