@@ -2,10 +2,38 @@
 Flask应用工厂
 """
 from flask import Flask
+from flask.json.provider import DefaultJSONProvider
 from App.exts import db
 from App.utils.file_utils import ensure_data_directories
 import os
 from config import Config
+
+
+class SafeJSONProvider(DefaultJSONProvider):
+    """容忍 pandas/numpy 缺失值的 JSON 提供器。
+
+    parquet/重采样出来的行常带 pd.NA（NAType）或 numpy 标量，直接 jsonify 会抛
+    `Object of type NAType is not JSON serializable`。这里统一把缺失值转成 null、
+    numpy 标量转成原生 Python 值，避免任一接口因单个脏值整体 500。
+    """
+
+    @staticmethod
+    def default(o):
+        import numpy as np
+        import pandas as pd
+        # numpy 标量 → 原生（NaN 转 None）
+        if isinstance(o, np.generic):
+            if isinstance(o, np.floating) and np.isnan(o):
+                return None
+            return o.item()
+        # pd.NA / NaT / 其它 pandas 标量缺失值 → None
+        try:
+            if pd.isna(o):
+                return None
+        except (TypeError, ValueError):
+            pass
+        return DefaultJSONProvider.default(o)
+
 
 def create_app(config_name='default'):
     """
@@ -18,7 +46,11 @@ def create_app(config_name='default'):
         Flask应用实例
     """
     app = Flask(__name__)
-    
+
+    # 用容忍 pandas/numpy 缺失值的 JSON 提供器（pd.NA / NaN → null），
+    # 避免 parquet/重采样脏值让接口整体 500
+    app.json = SafeJSONProvider(app)
+
     # 加载配置
     app.config.from_object(Config)
     

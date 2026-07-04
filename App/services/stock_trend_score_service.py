@@ -189,6 +189,17 @@ def compute_and_persist(stock_codes: List[str], record_date: date) -> dict:
     """
     from App.exts import db
     from App.models.evaluation.StockTrendScore import StockTrendScore
+    from App.models.data.basic_info import StockInfo
+
+    # eval_stock_trend_score.stock_name 为 NOT NULL；批量解析名称，缺失则用代码占位
+    name_map = {}
+    try:
+        for r in (StockInfo.query.filter(StockInfo.code.in_(stock_codes))
+                  .with_entities(StockInfo.code, StockInfo.name).all()):
+            if r.name:
+                name_map[r.code] = r.name
+    except Exception:
+        logger.warning('批量取股票名称失败，stock_name 将用代码占位')
 
     ok, fail = 0, 0
     errors, updated = [], []
@@ -201,6 +212,7 @@ def compute_and_persist(stock_codes: List[str], record_date: date) -> dict:
                 errors.append({'stock_code': code, 'error': r.error})
                 StockTrendScore.upsert(
                     stock_code=code, record_date=record_date,
+                    stock_name=name_map.get(code) or code,
                     trend_stage='unknown', trend_stage_confidence=0.0,
                     trend_strength='none', signal='none',
                     formula_version=FORMULA_VERSION, is_manual=False,
@@ -210,6 +222,7 @@ def compute_and_persist(stock_codes: List[str], record_date: date) -> dict:
 
             StockTrendScore.upsert(
                 stock_code=code, record_date=record_date,
+                stock_name=name_map.get(code) or code,
                 trend_stage=r.trend_stage,
                 trend_stage_confidence=r.trend_stage_confidence,
                 trend_strength=r.trend_strength,

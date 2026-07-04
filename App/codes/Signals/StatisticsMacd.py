@@ -238,6 +238,21 @@ class StatisticsMACD:
         # 删除'SignalChoice'列为空的行
         drops = data.dropna(subset=[SignalChoice])
 
+        # 预置结束价相关列：下面循环仅在 i>0（第二个信号起）才创建它们，
+        # 若信号数≤1（数据很短/新股只有几天）循环不建列，后面
+        # StartPrice = EndPrice.shift(1) 会因缺列抛 KeyError。先建空列兜底。
+        # 注意 dtype：EndPrice/EndDaily1mVolMax5 是数值(float)；
+        # 而 EndPriceIndex 存的是时间戳索引，必须用 datetime64/NaT——
+        #   · float64 列写 Timestamp 会抛 "Invalid value ... for dtype 'float64'"；
+        #   · object 列的空值是 float nan，下游 `data['date'] < ed_time` 会抛
+        #     "Invalid comparison between datetime64 and float"。
+        # 用 NaT：既能接纳 Timestamp 赋值，未填处又是 NaT（与 date 比较安全，全 False）。
+        for _col in (EndPrice, 'EndDaily1mVolMax5'):
+            if _col not in data.columns:
+                data[_col] = float('nan')
+        if EndPriceIndex not in data.columns:
+            data[EndPriceIndex] = pd.Series(pd.NaT, index=data.index)
+
         for i, index in zip(range(len(drops)), drops.index):
 
             if i > 0:  # 从第二个信号开始处理
