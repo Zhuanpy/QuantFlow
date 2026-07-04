@@ -8,9 +8,10 @@
 
 趋势打分见 board_trend，个人偏好见 board_pref，整体看板见 board_overview。
 """
-from flask import Blueprint, render_template, request, jsonify
+from flask import Blueprint, render_template, request, jsonify, current_app
 from datetime import datetime, date
 import logging
+import re
 import pandas as pd
 from sqlalchemy import text
 
@@ -41,6 +42,167 @@ def board_detail_page():
     """
     code = request.args.get('code', '')
     return render_template('strategy/board_detail.html', board_code=code)
+
+
+@board_data_bp.route('/members')
+def board_members_page():
+    """板块成分股管理页：列出该板块成分股，可按趋势/信号/是否在池筛选，
+    多选一键加入股票池。代码用查询参数：/board_data/members?code=BK1033
+    """
+    code = request.args.get('code', '')
+    return render_template('strategy/board_members.html', board_code=code)
+
+
+@board_data_bp.route('/api/repair_members', methods=['POST'])
+def api_repair_members():
+    """后台修复某板块全部成分股的 1m 数据（本地 zip + TDX 近期 + 重生成 15m）。"""
+    from App.services.minute_data_repair import start_repair, DEFAULT_ZIP_DIR
+    data = request.get_json(silent=True) or {}
+    code = (data.get('board_code') or '').strip()
+    if not code:
+        return jsonify({'success': False, 'message': '缺少 board_code'}), 400
+    codes = _board_member_codes(code)
+    app = current_app._get_current_object()
+    ok, msg = start_repair(app, code, codes, zip_dir=(data.get('zip_dir') or DEFAULT_ZIP_DIR),
+                           then_trend=bool(data.get('with_trend')))
+    return jsonify({'success': ok, 'message': msg, 'count': len(codes)}), (200 if ok else 409)
+
+
+@board_data_bp.route('/api/repair_status')
+def api_repair_status():
+    from App.services.minute_data_repair import get_status
+    return jsonify({'success': True, 'data': get_status()})
+
+
+@board_data_bp.route('/api/build_synth', methods=['POST'])
+def api_build_synth():
+    """用成分股(重新)合成「我的板块」指数（写到合成代码 BKxxxxS，不覆盖东财数据）。"""
+    from App.services.board_synth_service import start_build
+    data = request.get_json(silent=True) or {}
+    code = (data.get('board_code') or '').strip()
+    if not code:
+        return jsonify({'success': False, 'message': '缺少 board_code'}), 400
+    weighting = (data.get('weighting') or 'circ').strip()   # circ/total/equal
+    tfs = data.get('timeframes') or ['daily', '15m']
+    app = current_app._get_current_object()
+    ok, msg = start_build(app, code, weighting=weighting, timeframes=tfs)
+    return jsonify({'success': ok, 'message': msg}), (200 if ok else 409)
+
+
+@board_data_bp.route('/api/build_synth_status')
+def api_build_synth_status():
+    from App.services.board_synth_service import get_status
+    return jsonify({'success': True, 'data': get_status()})
+
+
+@board_data_bp.route('/api/synth_exists')
+def api_synth_exists():
+    """该板块是否已有合成数据（供前端切「我的合成」前判断，未合成则引导先合成）。"""
+    from App.services.board_synth_service import synth_exists
+    code = (request.args.get('board_code') or '').strip()
+    if not code:
+        return jsonify({'success': False, 'message': '缺少 board_code'}), 400
+    return jsonify({'success': True, 'data': synth_exists(code)})
+
+
+def _board_member_codes(code):
+    """取某板块最新成分股的 6 位个股代码。"""
+    eng = db.engines['quanttradingsystem']
+    with eng.connect() as conn:
+        rows = conn.execute(text(
+            """
+            SELECT ie.stock_code FROM industry_eastmoney ie
+            INNER JOIN (SELECT board_code, MAX(date) d FROM industry_eastmoney
+                        WHERE board_code = :c GROUP BY board_code) m
+              ON m.board_code = ie.board_code AND m.d = ie.date
+            WHERE ie.board_code = :c
+            """
+        ), {'c': code}).fetchall()
+    return [r[0] for r in rows if r[0] and re.fullmatch(r'\d{6}', str(r[0]))]
+
+
+@board_data_bp.route('/api/recompute_trend', methods=['POST'])
+def api_recompute_trend():
+    """后台重算某板块全部成分股的 个股趋势打分 + 分布快照（数据修复后用）。"""
+    from App.services.minute_data_repair import start_trend_recompute
+    data = request.get_json(silent=True) or {}
+    code = (data.get('board_code') or '').strip()
+    if not code:
+        return jsonify({'success': False, 'message': '缺少 board_code'}), 400
+    codes = _board_member_codes(code)
+    app = current_app._get_current_object()
+    ok, msg = start_trend_recompute(app, code, codes)
+    return jsonify({'success': ok, 'message': msg, 'count': len(codes)}), (200 if ok else 409)
+
+
+@board_data_bp.route('/api/recompute_trend_status')
+def api_recompute_trend_status():
+    from App.services.minute_data_repair import get_trend_status
+    return jsonify({'success': True, 'data': get_trend_status()})
+
+
+def _mkt_prefix(code):
+    """股票代码 → 市场前缀(与 data_stock_info 口径一致)：sh/sz/bj。"""
+    if code.startswith('920') or code.startswith(('4', '8')):
+        return 'bj'
+    if code.startswith(('6', '5', '9')):
+        return 'sh'
+    return 'sz'
+
+
+@board_data_bp.route('/api/add_to_download', methods=['POST'])
+def api_add_to_download():
+    """把选中成分股加入每日收盘下载表单(data_download_records)。
+
+    body: { codes: [...] }
+    不在 data_stock_info 的会先自动登记(id=max+1, 名取自板块成分股名单)；
+    已在下载表单的跳过。返回 added/skipped/registered。
+    """
+    from App.models.data.basic_info import StockInfo
+    from App.models.data.Stock1m import DownloadRecord
+    data = request.get_json(silent=True) or {}
+    codes = [str(c).strip() for c in (data.get('codes') or []) if str(c).strip()]
+    if not codes:
+        return jsonify({'success': False, 'message': '未选择股票'}), 400
+    # 名字兜底：板块成分股名单
+    name_map = {}
+    eng = db.engines['quanttradingsystem']
+    with eng.connect() as conn:
+        for c in codes:
+            r = conn.execute(text(
+                "SELECT stock_name FROM industry_eastmoney WHERE stock_code=:c "
+                "AND stock_name IS NOT NULL AND stock_name<>'' ORDER BY date DESC LIMIT 1"),
+                {'c': c}).fetchone()
+            if r and r[0]:
+                name_map[c] = r[0]
+    added = skipped = registered = 0
+    try:
+        next_id = db.session.query(db.func.max(StockInfo.id)).scalar() or 1000000
+        for code in codes:
+            s = StockInfo.find_stock(code) or StockInfo.query.filter_by(code=code).first()
+            if not s:
+                next_id += 1
+                pfx = _mkt_prefix(code)
+                s = StockInfo(id=next_id, code=code, name=name_map.get(code),
+                              EsCode=code, MarketCode=f'{pfx}{code}', TxdMarket=pfx, HsMarket=pfx)
+                db.session.add(s)
+                db.session.flush()
+                registered += 1
+            if DownloadRecord.query.filter_by(stock_code_id=s.id).first():
+                skipped += 1
+                continue
+            db.session.add(DownloadRecord(
+                stock_code_id=s.id, download_status='pending', download_progress=0.0,
+                end_date=date.today(), record_date=date.today(),
+                total_records=0, downloaded_records=0))
+            added += 1
+        db.session.commit()
+        return jsonify({'success': True, 'added': added, 'skipped': skipped,
+                        'registered': registered, 'total': len(codes)})
+    except Exception as e:
+        db.session.rollback()
+        logger.exception('加入下载表单失败')
+        return jsonify({'success': False, 'message': str(e)}), 500
 
 
 # ===================== 主表 CRUD =====================
@@ -634,7 +796,7 @@ def api_board_chart_60m(code):
                 return jsonify({'success': False,
                                 'message': f'区间 {start_date_s} ~ {end_date_s} 内无 60m 数据'}), 404
         else:
-            bars = max(12, min(int(request.args.get('bars', 48)), 3000))
+            bars = max(12, min(int(request.args.get('bars', 120)), 3000))
             d60 = d60.tail(bars).reset_index(drop=True)
 
         def _r(v, n=4):
@@ -834,15 +996,18 @@ def api_board_stocks(code):
             .all())
         score_map = {s.stock_code: s for s in scores}
 
+        # 实时市值拉取较慢(东财 HTTP，~10s+)。默认拉实时(保持板块详情页原行为)；
+        # ?live=0 走快照市值(秒开)，成分股管理页用这个。
         cap_source = 'snapshot'
         live_cap = {}
-        try:
-            live_members = em_industry_cons_via_http(code, retries=1)
-            live_cap = {m['stock_code']: m for m in live_members}
-            if live_cap:
-                cap_source = 'live'
-        except Exception as e:
-            logger.info(f'板块 {code} 实时市值拉取失败，使用快照值：{e}')
+        if (request.args.get('live') or '1') == '1':
+            try:
+                live_members = em_industry_cons_via_http(code, retries=1)
+                live_cap = {m['stock_code']: m for m in live_members}
+                if live_cap:
+                    cap_source = 'live'
+            except Exception as e:
+                logger.info(f'板块 {code} 实时市值拉取失败，使用快照值：{e}')
 
         out = []
         for r in rows:
@@ -861,6 +1026,102 @@ def api_board_stocks(code):
                 'total_cap': total_cap,
                 'circ_cap': circ_cap,
             })
+
+        # 市值兜底：本板块快照里 cap 为空（旧名单从未刷过市值）时，
+        # 回退到该股「跨所有板块最新一条非空市值」——与个股详情页同口径。
+        missing = [o['stock_code'] for o in out if o['total_cap'] is None]
+        if missing:
+            try:
+                from sqlalchemy import bindparam
+                with eng.connect() as conn:
+                    fb_rows = conn.execute(
+                        text(
+                            '''
+                            SELECT ie.stock_code, ie.total_cap, ie.circ_cap, ie.date
+                              FROM industry_eastmoney ie
+                              JOIN (SELECT stock_code, MAX(date) AS mx
+                                      FROM industry_eastmoney
+                                     WHERE stock_code IN :codes AND total_cap IS NOT NULL
+                                     GROUP BY stock_code) m
+                                ON m.stock_code = ie.stock_code AND m.mx = ie.date
+                             WHERE ie.total_cap IS NOT NULL
+                            '''
+                        ).bindparams(bindparam('codes', expanding=True)),
+                        {'codes': missing},
+                    ).fetchall()
+                fb = {}
+                for fr in fb_rows:
+                    fb.setdefault(fr[0], fr)   # 同一最新日期可能多板块，取其一
+                for o in out:
+                    if o['total_cap'] is None and o['stock_code'] in fb:
+                        fr = fb[o['stock_code']]
+                        o['total_cap'] = float(fr[1]) if fr[1] is not None else None
+                        o['circ_cap'] = float(fr[2]) if fr[2] is not None else None
+                        o['cap_fallback'] = fr[3].isoformat() if fr[3] else True
+                if cap_source == 'snapshot' and any(o.get('cap_fallback') for o in out):
+                    cap_source = 'snapshot+fallback'
+            except Exception:
+                logger.exception('板块成分股市值跨板块兜底失败')
+
+        # 附加：是否在我的股票池(活跃) + 其状态标签
+        try:
+            from App.models.strategy.StockPool import StockPool
+            pool = {p.stock_code: p.get_states() for p in
+                    StockPool.query.filter(StockPool.stock_code.in_(stock_codes),
+                                           StockPool.is_active == True).all()}
+            for o in out:
+                st = pool.get(o['stock_code'])
+                o['in_pool'] = st is not None
+                o['pool_states'] = st or []
+        except Exception:
+            logger.exception('板块成分股取股票池状态失败')
+            for o in out:
+                o.setdefault('in_pool', False)
+                o.setdefault('pool_states', [])
+
+        # 附加：是否在每日收盘下载表单(data_download_records)
+        try:
+            from App.models.data.basic_info import StockInfo
+            from App.models.data.Stock1m import DownloadRecord
+            id_by_code = {}
+            for r in (StockInfo.query.filter(StockInfo.code.in_(stock_codes))
+                      .with_entities(StockInfo.id, StockInfo.code).all()):
+                id_by_code.setdefault(r.code, r.id)
+            ids = list(id_by_code.values())
+            dl_ids = ({r.stock_code_id for r in
+                       DownloadRecord.query.filter(DownloadRecord.stock_code_id.in_(ids))
+                       .with_entities(DownloadRecord.stock_code_id).all()} if ids else set())
+            for o in out:
+                o['in_download'] = id_by_code.get(o['stock_code']) in dl_ids
+        except Exception:
+            logger.exception('板块成分股取下载表单状态失败')
+            for o in out:
+                o.setdefault('in_download', False)
+
+        # 附加：1m 数据更新到哪天（看完整性）——读各 code 最新季度 parquet 的 date 列最大值
+        try:
+            from pathlib import Path
+            from config import Config
+            dq = Path(Config.get_project_root()) / 'data' / 'quarters'
+            # 所有 year/Q 目录，按时间倒序（最新在前），只扫一次
+            qdirs = sorted([d for y in dq.iterdir() if y.is_dir()
+                            for d in y.iterdir() if d.is_dir()],
+                           key=lambda d: (d.parent.name, d.name), reverse=True) if dq.exists() else []
+            for o in out:
+                o['m1_last'] = None
+                for qd in qdirs:
+                    p = qd / f"{o['stock_code']}.parquet"
+                    if p.exists():
+                        try:
+                            dd = pd.read_parquet(p, columns=['date'])
+                            o['m1_last'] = pd.to_datetime(dd['date']).max().strftime('%Y-%m-%d')
+                        except Exception:
+                            pass
+                        break  # 最新季度即最新数据
+        except Exception:
+            logger.exception('板块成分股取 1m 最新日期失败')
+            for o in out:
+                o.setdefault('m1_last', None)
 
         # 板块权重：按流通市值占比（东财行业板块指数=流通市值加权，此即真实口径）
         total_circ = sum(o['circ_cap'] for o in out if o.get('circ_cap'))
@@ -967,6 +1228,49 @@ def api_refresh_members():
         return jsonify({'success': False, 'message': str(e)}), 500
 
 
+def _tdx_caps(stock_codes):
+    """TDX(pytdx) 兜底取市值：总市值=总股本×现价, 流通市值=流通股本×现价（单位 元）。
+    返回 {code: (total_cap, circ_cap)}；连不上或全失败返回 {}。
+    """
+    from App.codes.downloads.DlPytdx import AVAILABLE_SERVERS, get_market
+    from pytdx.hq import TdxHq_API
+    api = None
+    for ip, port in AVAILABLE_SERVERS:
+        try:
+            a = TdxHq_API()
+            if a.connect(ip, port, time_out=5):
+                api = a
+                break
+        except Exception:
+            continue
+    if api is None:
+        logger.info('刷市值：TDX 兜底也连不上服务器')
+        return {}
+    out = {}
+    try:
+        for code in stock_codes:
+            try:
+                m = get_market(code)
+                fi = api.get_finance_info(m, code) or {}
+                q = api.get_security_quotes([(m, code)])
+                price = q[0]['price'] if q else None
+                if not price or price <= 0:
+                    continue
+                ltg, zg = fi.get('liutongguben'), fi.get('zongguben')
+                total = round(zg * price) if zg else None
+                circ = round(ltg * price) if ltg else None
+                if total or circ:
+                    out[code] = (total, circ)
+            except Exception:
+                continue
+    finally:
+        try:
+            api.disconnect()
+        except Exception:
+            pass
+    return out
+
+
 @board_data_bp.route('/api/refresh_caps', methods=['POST'])
 def api_refresh_caps():
     """刷新成分股市值（基于 industry_eastmoney 已有名单）。
@@ -1016,9 +1320,15 @@ def api_refresh_caps():
             if cap_map:
                 source = 'akshare'
 
+        # 3) 再兜底：TDX(pytdx) 财务信息 × 现价（东财/akshare 全挂时用，单位 元）
+        if not cap_map:
+            cap_map = _tdx_caps(stock_codes)
+            if cap_map:
+                source = 'tdx'
+
         if not cap_map:
             return jsonify({'success': False, 'message':
-                            '东财市值接口暂不可达（限流/RST），请稍后再试；列表当前显示的是快照市值。'}), 502
+                            '东财/akshare/TDX 市值接口都暂不可达，请稍后再试；列表当前显示的是快照市值。'}), 502
 
         updated = 0
         with eng.begin() as conn:

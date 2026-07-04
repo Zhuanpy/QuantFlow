@@ -11,6 +11,8 @@
                     {% if board_code %}
                     <a class="em-link" href="https://quote.eastmoney.com/bk/90.{{ board_code }}.html?jump_to_web=true"
                        target="_blank" rel="noopener" title="在东方财富查看 {{ board_code }} 行情">东方财富 ↗</a>
+                    <a class="em-link" href="/board_data/members?code={{ board_code }}"
+                       title="成分股管理页：筛选趋势/信号/是否在池，多选一键加入股票池">📋 成分股管理/筛选 ↗</a>
                     <button id="trackBtn" class="track-btn" onclick="onTrackClick()" title="纳入持仓盘中跟踪列表">…</button>
                     {% endif %}
                 </div>
@@ -40,8 +42,8 @@
                 <label>1h
                     <select id="barsSel60" onchange="loadChart60m()">
                         <option value="24">24 根 (6日)</option>
-                        <option value="48" selected>48 根 (12日)</option>
-                        <option value="120">120 根 (30日)</option>
+                        <option value="48">48 根 (12日)</option>
+                        <option value="120" selected>120 根 (30日)</option>
                         <option value="240">240 根 (60日)</option>
                     </select>
                 </label>
@@ -65,6 +67,16 @@
                 <button class="btn-clear" onclick="clearDateRange()">清除</button>
                 <span class="range-hint" id="rangeHint"></span>
             </div>
+            <div class="bd-source">
+                <span class="src-lbl">数据源</span>
+                <button id="srcEm" class="src-btn active" onclick="setSource('em')"
+                        title="东方财富下载的板块数据（原始，可能不完整）">东方财富</button>
+                <button id="srcSyn" class="src-btn" onclick="setSource('syn')"
+                        title="用成分股合成的自有板块指数（历史更全，与东财并存）">我的合成</button>
+                <button id="buildSynBtn" class="src-build" onclick="buildSynth()"
+                        title="用成分股数据(重新)合成我的板块指数；不覆盖东财数据">🧬 合成/更新</button>
+                <span id="buildSynStatus" class="src-status"></span>
+            </div>
         </div>
     </div>
 
@@ -78,15 +90,15 @@
         <div class="sc-breakdown" id="scBreakdown"></div>
     </div>
 
-    <!-- 图表 -->
-    <div class="chart-title">日 K 线 <span class="chart-status" id="kChartStatus"></span></div>
-    <div id="kChart" class="chart-box"></div>
+    <!-- 图表（从上到下：15分钟 → 1小时 → 日K）-->
+    <div class="chart-title">15 分钟 K 线（交易主周期）<span class="chart-status" id="kChart15mStatus"></span></div>
+    <div id="kChart15m" class="chart-box"></div>
 
     <div class="chart-title">1 小时 K 线 <span class="chart-status" id="kChart60mStatus"></span></div>
     <div id="kChart60m" class="chart-box"></div>
 
-    <div class="chart-title">15 分钟 K 线（交易主周期）<span class="chart-status" id="kChart15mStatus"></span></div>
-    <div id="kChart15m" class="chart-box"></div>
+    <div class="chart-title">日 K 线 <span class="chart-status" id="kChartStatus"></span></div>
+    <div id="kChart" class="chart-box"></div>
 
     <!-- 评分（四标签：日K / 60分 / 15分 / 汇总）-->
     <div class="history-wrap">
@@ -235,6 +247,17 @@
     .btn-clear:hover { background:#f3f4f6; }
     .range-hint { font-size:.78rem; color:#2563eb; }
 
+    .bd-source { display:flex; align-items:center; gap:.4rem; flex-wrap:wrap; }
+    .src-lbl { font-size:.78rem; color:#6b7280; }
+    .src-btn { padding:.28rem .7rem; border:1px solid #d1d5db; background:#fff; color:#374151;
+               border-radius:.3rem; cursor:pointer; font-size:.8rem; }
+    .src-btn.active { background:#0f766e; color:#fff; border-color:#0f766e; }
+    .src-build { padding:.28rem .7rem; border:1px solid #0f766e; background:#fff; color:#0f766e;
+                 border-radius:.3rem; cursor:pointer; font-size:.8rem; }
+    .src-build:hover { background:#f0fdfa; }
+    .src-build:disabled { opacity:.5; cursor:default; }
+    .src-status { font-size:.76rem; color:#6b7280; }
+
     .history-wrap { background:#fff; border-radius:.5rem; padding:.75rem 1rem; box-shadow:var(--shadow-sm); }
     .history-wrap h3 { margin:0 0 .5rem; font-size:1rem; }
     .hist-table { width:100%; border-collapse:collapse; font-size:.82rem; }
@@ -277,6 +300,59 @@
 <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
 <script>
 const BOARD_CODE = "{{ board_code }}";
+// K线/评分读取用的代码：'em' → BOARD_CODE(东财)，'syn' → BOARD_CODE+'S'(合成)。
+// 名单/持仓跟踪/历史评分等元数据仍固定用 BOARD_CODE。
+let DATA_CODE = BOARD_CODE;
+let _synTimer = null;
+
+async function setSource(kind) {
+    // 切到「我的合成」前先确认已合成，未合成则引导先合成（避免直接 404）
+    if (kind === 'syn') {
+        const ex = await fetch(`/board_data/api/synth_exists?board_code=${encodeURIComponent(BOARD_CODE)}`)
+            .then(r => r.json()).catch(() => null);
+        if (!ex || !ex.success || !ex.data.exists) {
+            document.getElementById('buildSynStatus').textContent = `${BOARD_CODE} 尚未合成`;
+            if (confirm(`「${BOARD_CODE}」还没有合成数据。现在用成分股合成「我的板块」指数吗？（日K+15m）`)) {
+                buildSynth(true);   // 合成完成会自动切到「我的合成」
+            }
+            return;   // 未合成：保持东财数据源不变
+        }
+    }
+    DATA_CODE = (kind === 'syn') ? BOARD_CODE + 'S' : BOARD_CODE;
+    document.getElementById('srcEm').classList.toggle('active', kind !== 'syn');
+    document.getElementById('srcSyn').classList.toggle('active', kind === 'syn');
+    // 重新拉取 K线三图 + 多周期评分（元数据/历史不动）
+    loadChart(); loadChart15m(); loadChart60m(); loadMultiScore();
+}
+
+async function buildSynth(skipConfirm) {
+    const st = document.getElementById('buildSynStatus');
+    const btn = document.getElementById('buildSynBtn');
+    if (!skipConfirm && !confirm(`用「${BOARD_CODE}」成分股(重新)合成「我的板块」指数（日K+15m，流通市值加权）？\n结果存到 ${BOARD_CODE}S，不覆盖东财数据。`)) return;
+    btn.disabled = true; st.textContent = '合成中…';
+    try {
+        const r = await fetch('/board_data/api/build_synth', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({board_code: BOARD_CODE})
+        });
+        const j = await r.json();
+        if (!j.success) { st.textContent = j.message || '启动失败'; btn.disabled = false; return; }
+        clearInterval(_synTimer);
+        _synTimer = setInterval(async () => {
+            const s = await fetch('/board_data/api/build_synth_status').then(r => r.json()).catch(() => null);
+            if (!s || !s.success) return;
+            const d = s.data;
+            if (d.running) { st.textContent = `${d.phase || '合成中'}…`; return; }
+            clearInterval(_synTimer); btn.disabled = false;
+            if (d.error) { st.textContent = '失败：' + d.error; return; }
+            const R = d.result || {};
+            st.textContent = `完成：日K ${R.daily_rows || 0} 行`
+                + (R.daily_range ? `(${R.daily_range[0]}~${R.daily_range[1]})` : '')
+                + `，15m ${R.m15_rows || 0} 根，权重覆盖 ${R.weighted}/${R.members}`;
+            setSource('syn');   // 合成完自动切到「我的合成」看效果
+        }, 1200);
+    } catch (e) { st.textContent = '启动失败：' + e.message; btn.disabled = false; }
+}
 
 // 板块切换：支持输入代码(BKxxxx)或板块名称模糊匹配；联想下拉 + 回车/点「切换」跳转。
 let _bdSuggestTimer = null;
@@ -497,7 +573,7 @@ function switchScoreTab(tab) {
 
 async function loadMultiScore() {
     multiLoading = true;
-    const r = await fetch(`/board_data/api/board/${BOARD_CODE}/multiscore`).then(r => r.json()).catch(() => null);
+    const r = await fetch(`/board_data/api/board/${DATA_CODE}/multiscore`).then(r => r.json()).catch(() => null);
     multiLoading = false;
     if (!r || !r.success) {
         ['card-m60','card-m15','summaryBox'].forEach(id => {
@@ -601,9 +677,85 @@ function renderSummary(d) {
         + `<div style="font-size:.74rem;color:#9ca3af;margin-top:.5rem;">注：60分/15分用同一套日K公式在对应周期K线上计算（“近60日”等口径相应变为“近60根”），仅作多周期趋势参考；日K历史表为持久化评分。</div>`;
 }
 
+// K 线图统一样式（以 15 分钟图为标准）：三张图共用同一套 option，保证大小/网格/配色一致。
+// s = { dates, kdata, ma20, ma60, dif, dea, bar, vol }
+const TARGET_SLOTS = 192;        // 统一 K 线密度基准（≈15m 默认根数）：不足则右侧留白，避免蜡烛被拉宽铺满全屏
+const RIGHT_BLANK_RATIO = 0.2;   // 右侧恒定留白比例（1/5）：即使数据完整也留点想象空间
+
+function buildKlineOption(name, s) {
+    // 右侧补空槽位（两种情况取更大的补白量）：
+    //   1) 数据不足基准根数时（如日K仅 71 根），补到 TARGET_SLOTS，避免少量蜡烛被拉满整屏；
+    //   2) 数据完整时，也恒定留出 1/5 宽度的空白（blank/(n+blank)=RIGHT_BLANK_RATIO）。
+    const n = s.dates ? s.dates.length : 0;
+    const blankPad = Math.ceil(n * RIGHT_BLANK_RATIO / (1 - RIGHT_BLANK_RATIO));
+    const pad = Math.max(TARGET_SLOTS - n, blankPad);
+    const padR = (arr, fill) => (pad ? arr.concat(new Array(pad).fill(fill)) : arr);
+    const dates = padR(s.dates, '');
+    const kdata = padR(s.kdata, '-');   // '-' = ECharts 空值，不画蜡烛
+    const ma20  = padR(s.ma20, null);
+    const ma60  = padR(s.ma60, null);
+    const dif   = padR(s.dif, null);
+    const dea   = padR(s.dea, null);
+    const vol   = padR(s.vol, null);
+    const macd  = padR(s.bar, null).map(v => (
+        v == null ? { value: '-' } : { value: v, itemStyle: { color: v >= 0 ? '#dc2626' : '#16a34a' } }
+    ));
+
+    return {
+        animation: false,
+        tooltip: { trigger: 'axis', axisPointer: { type: 'cross' } },
+        legend: { data: [name, 'MA20', 'MA60', 'DIF', 'DEA', 'MACD'] , top: 0 },
+        axisPointer: { link: [{ xAxisIndex: 'all' }] },
+        grid: [
+            { left: 60, right: 30, top: 30, height: '50%' },
+            { left: 60, right: 30, top: '62%', height: '15%' },
+            { left: 60, right: 30, top: '80%', height: '17%' },
+        ],
+        xAxis: [
+            { type: 'category', data: dates, scale: true, boundaryGap: false, axisLine: { onZero: false }, splitLine: { show: false } },
+            { type: 'category', gridIndex: 1, data: dates, axisLabel: { show: false }, axisLine: { onZero: false }, splitLine: { show: false } },
+            { type: 'category', gridIndex: 2, data: dates, axisLabel: { show: false }, axisLine: { onZero: false }, splitLine: { show: false } },
+        ],
+        yAxis: [
+            { scale: true, splitArea: { show: true } },
+            { scale: true, gridIndex: 1, splitNumber: 2, axisLabel: { show: true } },
+            { scale: true, gridIndex: 2, splitNumber: 2, axisLabel: { show: true } },
+        ],
+        dataZoom: [
+            { type: 'inside', xAxisIndex: [0,1,2], start: 0, end: 100 },
+            { show: true, xAxisIndex: [0,1,2], type: 'slider', bottom: 0, start: 0, end: 100 },
+        ],
+        series: [
+            // barMaxWidth 用较小值(7)，配合右侧留白，让稀疏数据的蜡烛也保持窄宽度，观感与 15m 密集图一致
+            { name: name, type: 'candlestick', data: kdata, barMaxWidth: 7,
+              itemStyle: { color: '#dc2626', color0: '#16a34a', borderColor: '#dc2626', borderColor0: '#16a34a', borderWidth: 1 } },
+            { name: 'MA20', type: 'line', data: ma20, smooth: true, showSymbol: false, lineStyle: { width: 1.2, color: '#f59e0b' } },
+            { name: 'MA60', type: 'line', data: ma60, smooth: true, showSymbol: false, lineStyle: { width: 1.2, color: '#8b5cf6' } },
+            { name: '量', type: 'bar', xAxisIndex: 1, yAxisIndex: 1, barMaxWidth: 7, data: vol },
+            { name: 'DIF', type: 'line', xAxisIndex: 2, yAxisIndex: 2, data: dif, smooth: true, showSymbol: false, lineStyle: { color: '#2563eb' } },
+            { name: 'DEA', type: 'line', xAxisIndex: 2, yAxisIndex: 2, data: dea, smooth: true, showSymbol: false, lineStyle: { color: '#f59e0b' } },
+            { name: 'MACD', type: 'bar', xAxisIndex: 2, yAxisIndex: 2, barMaxWidth: 7, data: macd },
+        ]
+    };
+}
+
+// 提取行数据为统一 series 结构
+function extractSeries(rows) {
+    return {
+        dates: rows.map(x => x.date),
+        kdata: rows.map(x => [x.open, x.close, x.low, x.high]),
+        ma20:  rows.map(x => x.ma20),
+        ma60:  rows.map(x => x.ma60),
+        dif:   rows.map(x => x.dif),
+        dea:   rows.map(x => x.dea),
+        bar:   rows.map(x => x.bar),
+        vol:   rows.map(x => ({ value: x.volume, itemStyle: { color: x.close >= x.open ? '#dc2626' : '#16a34a' } })),
+    };
+}
+
 async function loadChart() {
     const days = document.getElementById('daysSel').value;
-    const r = await fetch(`/board_data/api/board/${BOARD_CODE}/chart?days=${days}${rangeQuery()}`).then(r=>r.json());
+    const r = await fetch(`/board_data/api/board/${DATA_CODE}/chart?days=${days}${rangeQuery()}`).then(r=>r.json());
     if (!r.success) {
         document.getElementById('kChart').innerHTML =
             `<div style="padding:2rem;text-align:center;color:#dc2626;">加载图表失败：${r.message}</div>`;
@@ -611,61 +763,14 @@ async function loadChart() {
     }
     const rows = r.data.rows;
     setChartStatus('kChartStatus', rows, '日');
-    const dates = rows.map(x => x.date);
-    const kdata = rows.map(x => [x.open, x.close, x.low, x.high]);   // ECharts 蜡烛图格式
-    const ma20  = rows.map(x => x.ma20);
-    const ma60  = rows.map(x => x.ma60);
-    const dif   = rows.map(x => x.dif);
-    const dea   = rows.map(x => x.dea);
-    const bar   = rows.map(x => x.bar);
-    const vol   = rows.map((x, i) => ({
-        value: x.volume,
-        itemStyle: { color: x.close >= x.open ? '#dc2626' : '#16a34a' }
-    }));
-
     if (!chart) chart = echarts.init(document.getElementById('kChart'));
-    chart.setOption({
-        animation: false,
-        tooltip: { trigger: 'axis', axisPointer: { type: 'cross' } },
-        legend: { data: ['日K', 'MA20', 'MA60', 'DIF', 'DEA', 'MACD'] , top: 0 },
-        axisPointer: { link: [{ xAxisIndex: 'all' }] },
-        grid: [
-            { left: 60, right: 30, top: 30, height: '50%' },
-            { left: 60, right: 30, top: '62%', height: '15%' },
-            { left: 60, right: 30, top: '80%', height: '17%' },
-        ],
-        xAxis: [
-            { type: 'category', data: dates, scale: true, boundaryGap: false, axisLine: { onZero: false }, splitLine: { show: false } },
-            { type: 'category', gridIndex: 1, data: dates, axisLabel: { show: false }, axisLine: { onZero: false }, splitLine: { show: false } },
-            { type: 'category', gridIndex: 2, data: dates, axisLabel: { show: false }, axisLine: { onZero: false }, splitLine: { show: false } },
-        ],
-        yAxis: [
-            { scale: true, splitArea: { show: true } },
-            { scale: true, gridIndex: 1, splitNumber: 2, axisLabel: { show: true } },
-            { scale: true, gridIndex: 2, splitNumber: 2, axisLabel: { show: true } },
-        ],
-        dataZoom: [
-            { type: 'inside', xAxisIndex: [0,1,2], start: 0, end: 100 },
-            { show: true, xAxisIndex: [0,1,2], type: 'slider', bottom: 0, start: 0, end: 100 },
-        ],
-        series: [
-            { name: '日K', type: 'candlestick', data: kdata, barMaxWidth: 10,
-              itemStyle: { color: '#dc2626', color0: '#16a34a', borderColor: '#dc2626', borderColor0: '#16a34a', borderWidth: 1 } },
-            { name: 'MA20', type: 'line', data: ma20, smooth: true, showSymbol: false, lineStyle: { width: 1.2, color: '#f59e0b' } },
-            { name: 'MA60', type: 'line', data: ma60, smooth: true, showSymbol: false, lineStyle: { width: 1.2, color: '#8b5cf6' } },
-            { name: '量', type: 'bar', xAxisIndex: 1, yAxisIndex: 1, barMaxWidth: 10, data: vol },
-            { name: 'DIF', type: 'line', xAxisIndex: 2, yAxisIndex: 2, data: dif, smooth: true, showSymbol: false, lineStyle: { color: '#2563eb' } },
-            { name: 'DEA', type: 'line', xAxisIndex: 2, yAxisIndex: 2, data: dea, smooth: true, showSymbol: false, lineStyle: { color: '#f59e0b' } },
-            { name: 'MACD', type: 'bar', xAxisIndex: 2, yAxisIndex: 2, barMaxWidth: 10, data: bar.map(v => ({
-                value: v, itemStyle: { color: v >= 0 ? '#dc2626' : '#16a34a' }
-            })) },
-        ]
-    });
+    chart.setOption(buildKlineOption('日K', extractSeries(rows)));
+    chart.resize();
 }
 
 async function loadChart15m() {
     const bars = document.getElementById('barsSel').value;
-    const r = await fetch(`/board_data/api/board/${BOARD_CODE}/chart_15m?bars=${bars}${rangeQuery()}`).then(r=>r.json());
+    const r = await fetch(`/board_data/api/board/${DATA_CODE}/chart_15m?bars=${bars}${rangeQuery()}`).then(r=>r.json());
     if (!r.success) {
         document.getElementById('kChart15m').innerHTML =
             `<div style="padding:2rem;text-align:center;color:#dc2626;">加载 15m 图表失败：${r.message}</div>`;
@@ -673,61 +778,14 @@ async function loadChart15m() {
     }
     const rows = r.data.rows;
     setChartStatus('kChart15mStatus', rows, '15m');
-    const dates = rows.map(x => x.date);
-    const kdata = rows.map(x => [x.open, x.close, x.low, x.high]);
-    const ma20  = rows.map(x => x.ma20);
-    const ma60  = rows.map(x => x.ma60);
-    const dif   = rows.map(x => x.dif);
-    const dea   = rows.map(x => x.dea);
-    const bar   = rows.map(x => x.bar);
-    const vol   = rows.map(x => ({
-        value: x.volume,
-        itemStyle: { color: x.close >= x.open ? '#dc2626' : '#16a34a' }
-    }));
-
     if (!chart15m) chart15m = echarts.init(document.getElementById('kChart15m'));
-    chart15m.setOption({
-        animation: false,
-        tooltip: { trigger: 'axis', axisPointer: { type: 'cross' } },
-        legend: { data: ['15mK', 'MA20', 'MA60', 'DIF', 'DEA', 'MACD'] , top: 0 },
-        axisPointer: { link: [{ xAxisIndex: 'all' }] },
-        grid: [
-            { left: 60, right: 30, top: 30, height: '50%' },
-            { left: 60, right: 30, top: '62%', height: '15%' },
-            { left: 60, right: 30, top: '80%', height: '17%' },
-        ],
-        xAxis: [
-            { type: 'category', data: dates, scale: true, boundaryGap: false, axisLine: { onZero: false }, splitLine: { show: false } },
-            { type: 'category', gridIndex: 1, data: dates, axisLabel: { show: false }, axisLine: { onZero: false }, splitLine: { show: false } },
-            { type: 'category', gridIndex: 2, data: dates, axisLabel: { show: false }, axisLine: { onZero: false }, splitLine: { show: false } },
-        ],
-        yAxis: [
-            { scale: true, splitArea: { show: true } },
-            { scale: true, gridIndex: 1, splitNumber: 2, axisLabel: { show: true } },
-            { scale: true, gridIndex: 2, splitNumber: 2, axisLabel: { show: true } },
-        ],
-        dataZoom: [
-            { type: 'inside', xAxisIndex: [0,1,2], start: 0, end: 100 },
-            { show: true, xAxisIndex: [0,1,2], type: 'slider', bottom: 0, start: 0, end: 100 },
-        ],
-        series: [
-            { name: '15mK', type: 'candlestick', data: kdata, barMaxWidth: 10,
-              itemStyle: { color: '#dc2626', color0: '#16a34a', borderColor: '#dc2626', borderColor0: '#16a34a', borderWidth: 1 } },
-            { name: 'MA20', type: 'line', data: ma20, smooth: true, showSymbol: false, lineStyle: { width: 1.2, color: '#f59e0b' } },
-            { name: 'MA60', type: 'line', data: ma60, smooth: true, showSymbol: false, lineStyle: { width: 1.2, color: '#8b5cf6' } },
-            { name: '量', type: 'bar', xAxisIndex: 1, yAxisIndex: 1, barMaxWidth: 10, data: vol },
-            { name: 'DIF', type: 'line', xAxisIndex: 2, yAxisIndex: 2, data: dif, smooth: true, showSymbol: false, lineStyle: { color: '#2563eb' } },
-            { name: 'DEA', type: 'line', xAxisIndex: 2, yAxisIndex: 2, data: dea, smooth: true, showSymbol: false, lineStyle: { color: '#f59e0b' } },
-            { name: 'MACD', type: 'bar', xAxisIndex: 2, yAxisIndex: 2, barMaxWidth: 10, data: bar.map(v => ({
-                value: v, itemStyle: { color: v >= 0 ? '#dc2626' : '#16a34a' }
-            })) },
-        ]
-    });
+    chart15m.setOption(buildKlineOption('15mK', extractSeries(rows)));
+    chart15m.resize();
 }
 
 async function loadChart60m() {
     const bars = document.getElementById('barsSel60').value;
-    const r = await fetch(`/board_data/api/board/${BOARD_CODE}/chart_60m?bars=${bars}${rangeQuery()}`).then(r=>r.json());
+    const r = await fetch(`/board_data/api/board/${DATA_CODE}/chart_60m?bars=${bars}${rangeQuery()}`).then(r=>r.json());
     if (!r.success) {
         document.getElementById('kChart60m').innerHTML =
             `<div style="padding:2rem;text-align:center;color:#dc2626;">加载 60m 图表失败：${r.message}</div>`;
@@ -735,56 +793,9 @@ async function loadChart60m() {
     }
     const rows = r.data.rows;
     setChartStatus('kChart60mStatus', rows, '60m');
-    const dates = rows.map(x => x.date);
-    const kdata = rows.map(x => [x.open, x.close, x.low, x.high]);
-    const ma20  = rows.map(x => x.ma20);
-    const ma60  = rows.map(x => x.ma60);
-    const dif   = rows.map(x => x.dif);
-    const dea   = rows.map(x => x.dea);
-    const bar   = rows.map(x => x.bar);
-    const vol   = rows.map(x => ({
-        value: x.volume,
-        itemStyle: { color: x.close >= x.open ? '#dc2626' : '#16a34a' }
-    }));
-
     if (!chart60m) chart60m = echarts.init(document.getElementById('kChart60m'));
-    chart60m.setOption({
-        animation: false,
-        tooltip: { trigger: 'axis', axisPointer: { type: 'cross' } },
-        legend: { data: ['60mK', 'MA20', 'MA60', 'DIF', 'DEA', 'MACD'] , top: 0 },
-        axisPointer: { link: [{ xAxisIndex: 'all' }] },
-        grid: [
-            { left: 60, right: 30, top: 30, height: '50%' },
-            { left: 60, right: 30, top: '62%', height: '15%' },
-            { left: 60, right: 30, top: '80%', height: '17%' },
-        ],
-        xAxis: [
-            { type: 'category', data: dates, scale: true, boundaryGap: false, axisLine: { onZero: false }, splitLine: { show: false } },
-            { type: 'category', gridIndex: 1, data: dates, axisLabel: { show: false }, axisLine: { onZero: false }, splitLine: { show: false } },
-            { type: 'category', gridIndex: 2, data: dates, axisLabel: { show: false }, axisLine: { onZero: false }, splitLine: { show: false } },
-        ],
-        yAxis: [
-            { scale: true, splitArea: { show: true } },
-            { scale: true, gridIndex: 1, splitNumber: 2, axisLabel: { show: true } },
-            { scale: true, gridIndex: 2, splitNumber: 2, axisLabel: { show: true } },
-        ],
-        dataZoom: [
-            { type: 'inside', xAxisIndex: [0,1,2], start: 0, end: 100 },
-            { show: true, xAxisIndex: [0,1,2], type: 'slider', bottom: 0, start: 0, end: 100 },
-        ],
-        series: [
-            { name: '60mK', type: 'candlestick', data: kdata, barMaxWidth: 10,
-              itemStyle: { color: '#dc2626', color0: '#16a34a', borderColor: '#dc2626', borderColor0: '#16a34a', borderWidth: 1 } },
-            { name: 'MA20', type: 'line', data: ma20, smooth: true, showSymbol: false, lineStyle: { width: 1.2, color: '#f59e0b' } },
-            { name: 'MA60', type: 'line', data: ma60, smooth: true, showSymbol: false, lineStyle: { width: 1.2, color: '#8b5cf6' } },
-            { name: '量', type: 'bar', xAxisIndex: 1, yAxisIndex: 1, barMaxWidth: 10, data: vol },
-            { name: 'DIF', type: 'line', xAxisIndex: 2, yAxisIndex: 2, data: dif, smooth: true, showSymbol: false, lineStyle: { color: '#2563eb' } },
-            { name: 'DEA', type: 'line', xAxisIndex: 2, yAxisIndex: 2, data: dea, smooth: true, showSymbol: false, lineStyle: { color: '#f59e0b' } },
-            { name: 'MACD', type: 'bar', xAxisIndex: 2, yAxisIndex: 2, barMaxWidth: 10, data: bar.map(v => ({
-                value: v, itemStyle: { color: v >= 0 ? '#dc2626' : '#16a34a' }
-            })) },
-        ]
-    });
+    chart60m.setOption(buildKlineOption('60mK', extractSeries(rows)));
+    chart60m.resize();
 }
 
 window.addEventListener('resize', () => {
@@ -890,7 +901,7 @@ function renderStockPage() {
     const slice = stockRows.slice(start, start + STOCK_PAGE_SIZE);
     tb.innerHTML = slice.map(it => `
         <tr>
-            <td><a href="/stock_trend/stock/${it.stock_code}" style="color:#2563eb;text-decoration:none;">${it.stock_code}</a></td>
+            <td><a href="/stock/?code=${it.stock_code}&period=15m" target="_blank" title="查看 ${it.stock_code} 15分钟数据" style="color:#2563eb;text-decoration:none;">${it.stock_code}</a></td>
             <td>${it.stock_name || '-'}</td>
             <td>${fmtCap(it.total_cap)}</td>
             <td>${fmtCap(it.circ_cap)}</td>

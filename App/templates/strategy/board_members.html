@@ -1,0 +1,380 @@
+{% extends "base.html" %}
+{% block content %}
+<div style="padding:1.25rem;max-width:min(1500px,96vw);margin:0 auto;">
+
+  <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem;margin-bottom:.6rem;">
+    <h1 id="title" style="margin:0;font-size:1.35rem;">板块成分股</h1>
+    <div style="display:flex;gap:.7rem;align-items:center;font-size:.85rem;flex-wrap:wrap;">
+      <button id="repairBtn" onclick="repairData()" class="bm-btn-primary"
+              title="修复本板块全部成分股的1分钟数据：本地zip全量 + TDX补近~90天 + 重生成15m（后台运行）">🛠 修复数据</button>
+      <label style="display:inline-flex;align-items:center;gap:.25rem;font-size:.8rem;color:#374151;cursor:pointer;"
+             title="修复(下载最新1m)跑完后自动接力重算趋势打分+分布快照，一步到位">
+        <input type="checkbox" id="chainTrend" checked> 完成后自动重算
+      </label>
+      <span id="repairStatus" style="color:#6b7280;font-size:.8rem;"></span>
+      <button id="trendBtn" onclick="recomputeTrend()" class="bm-btn"
+              title="数据修复后重算：个股趋势打分(StockTrendScore) + 分布快照(15m趋势/预估目标价)">🔄 重算趋势/分布</button>
+      <span id="trendStatus" style="color:#6b7280;font-size:.8rem;"></span>
+      <button id="capBtn" onclick="refreshCaps()" class="bm-btn"
+              title="刷新本板块成分股市值（东财→akshare→TDX 兜底），更新权重/流通市值列">↻ 更新市值</button>
+      <span id="capStatus" style="color:#6b7280;font-size:.8rem;"></span>
+      <a id="boardLink" href="#" style="color:#2563eb;text-decoration:none;">← 板块详情</a>
+      <a href="/stock_pool/?tab=board" style="color:#2563eb;text-decoration:none;">股票池·板块</a>
+    </div>
+  </div>
+  <div id="meta" style="color:#6b7280;font-size:.84rem;margin-bottom:.8rem;">加载中…</div>
+
+  <!-- 筛选策略：保存当前筛选组合，下次一键套用（存浏览器，跨板块通用）-->
+  <div style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;margin-bottom:.5rem;">
+    <span style="color:#6b7280;font-size:.82rem;">筛选策略</span>
+    <select id="stratSel" onchange="applyStrategy()" class="bm-sel" title="选择即一键套用该策略的筛选条件">
+      <option value="">— 选择策略 —</option>
+    </select>
+    <button onclick="saveStrategy()" class="bm-btn">💾 存为策略</button>
+    <button onclick="deleteStrategy()" class="bm-btn">🗑 删除</button>
+  </div>
+
+  <!-- 筛选栏 -->
+  <div style="display:flex;gap:.6rem;align-items:center;flex-wrap:wrap;background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:.6rem .8rem;margin-bottom:.7rem;">
+    <input id="kw" type="search" placeholder="搜索代码/名称" oninput="applyFilters()"
+           style="padding:.35rem .55rem;border:1px solid #d1d5db;border-radius:6px;font-size:.85rem;width:150px;">
+    <select id="fStage" onchange="applyFilters()" class="bm-sel">
+      <option value="">趋势：全部</option>
+      <option value="up">↑ 上涨</option>
+      <option value="down">↓ 下跌</option>
+    </select>
+    <select id="fSignal" onchange="applyFilters()" class="bm-sel">
+      <option value="">信号：全部</option>
+      <option value="buy">买入</option>
+      <option value="hold">持有</option>
+      <option value="sell">卖出</option>
+      <option value="wait">观望</option>
+    </select>
+    <select id="fPool" onchange="applyFilters()" class="bm-sel">
+      <option value="">股票池：全部</option>
+      <option value="in">✓ 已在池</option>
+      <option value="out">✗ 不在池</option>
+    </select>
+    <span style="color:#6b7280;font-size:.82rem;">流通市值≥</span>
+    <input id="fCap" type="number" min="0" step="10" placeholder="亿" oninput="applyFilters()"
+           style="padding:.35rem .5rem;border:1px solid #d1d5db;border-radius:6px;font-size:.85rem;width:70px;">
+    <select id="fSt" onchange="applyFilters()" class="bm-sel" title="ST/*ST 风险股按名称识别">
+      <option value="">ST：全部</option>
+      <option value="ex">排除 ST</option>
+      <option value="only">仅 ST</option>
+    </select>
+    <button onclick="resetF()" class="bm-btn">重置</button>
+    <span id="cnt" style="margin-left:auto;color:#6b7280;font-size:.82rem;"></span>
+  </div>
+
+  <!-- 批量操作 -->
+  <div id="batchBar" style="display:none;align-items:center;gap:.6rem;flex-wrap:wrap;background:#eef2ff;border:1px solid #c7d2fe;border-radius:8px;padding:.5rem .8rem;margin-bottom:.7rem;font-size:.85rem;">
+    <span>已选 <b id="selCnt">0</b> 只</span>
+    <span style="color:#6b7280;">加为</span>
+    <select id="poolState" class="bm-sel">
+      <option value="">仅入池（无标签）</option>
+      <option value="watching">+ 观察</option>
+      <option value="candidate">+ 候选</option>
+      <option value="trading">+ 交易中</option>
+    </select>
+    <button onclick="addToPool()" class="bm-btn-primary">加入股票池</button>
+    <button onclick="addToDownload()" class="bm-btn-primary" title="加入每日收盘数据下载表单（未登记的会自动登记）">加入下载表单</button>
+    <button onclick="clearSel()" class="bm-btn">取消</button>
+  </div>
+
+  <div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:.5rem;overflow-x:auto;">
+    <table style="width:100%;border-collapse:collapse;font-size:.86rem;">
+      <thead style="background:#f9fafb;">
+        <tr>
+          <th style="padding:.5rem;width:28px;text-align:center;"><input type="checkbox" onchange="toggleAll(this)"></th>
+          <th style="padding:.5rem;text-align:left;">代码</th>
+          <th style="padding:.5rem;text-align:left;">名称</th>
+          <th style="padding:.5rem;text-align:left;">股票池</th>
+          <th style="padding:.5rem;text-align:center;" title="是否在每日收盘数据下载表单(data_download_records)中">下载表单</th>
+          <th style="padding:.5rem;text-align:center;" title="该股 1m 数据最新到的交易日；落后板块最新日的标黄/红，可点「修复数据」补齐">1m 更新到</th>
+          <th style="padding:.5rem;text-align:center;">趋势阶段</th>
+          <th style="padding:.5rem;text-align:center;">信号</th>
+          <th style="padding:.5rem;text-align:right;">趋势分</th>
+          <th style="padding:.5rem;text-align:right;" title="流通市值占板块比">权重%</th>
+          <th style="padding:.5rem;text-align:right;">流通市值(亿)</th>
+        </tr>
+      </thead>
+      <tbody id="tb"><tr><td colspan="11" style="text-align:center;color:#9ca3af;padding:1rem;">加载中…</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<style>
+  .bm-sel { padding:.35rem .5rem;border:1px solid #d1d5db;border-radius:6px;font-size:.85rem;background:#fff; }
+  .bm-btn { padding:.35rem .8rem;border:1px solid #d1d5db;background:#fff;color:#374151;border-radius:6px;font-size:.85rem;cursor:pointer; }
+  .bm-btn-primary { padding:.35rem 1rem;background:#2563eb;color:#fff;border:none;border-radius:6px;font-size:.85rem;cursor:pointer; }
+  #tb tr { border-top:1px solid #f3f4f6; }
+  .pchip { border-radius:9999px;padding:.05rem .45rem;font-size:.72rem;font-weight:600; }
+</style>
+
+<script>
+const CODE = {{ board_code | tojson }};
+let ALL = [];                 // 全部成分股
+const SEL = new Set();        // 选中代码
+const STAGE_LBL = {up_early:'上涨初期',up_late:'上涨末期',down_early:'下跌初期',down_late:'下跌末期',unknown:'—'};
+const SIG = {buy:['买入','#b91c1c'],sell:['卖出','#15803d'],hold:['持有','#2563eb'],wait:['观望','#6b7280']};
+const POOL_LBL = {watching:'观察',candidate:'候选',trading:'交易中'};
+
+async function load() {
+  document.getElementById('boardLink').href = '/board_data/board?code=' + encodeURIComponent(CODE);
+  try {
+    const r = await fetch('/board_data/api/board/' + encodeURIComponent(CODE) + '/stocks?live=0');
+    const j = await r.json();
+    if (!j.success) { document.getElementById('meta').textContent = '加载失败：' + (j.message||''); return; }
+    const d = j.data;
+    ALL = d.rows || [];
+    document.getElementById('title').textContent = `${d.board_name || CODE} 成分股`;
+    document.getElementById('meta').innerHTML =
+      `板块 <b>${d.board_name||'—'}</b> <span style="color:#9ca3af;">${CODE}</span>　|　成分股 <b>${d.count}</b> 只`
+      + `　|　名单日期 ${d.member_date||'—'}　|　CR5 ${d.cr5??'—'}% · CR10 ${d.cr10??'—'}%`
+      + `　|　市值来源 ${d.cap_source==='live'?'实时':'快照'}`;
+    applyFilters();
+  } catch(e) { document.getElementById('meta').textContent = '加载异常：' + e.message; }
+}
+
+function applyFilters() {
+  const kw = document.getElementById('kw').value.trim().toLowerCase();
+  const fStage = document.getElementById('fStage').value;
+  const fSignal = document.getElementById('fSignal').value;
+  const fPool = document.getElementById('fPool').value;
+  const fCap = parseFloat(document.getElementById('fCap').value);  // 亿
+  const fSt = document.getElementById('fSt').value;
+  const isST = (s) => /st/i.test(s.stock_name || '');   // ST/*ST 按名称识别
+  let rows = ALL.filter(s => {
+    if (kw && !(String(s.stock_code).toLowerCase().includes(kw) || (s.stock_name||'').toLowerCase().includes(kw))) return false;
+    if (fStage && !String(s.trend_stage||'').startsWith(fStage)) return false;
+    if (fSignal && s.signal !== fSignal) return false;
+    if (fPool === 'in' && !s.in_pool) return false;
+    if (fPool === 'out' && s.in_pool) return false;
+    if (!isNaN(fCap)) { if (!s.circ_cap || s.circ_cap / 1e8 < fCap) return false; }  // 无市值则不满足
+    if (fSt === 'ex' && isST(s)) return false;
+    if (fSt === 'only' && !isST(s)) return false;
+    return true;
+  });
+  renderRows(rows);
+  document.getElementById('cnt').textContent = `显示 ${rows.length} / ${ALL.length} 只`;
+}
+
+function renderRows(rows) {
+  const tb = document.getElementById('tb');
+  if (!rows.length) { tb.innerHTML = '<tr><td colspan="11" style="text-align:center;color:#9ca3af;padding:1rem;">无符合条件的成分股</td></tr>'; return; }
+  const stageCell = (st) => { if (!st || st==='unknown') return '<span style="color:#9ca3af;">—</span>';
+    const up = String(st).startsWith('up'); return `<span style="color:${up?'#b91c1c':'#15803d'};font-weight:600;">${STAGE_LBL[st]||st}</span>`; };
+  const sigCell = (s) => { const x = SIG[s]; return x ? `<span style="color:${x[1]};font-weight:600;">${x[0]}</span>` : '<span style="color:#9ca3af;">—</span>'; };
+  const poolCell = (s) => { if (!s.in_pool) return '<span style="color:#cbd5e1;">—</span>';
+    const sts = s.pool_states||[]; return sts.length
+      ? sts.map(x=>`<span class="pchip" style="background:#eef2ff;color:#4f46e5;">${POOL_LBL[x]||x}</span>`).join(' ')
+      : '<span style="color:#16a34a;font-size:.75rem;">✓在池</span>'; };
+  // 1m 更新到：以板块内最新日期为基准，落后越多越红（看完整性）
+  const m1max = rows.map(s=>s.m1_last).filter(Boolean).reduce((a,b)=>a>b?a:b, '');
+  const m1Cell = (s) => {
+    if (!s.m1_last) return '<span style="color:#cbd5e1;font-size:.75rem;">无</span>';
+    let color = '#15803d';
+    if (m1max && s.m1_last < m1max) {
+      const diff = (new Date(m1max) - new Date(s.m1_last)) / 86400000;
+      color = diff > 7 ? '#dc2626' : '#ca8a04';
+    }
+    return `<span style="color:${color};font-family:monospace;font-size:.8rem;">${s.m1_last}</span>`;
+  };
+  tb.innerHTML = rows.map(s => `<tr>
+    <td style="padding:.4rem .5rem;text-align:center;"><input type="checkbox" value="${s.stock_code}" ${SEL.has(s.stock_code)?'checked':''} onchange="toggleSel('${s.stock_code}')"></td>
+    <td style="padding:.4rem .5rem;font-family:monospace;font-weight:600;"><a href="/stock/?code=${s.stock_code}&period=15m" target="_blank" style="color:#2563eb;text-decoration:none;">${s.stock_code}</a></td>
+    <td style="padding:.4rem .5rem;">${s.stock_name||'—'}</td>
+    <td style="padding:.4rem .5rem;white-space:nowrap;">${poolCell(s)}</td>
+    <td style="padding:.4rem .5rem;text-align:center;">${s.in_download ? '<span style="color:#16a34a;font-size:.75rem;">✓在表</span>' : '<span style="color:#cbd5e1;">—</span>'}</td>
+    <td style="padding:.4rem .5rem;text-align:center;">${m1Cell(s)}</td>
+    <td style="padding:.4rem .5rem;text-align:center;">${stageCell(s.trend_stage)}</td>
+    <td style="padding:.4rem .5rem;text-align:center;">${sigCell(s.signal)}</td>
+    <td style="padding:.4rem .5rem;text-align:right;font-family:monospace;">${s.total_score!=null?Math.round(s.total_score):'—'}</td>
+    <td style="padding:.4rem .5rem;text-align:right;font-family:monospace;">${s.weight!=null?s.weight:'—'}</td>
+    <td style="padding:.4rem .5rem;text-align:right;font-family:monospace;color:#6b7280;">${s.circ_cap?(s.circ_cap/1e8).toFixed(1):'—'}</td>
+  </tr>`).join('');
+}
+
+function toggleSel(code) { SEL.has(code)?SEL.delete(code):SEL.add(code); updateBar(); }
+function toggleAll(cb) { document.querySelectorAll('#tb input[type=checkbox]').forEach(c=>{c.checked=cb.checked; cb.checked?SEL.add(c.value):SEL.delete(c.value);}); updateBar(); }
+function clearSel() { SEL.clear(); applyFilters(); updateBar(); }
+function updateBar() { const b=document.getElementById('batchBar'); b.style.display=SEL.size?'flex':'none'; document.getElementById('selCnt').textContent=SEL.size; }
+function resetF() { document.getElementById('kw').value=''; document.getElementById('fStage').value=''; document.getElementById('fSignal').value=''; document.getElementById('fPool').value=''; document.getElementById('fCap').value=''; document.getElementById('fSt').value=''; document.getElementById('stratSel').value=''; applyFilters(); }
+
+// ===== 筛选策略（保存/套用筛选组合，存 localStorage，跨板块通用）=====
+const STRAT_KEY = 'bm_filter_strategies';
+const STRAT_FIELDS = ['kw', 'fStage', 'fSignal', 'fPool', 'fCap', 'fSt'];
+function _loadStrats() { try { return JSON.parse(localStorage.getItem(STRAT_KEY)) || {}; } catch (e) { return {}; } }
+function _saveStrats(o) { localStorage.setItem(STRAT_KEY, JSON.stringify(o)); }
+function _refreshStratSel(sel) {
+  const s = _loadStrats(), el = document.getElementById('stratSel');
+  el.innerHTML = '<option value="">— 选择策略 —</option>' +
+    Object.keys(s).map(n => `<option value="${n.replace(/"/g,'&quot;')}"${n===sel?' selected':''}>${n}</option>`).join('');
+}
+function saveStrategy() {
+  const name = (prompt('策略名称（如：排除ST·市值≥50·上涨）：') || '').trim();
+  if (!name) return;
+  const f = {}; STRAT_FIELDS.forEach(k => f[k] = document.getElementById(k).value);
+  const s = _loadStrats(); s[name] = f; _saveStrats(s); _refreshStratSel(name);
+  alert(`已保存筛选策略「${name}」`);
+}
+function applyStrategy() {
+  const name = document.getElementById('stratSel').value;
+  if (!name) return;
+  const f = _loadStrats()[name]; if (!f) return;
+  STRAT_FIELDS.forEach(k => document.getElementById(k).value = f[k] || '');
+  applyFilters();
+}
+function deleteStrategy() {
+  const name = document.getElementById('stratSel').value;
+  if (!name) { alert('先在下拉里选择一个策略'); return; }
+  if (!confirm(`删除筛选策略「${name}」？`)) return;
+  const s = _loadStrats(); delete s[name]; _saveStrats(s); _refreshStratSel('');
+}
+
+async function addToPool() {
+  if (!SEL.size) return;
+  const state = document.getElementById('poolState').value;
+  const codes = [...SEL];
+  try {
+    const r = await fetch('/screener/api/add_to_pool', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ codes, state }) });
+    const j = await r.json();
+    if (j.success) {
+      alert(`已加入股票池：新增 ${j.added} 只`+(j.tagged?`、追加标签 ${j.tagged} 只`:'')+`、已在池跳过 ${j.skipped} 只`);
+      SEL.clear(); updateBar(); await load();   // 重新拉取以更新"在池"状态
+    } else alert('加入失败：'+(j.message||''));
+  } catch(e) { alert('请求失败：'+e.message); }
+}
+
+async function addToDownload() {
+  if (!SEL.size) return;
+  const codes = [...SEL];
+  try {
+    const r = await fetch('/board_data/api/add_to_download', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ codes }) });
+    const j = await r.json();
+    if (j.success) {
+      alert(`已加入下载表单：新增 ${j.added} 只`
+        + (j.registered ? `（其中 ${j.registered} 只新登记到股票主表）` : '')
+        + `、已在表跳过 ${j.skipped} 只`);
+      SEL.clear(); updateBar(); await load();
+    } else alert('加入失败：' + (j.message || ''));
+  } catch(e) { alert('请求失败：' + e.message); }
+}
+
+// ===== 修复数据（本地 zip + TDX 近期 + 重生成 15m，后台运行）=====
+let _repairTimer = null;
+let _repairChained = false;   // 本次修复是否勾选了「完成后自动重算」
+async function repairData() {
+  const name = document.getElementById('title').textContent;
+  const chain = document.getElementById('chainTrend').checked;
+  const extra = chain ? '\n④ 自动重算趋势打分 + 分布快照' : '';
+  if (!confirm(`将修复「${name}」全部成分股的 1 分钟数据：\n① 本地 zip 全量导入\n② TDX 补近 ~90 天\n③ 重生成 15m${extra}\n后台运行（每只约 1-3 秒）。开始？`)) return;
+  _repairChained = chain;
+  const btn = document.getElementById('repairBtn');
+  btn.disabled = true;
+  try {
+    const r = await fetch('/board_data/api/repair_members', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ board_code: CODE, with_trend: chain })
+    });
+    const j = await r.json();
+    if (!j.success) { alert(j.message || '启动失败'); btn.disabled = false; return; }
+    pollRepair();
+  } catch (e) { alert('启动失败：' + e.message); btn.disabled = false; }
+}
+function pollRepair() {
+  const st = document.getElementById('repairStatus'), btn = document.getElementById('repairBtn');
+  btn.disabled = true;
+  clearInterval(_repairTimer);
+  _repairTimer = setInterval(async () => {
+    const j = await fetch('/board_data/api/repair_status').then(r => r.json()).catch(() => null);
+    if (!j || !j.success) return;
+    const s = j.data;
+    if (s.running) {
+      st.textContent = `修复中… ${s.done}/${s.total}（成功 ${s.ok} / 失败 ${s.fail}，当前 ${s.cur || '—'}）`;
+    } else {
+      clearInterval(_repairTimer);
+      btn.disabled = false;
+      st.textContent = s.error ? `失败：${s.error}`
+        : `修复完成：成功 ${s.ok} / 失败 ${s.fail}`
+          + (s.skipped ? `，跳过 ${s.skipped} 只已最新` : '')
+          + `，1m 新增 ${(s.zip_added||0)+(s.tdx_added||0)} 根，补日K ${s.daily_added||0} 天`
+          + (_repairChained ? '，正在重算趋势/分布…' : '');
+      if (!s.error) {
+        load();   // 重新拉取成分股（更新趋势/在池等）
+        if (_repairChained) pollTrend();   // 后端已自动接力重算，前端接上进度
+      }
+    }
+  }, 1500);
+}
+
+// ===== 重算趋势打分 + 分布快照（数据修复后用）=====
+let _trendTimer = null;
+async function recomputeTrend() {
+  const name = document.getElementById('title').textContent;
+  if (!confirm(`重算「${name}」全部成分股的：\n① 个股趋势打分（成分股页的 趋势阶段/信号/分）\n② 分布快照（15m 趋势 / 预估目标价）\n后台运行。开始？`)) return;
+  const btn = document.getElementById('trendBtn');
+  btn.disabled = true;
+  try {
+    const r = await fetch('/board_data/api/recompute_trend', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ board_code: CODE })
+    });
+    const j = await r.json();
+    if (!j.success) { alert(j.message || '启动失败'); btn.disabled = false; return; }
+    pollTrend();
+  } catch (e) { alert('启动失败：' + e.message); btn.disabled = false; }
+}
+function pollTrend() {
+  const st = document.getElementById('trendStatus'), btn = document.getElementById('trendBtn');
+  btn.disabled = true;
+  clearInterval(_trendTimer);
+  _trendTimer = setInterval(async () => {
+    const j = await fetch('/board_data/api/recompute_trend_status').then(r => r.json()).catch(() => null);
+    if (!j || !j.success) return;
+    const s = j.data;
+    if (s.running) {
+      st.textContent = `${s.phase || '重算中'}… ${s.done}/${s.total}` + (s.cur ? `（${s.cur}）` : '');
+    } else {
+      clearInterval(_trendTimer);
+      btn.disabled = false;
+      st.textContent = s.error ? `失败：${s.error}`
+        : (s.total ? `完成：趋势分 ${s.ts_ok}✓/${s.ts_fail}✗，分布 ${s.snap_ok}✓/${s.snap_fail}✗` : '');
+      if (s.total && !s.error) load();
+    }
+  }, 1500);
+}
+
+// ===== 更新市值（东财→akshare→TDX 兜底；同步，可能十几秒）=====
+async function refreshCaps() {
+  const btn = document.getElementById('capBtn'), st = document.getElementById('capStatus');
+  btn.disabled = true; st.textContent = '更新中…（东财不可达会落到 TDX，可能十几秒）';
+  try {
+    const r = await fetch('/board_data/api/refresh_caps', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ board_code: CODE })
+    });
+    const j = await r.json();
+    if (j.success) {
+      const src = {clist:'东财', akshare:'akshare', tdx:'TDX'}[j.data.source] || j.data.source;
+      st.textContent = `已更新 ${j.data.updated} 只（来源 ${src}）`;
+      load();   // 重新拉取，刷新权重/流通市值列
+    } else {
+      st.textContent = j.message || '更新失败';
+    }
+  } catch (e) { st.textContent = '更新失败：' + e.message; }
+  finally { btn.disabled = false; }
+}
+
+_refreshStratSel('');   // 载入已保存的筛选策略
+load();
+// 页面打开时若已有任务在跑，自动接上进度
+fetch('/board_data/api/repair_status').then(r => r.json()).then(j => {
+  if (j && j.success && j.data.running) pollRepair();
+}).catch(() => {});
+fetch('/board_data/api/recompute_trend_status').then(r => r.json()).then(j => {
+  if (j && j.success && j.data.running) pollTrend();
+}).catch(() => {});
+</script>
+{% endblock %}
