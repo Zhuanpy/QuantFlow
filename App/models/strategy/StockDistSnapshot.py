@@ -49,6 +49,20 @@ class StockDistSnapshot(db.Model):
     cur_start_price = db.Column(db.Float, nullable=True, comment='当前周期起点价')
     cur_last_price = db.Column(db.Float, nullable=True, comment='当前周期最新价')
 
+    # ---- 盘中预估快照（多周期趋势 → 分位P → 预估目标价/结束时间），供预估 vs 真实对比 ----
+    # 与 stock_live.html 的「多周期自动定P」同口径，收盘后落库，用 current_signal_name 作周期键，
+    # 事后可把同一周期各日的预估与该周期完成后的真实振幅/长度对比。
+    fc_dir_15m = db.Column(db.Integer, nullable=True, comment='15m 方向 1/-1/0')
+    fc_dir_30m = db.Column(db.Integer, nullable=True, comment='30m 方向 1/-1/0')
+    fc_dir_60m = db.Column(db.Integer, nullable=True, comment='60m 方向 1/-1/0')
+    fc_confirm = db.Column(db.Integer, nullable=True, comment='更高周期同向确认数 0/1/2')
+    fc_amp_p = db.Column(db.Integer, nullable=True, comment='振幅分位 P（多周期定）')
+    fc_len_p = db.Column(db.Integer, nullable=True, comment='长度分位 P（多周期定）')
+    fc_proj_amp_pct = db.Column(db.Float, nullable=True, comment='预估整段振幅%（该P下）')
+    fc_proj_target_price = db.Column(db.Float, nullable=True, comment='预估目标价 起点×(1±振幅)')
+    fc_proj_len_bars = db.Column(db.Integer, nullable=True, comment='预估整段长度(15m根数)')
+    fc_proj_end_date = db.Column(db.DateTime, nullable=True, comment='预估结束时间(按交易时段顺推)')
+
     # ---- 周期长度 CycleLengthMax ----
     # 上涨周期
     len_up_mean = db.Column(db.Float, nullable=True, comment='上涨周期长度均值')
@@ -104,7 +118,7 @@ class StockDistSnapshot(db.Model):
             v = out.get(k)
             if v is not None:
                 out[k] = v.isoformat()
-        for k in ('last_bar_date', 'created_at', 'updated_at'):
+        for k in ('last_bar_date', 'fc_proj_end_date', 'created_at', 'updated_at'):
             v = out.get(k)
             if v is not None:
                 out[k] = v.strftime('%Y-%m-%d %H:%M:%S')

@@ -37,6 +37,14 @@ logger = logging.getLogger(__name__)
 MAX_HIST = 60       # 拟合最多用最近 60 个完成周期
 MIN_FIT = 8         # 样本 < 8 不拟合（与前端 renderDist 一致）
 
+# 多周期趋势 → 分位 P（与 stock_live.html 的 MTF_P_TABLE_AMP/LEN 完全一致）。
+# 以 15m 方向为当前波基准，数更高周期(30m/60m)同向确认数 0/1/2 → 取表值。
+MTF_P_AMP = {1: {0: 55, 1: 65, 2: 80}, -1: {0: 65, 1: 80, 2: 90}}   # 上涨 / 下跌
+MTF_P_LEN = {1: {0: 50, 1: 65, 2: 75}, -1: {0: 50, 1: 65, 2: 75}}
+# A 股 15m K 线每交易日 16 个收盘时点（与前端 BAR_TIMES 一致）
+_BAR_TIMES = ['09:45', '10:00', '10:15', '10:30', '10:45', '11:00', '11:15', '11:30',
+              '13:15', '13:30', '13:45', '14:00', '14:15', '14:30', '14:45', '15:00']
+
 
 # -----------------------------------------------------------------
 # 内部：把 15m DF 拆成 cycles，每个 cycle 算量化指标
@@ -350,6 +358,100 @@ def _fit_direction(cycles: list, direction: int, value_getter, current_cycle: Op
 
 
 # -----------------------------------------------------------------
+# 盘中预估：多周期方向 → 分位P → 预估目标价/结束时间（服务端复刻 stock_live.html）
+# -----------------------------------------------------------------
+def _tf_direction(df15: pd.DataFrame, period: str, as_of_ts) -> int:
+    """某周期(15m/30m/60m)截至 as_of 的「当前波方向」：+1/-1/0。
+
+    15m 直接用已有 Signal；30m/60m 由 15m 重采样后跑 v2 信号管线取末根 Signal 符号。
+    """
+    try:
+        d = df15.copy()
+        d['date'] = pd.to_datetime(d['date'])
+        if as_of_ts is not None:
+            d = d[d['date'] <= as_of_ts]
+        if d.empty:
+            return 0
+        if period != '15m':
+            from App.codes.utils.timeframe_resample import resample_15m
+            from App.codes.Signals.MacdSignalV2 import compute_v2_signals_pipeline
+            d = resample_15m(d, period)
+            d = compute_v2_signals_pipeline(d, n=7)
+        sv = pd.to_numeric(d.get('Signal'), errors='coerce').dropna() if 'Signal' in d.columns else []
+        if len(sv) == 0:
+            return 0
+        v = sv.iloc[-1]
+        return 1 if v > 0 else -1 if v < 0 else 0
+    except Exception:
+        logger.debug(f'[fc] {period} 方向计算失败', exc_info=True)
+        return 0
+
+
+def _invnorm(p: float) -> float:
+    """标准正态分位（P/100 → z）。用标准库 NormalDist，避免引 scipy。"""
+    from statistics import NormalDist
+    p = min(0.999, max(0.001, float(p)))
+    return NormalDist().inv_cdf(p)
+
+
+def _add_trading_bars(start_ts, bars: int):
+    """从某 15m 收盘时点按交易时段(跳午休/周末，不计节假日)顺推 N 根，返回 datetime。
+    与 stock_live.html 的 addTradingBars 同口径。"""
+    if start_ts is None:
+        return None
+    ts = pd.Timestamp(start_ts)
+    hhmm = ts.strftime('%H:%M')
+    idx = _BAR_TIMES.index(hhmm) if hhmm in _BAR_TIMES else next(
+        (i for i, t in enumerate(_BAR_TIMES) if t >= hhmm), len(_BAR_TIMES) - 1)
+    total = idx + max(0, int(round(bars)))
+    day_adv, slot = divmod(total, 16)
+    d = ts.normalize()
+    advanced = 0
+    while advanced < day_adv:
+        d = d + pd.Timedelta(days=1)
+        if d.weekday() < 5:      # 跳周末（不计节假日）
+            advanced += 1
+    eh, em = _BAR_TIMES[slot].split(':')
+    return d.replace(hour=int(eh), minute=int(em), second=0)
+
+
+def _compute_forecast(df, current_direction, current_cycle,
+                      amp_stats, len_stats, last_bar_date, as_of_ts) -> dict:
+    """按多周期趋势定 P，投影当前周期的整段振幅/目标价/长度/结束时间。"""
+    fc = {'fc_dir_15m': None, 'fc_dir_30m': None, 'fc_dir_60m': None, 'fc_confirm': None,
+          'fc_amp_p': None, 'fc_len_p': None, 'fc_proj_amp_pct': None,
+          'fc_proj_target_price': None, 'fc_proj_len_bars': None, 'fc_proj_end_date': None}
+    base = 1 if current_direction > 0 else -1 if current_direction < 0 else 0
+    d15 = base                                     # 15m 方向即当前周期方向（无需重算）
+    d30 = _tf_direction(df, '30m', as_of_ts)
+    d60 = _tf_direction(df, '60m', as_of_ts)
+    fc.update(fc_dir_15m=d15, fc_dir_30m=d30, fc_dir_60m=d60)
+    if base == 0:
+        return fc
+    confirm = (1 if d30 == base else 0) + (1 if d60 == base else 0)
+    p_amp = MTF_P_AMP[base][confirm]
+    p_len = MTF_P_LEN[base][confirm]
+    fc.update(fc_confirm=confirm, fc_amp_p=p_amp, fc_len_p=p_len)
+
+    # 振幅投影：proj = mean + z(P)·std（fraction），目标价 = 起点×(1±proj)
+    start = current_cycle.get('start_price')
+    if amp_stats.get('mean') is not None and amp_stats.get('std') is not None and start:
+        proj = max(0.0, amp_stats['mean'] + _invnorm(p_amp / 100) * amp_stats['std'])
+        fc['fc_proj_amp_pct'] = round(proj * 100, 2)
+        fc['fc_proj_target_price'] = round(start * (1 + proj if base > 0 else 1 - proj), 4)
+
+    # 长度投影：proj 根数 = mean + z(P)·std；结束时间 = 从最新根顺推剩余根数
+    if len_stats.get('mean') is not None and len_stats.get('std') is not None:
+        proj_len = max(1, int(round(len_stats['mean'] + _invnorm(p_len / 100) * len_stats['std'])))
+        fc['fc_proj_len_bars'] = proj_len
+        elapsed = current_cycle.get('cycle_length_max') or 0
+        remaining = max(0, proj_len - int(elapsed))
+        end = _add_trading_bars(last_bar_date, remaining)
+        fc['fc_proj_end_date'] = end.to_pydatetime() if end is not None else None
+    return fc
+
+
+# -----------------------------------------------------------------
 # 公共入口
 # -----------------------------------------------------------------
 def compute_dist_snapshot(code: str,
@@ -446,6 +548,14 @@ def compute_dist_snapshot(code: str,
     _assign(row, 'amp_dn', amp_dn)
     _assign(row, 'v5_up', v5_up)
     _assign(row, 'v5_dn', v5_dn)
+
+    # ---- 盘中预估快照（多周期定P → 目标价/结束时间）----
+    amp_cur = amp_up if current_direction > 0 else amp_dn
+    len_cur = len_up if current_direction > 0 else len_dn
+    fc = _compute_forecast(df, current_direction, current_cycle,
+                           amp_cur, len_cur, last_bar_date, as_of_ts)
+    for k, v in fc.items():
+        setattr(row, k, v)
 
     if commit:
         db.session.commit()

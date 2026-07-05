@@ -435,3 +435,63 @@ def start_repair(app, board_code, codes, zip_dir=DEFAULT_ZIP_DIR, tdx_days=90, t
                      daemon=True).start()
     tail = '（完成后自动重算趋势/分布）' if then_trend else ''
     return True, f'已开始修复 {board_code} 的 {len(codes)} 只成分股{tail}'
+
+
+# ============== 补齐/更新分布快照（四象图缺数据时用）==============
+_fstate = {'running': False, 'board': None, 'done': 0, 'total': 0,
+           'ok': 0, 'fail': 0, 'cur': None, 'error': None, 'started': None}
+_flock = threading.Lock()
+
+
+def get_fill_status() -> dict:
+    with _flock:
+        return dict(_fstate)
+
+
+def _run_fill(app, board_code, codes, snapshot_date):
+    with app.app_context():
+        from App.services.dist_snapshot_service import compute_dist_snapshot
+        try:
+            for code in codes:
+                with _flock:
+                    _fstate['cur'] = code
+                try:
+                    # snapshot_date 为历史日时，compute_dist_snapshot 会把 15m 截到该日(防未来泄漏)
+                    compute_dist_snapshot(code, snapshot_date=snapshot_date, commit=True, merge_below=0)
+                    with _flock:
+                        _fstate['ok'] += 1
+                except Exception:
+                    logger.exception(f'[fill_dist] {code} 分布快照失败')
+                    with _flock:
+                        _fstate['fail'] += 1
+                finally:
+                    with _flock:
+                        _fstate['done'] += 1
+        except Exception as e:
+            logger.exception('[fill_dist] 任务异常')
+            with _flock:
+                _fstate['error'] = str(e)
+        finally:
+            with _flock:
+                _fstate['running'] = False
+                _fstate['cur'] = None
+
+
+def start_fill_dist(app, board_code, codes, snapshot_date=None):
+    """给定成分股逐只算/更新分布快照（默认今天；给历史日则 as-of 该日重算）。返回 (ok, message)。"""
+    from datetime import date as _date
+    snapshot_date = snapshot_date or _date.today()
+    codes = [c for c in codes if c]
+    with _flock:
+        if _fstate['running']:
+            return False, '已有补齐任务在进行中'
+        _fstate.update({'running': True, 'board': board_code, 'done': 0, 'total': len(codes),
+                        'ok': 0, 'fail': 0, 'cur': None, 'error': None,
+                        'started': time.strftime('%H:%M:%S')})
+    if not codes:
+        with _flock:
+            _fstate['running'] = False
+        return False, '没有需要补齐的成分股（该日都已有快照）'
+    threading.Thread(target=_run_fill, args=(app, board_code, codes, snapshot_date),
+                     daemon=True).start()
+    return True, f'已开始补齐 {len(codes)} 只成分股 {snapshot_date} 的分布快照'
