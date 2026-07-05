@@ -51,7 +51,7 @@ def synth_exists(board_code: str) -> dict:
     scode = synth_code(board_code)
     eng = db.engines['quanttradingsystem']
     with eng.connect() as conn:
-        n = conn.execute(text('SELECT COUNT(*) FROM data_stock_daily WHERE stock_code=:c'),
+        n = conn.execute(text('SELECT COUNT(*) FROM board_synth_daily WHERE stock_code=:c'),
                          {'c': scode}).scalar()
     has15 = (Path(Config.get_project_root()) / 'data' / '15m' / f'{scode}.parquet').exists()
     return {'synth_code': scode, 'daily_rows': int(n or 0),
@@ -99,7 +99,6 @@ def _synthesize(frames: dict, weights: dict, anchor_close=None, base=1000.0) -> 
     high_p = pd.DataFrame({k: v['high'] for k, v in frames.items()}).reindex_like(close_p)
     low_p = pd.DataFrame({k: v['low'] for k, v in frames.items()}).reindex_like(close_p)
     money_p = pd.DataFrame({k: v.get('money') for k, v in frames.items()}).reindex_like(close_p)
-    vol_p = pd.DataFrame({k: v.get('volume') for k, v in frames.items()}).reindex_like(close_p)
 
     prev = close_p.shift(1)
     r_close = close_p / prev - 1
@@ -129,13 +128,16 @@ def _synthesize(frames: dict, weights: dict, anchor_close=None, base=1000.0) -> 
     idx_high = prev_idx * (1 + R_high.fillna(0))
     idx_low = prev_idx * (1 + R_low.fillna(0))
 
+    # 指数量能用「成交额(money)求和」而非原始股数求和：成交额可加、跨价位可比，
+    # 不会被「低价×巨量股数」的成分股(如 ¥13×3亿股)在总量里过度主导，形状更贴近东财。
+    # volume 列也存成交额(作为图表量能柱)，money 列同值。
+    money_sum = money_p.sum(axis=1, min_count=1)
     out = pd.DataFrame({
         'date': idx_close.index,
         'open': idx_open.values, 'high': idx_high.values,
         'low': idx_low.values, 'close': idx_close.values,
-        # 指数量能：成分股成交额/量在当根求和（NaN 视为 0）
-        'volume': vol_p.sum(axis=1, min_count=1).values,
-        'money': money_p.sum(axis=1, min_count=1).values,
+        'volume': money_sum.values,   # 成交额口径(turnover)
+        'money': money_sum.values,
     })
     # high/low 兜底：合成的极值须包住 open/close
     out['high'] = out[['high', 'open', 'close']].max(axis=1)
@@ -215,19 +217,19 @@ def _em_last_close_15m(board_code: str, d15: Path):
 
 # ================= 写入（写到合成代码，东财数据不动）=================
 def _write_daily(scode: str, df: pd.DataFrame) -> int:
-    """整段替换 data_stock_daily 里该合成代码的行。返回写入行数。"""
+    """整段替换 board_synth_daily 里该合成代码的行（独立表，不碰东财 data_stock_daily）。"""
     if df is None or df.empty:
         return 0
     eng = db.engines['quanttradingsystem']
     with eng.begin() as conn:
-        conn.execute(text('DELETE FROM data_stock_daily WHERE stock_code=:c'), {'c': scode})
+        conn.execute(text('DELETE FROM board_synth_daily WHERE stock_code=:c'), {'c': scode})
         rows = [{'c': scode, 'd': r.date.date() if hasattr(r.date, 'date') else r.date,
                  'o': float(r.open), 'cl': float(r.close), 'h': float(r.high),
                  'l': float(r.low), 'v': float(r.volume) if pd.notna(r.volume) else None,
                  'm': float(r.money) if pd.notna(r.money) else None}
                 for r in df.itertuples(index=False)]
         conn.execute(text(
-            'INSERT INTO data_stock_daily (stock_code,date,open,close,high,low,volume,money) '
+            'INSERT INTO board_synth_daily (stock_code,date,open,close,high,low,volume,money) '
             'VALUES (:c,:d,:o,:cl,:h,:l,:v,:m)'), rows)
     return len(rows)
 

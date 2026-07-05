@@ -98,23 +98,41 @@ def _load_board_daily(board_code: str, end_date: date,
     eng = db.engines['quanttradingsystem']
     df = pd.DataFrame()
 
+    # 0) 合成板块（BKxxxxS）日K 单独存 board_synth_daily，绝不混进 data_stock_daily
+    _is_synth = code.upper().startswith('BK') and code.upper().endswith('S')
+    if _is_synth:
+        try:
+            with eng.connect() as conn:
+                rows = conn.execute(text("""
+                    SELECT date, open, close, high, low, volume, money
+                    FROM board_synth_daily
+                    WHERE stock_code = :code AND date <= :end_date
+                    ORDER BY date DESC
+                    LIMIT :lim
+                """), {'code': code, 'end_date': end_date, 'lim': lookback}).fetchall()
+            if rows:
+                df = pd.DataFrame(rows, columns=['date', 'open', 'close', 'high', 'low', 'volume', 'money'])
+        except Exception as e:
+            logger.debug(f"board_synth_daily 读取 {code} 失败: {e}")
+
     # 1) 先尝试 data_stock_daily（最新数据）
-    try:
-        with eng.connect() as conn:
-            rows = conn.execute(text("""
-                SELECT date, open, close, high, low, volume, money
-                FROM data_stock_daily
-                WHERE stock_code = :code AND date <= :end_date
-                ORDER BY date DESC
-                LIMIT :lim
-            """), {'code': code, 'end_date': end_date, 'lim': lookback}).fetchall()
-        if rows:
-            df = pd.DataFrame(rows, columns=['date', 'open', 'close', 'high', 'low', 'volume', 'money'])
-    except Exception as e:
-        logger.debug(f"data_stock_daily 读取 {code} 失败: {e}")
+    if not _is_synth:
+        try:
+            with eng.connect() as conn:
+                rows = conn.execute(text("""
+                    SELECT date, open, close, high, low, volume, money
+                    FROM data_stock_daily
+                    WHERE stock_code = :code AND date <= :end_date
+                    ORDER BY date DESC
+                    LIMIT :lim
+                """), {'code': code, 'end_date': end_date, 'lim': lookback}).fetchall()
+            if rows:
+                df = pd.DataFrame(rows, columns=['date', 'open', 'close', 'high', 'low', 'volume', 'money'])
+        except Exception as e:
+            logger.debug(f"data_stock_daily 读取 {code} 失败: {e}")
 
     # 2) 回退到旧表 datadaily.{code 小写}
-    if df.empty or len(df) < 20:
+    if not _is_synth and (df.empty or len(df) < 20):
         try:
             with eng.connect() as conn:
                 rows = conn.execute(text(f"""
