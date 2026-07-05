@@ -185,6 +185,28 @@ def get_stock_name_by_id(stock_code_id):
         return None
 
 
+def _recompute_dist_snapshots_after_download():
+    """下载完成后按最新 data/15m 重算个股分布快照（原始口径 merge_below=0）。
+
+    Why：股票池页 /stock_pool/ 与筛选页 /screener/ 的「15m 趋势 / 预估目标价」都读
+    stock_dist_snapshot 表，而这张表只有重算才更新；个股详情页 /stock/ 却是实时算 15m。
+    不在下载后重算快照，池里的趋势就会卡在旧快照、与详情页不一致。这里把"重算快照"
+    挂到下载收尾，让池/筛选页的趋势随每天收盘下载即时刷新。
+
+    失败只记日志、绝不影响下载主流程。假定调用方已在 app_context 内（download_file 是）。
+    """
+    global download_status
+    try:
+        from scripts.Others.compute_dist_snapshots import run_batch
+        with download_lock:
+            download_status = "计算趋势快照..."
+        s = run_batch(target_date=date.today(), merge_below=0.0)
+        logging.info(f"[snapshot] 下载后重算分布快照完成：ok={s.get('ok')} fail={s.get('fail')} "
+                     f"empty={s.get('empty')} total={s.get('total')}")
+    except Exception as e:
+        logging.warning(f"[snapshot] 下载后重算分布快照失败（不影响下载主流程）: {e}")
+
+
 def download_file():
     # 声明使用全局变量，记录下载状态、进度、停止下载标志和最大下载天数
     global download_status, download_progress, stop_download, download_max_days, download_force
@@ -288,6 +310,8 @@ def download_file():
             else:
                 msg = "没有需要下载的数据"
             logging.info(msg)
+            # 即使无需下载，也按现有最新 15m 重算分布快照：保证股票池/筛选页 15m 趋势随收盘刷新
+            _recompute_dist_snapshots_after_download()
             with download_lock:
                 download_status = msg
             return
@@ -822,6 +846,9 @@ def download_file():
                          f"upsert {br['upserted']} / errors {len(br['errors'])}")
         except Exception as e:
             logging.warning(f"[basics] 批量刷新基本面失败（不影响主下载）: {e}")
+
+        # 下载完成 → 重算分布快照，让股票池/筛选页的 15m 趋势随收盘下载即时刷新
+        _recompute_dist_snapshots_after_download()
 
         # 下载任务完成，更新下载状态和进度
         with download_lock:
