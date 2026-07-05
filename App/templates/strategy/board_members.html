@@ -82,6 +82,13 @@
     <button onclick="clearSel()" class="bm-btn">取消</button>
   </div>
 
+  <!-- 视图切换：成分股列表 / 四象分布图 -->
+  <div style="display:flex;gap:.4rem;align-items:center;margin-bottom:.6rem;">
+    <button id="tabTable" class="bm-tab bm-tab-on" onclick="switchView('table')">📋 成分股列表</button>
+    <button id="tabChart" class="bm-tab" onclick="switchView('chart')">🎯 四象分布图</button>
+  </div>
+
+  <div id="panelTable">
   <div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:.5rem;overflow-x:auto;">
     <table style="width:100%;border-collapse:collapse;font-size:.86rem;">
       <thead style="background:#f9fafb;">
@@ -92,7 +99,7 @@
           <th style="padding:.5rem;text-align:left;">股票池</th>
           <th style="padding:.5rem;text-align:center;" title="是否在每日收盘数据下载表单(data_download_records)中">下载表单</th>
           <th style="padding:.5rem;text-align:center;" title="该股 1m 数据最新到的交易日；落后板块最新日的标黄/红，可点「修复数据」补齐">1m 更新到</th>
-          <th style="padding:.5rem;text-align:center;">趋势阶段</th>
+          <th style="padding:.5rem;text-align:center;" title="15m 口径：来自 stock_dist_snapshot 当日快照。方向=当前周期方向，初期/末期=当前振幅是否已过历史中位">趋势阶段(15m)</th>
           <th style="padding:.5rem;text-align:center;">信号</th>
           <th style="padding:.5rem;text-align:right;">趋势分</th>
           <th style="padding:.5rem;text-align:right;" title="流通市值占板块比">权重%</th>
@@ -102,6 +109,33 @@
       <tbody id="tb"><tr><td colspan="11" style="text-align:center;color:#9ca3af;padding:1rem;">加载中…</td></tr></tbody>
     </table>
   </div>
+  </div><!-- /panelTable -->
+
+  <!-- 四象分布图：X=周期长度分位 Y=振幅分位（上涨取正/下跌取负）-->
+  <div id="panelChart" style="display:none;">
+    <div style="display:flex;gap:.6rem;align-items:center;flex-wrap:wrap;margin-bottom:.6rem;font-size:.85rem;">
+      <label style="color:#6b7280;display:inline-flex;align-items:center;gap:.3rem;">日期
+        <input type="date" id="quadDate" onchange="loadQuadDate()" title="切换到过去某一天的四象分布（as-of 该日的分布快照）"
+               style="padding:.25rem .4rem;border:1px solid #d1d5db;border-radius:5px;font-size:.82rem;">
+      </label>
+      <button onclick="quadLatest()" class="bm-btn" title="回到最新快照">最新</button>
+      <span id="quadInfo" style="color:#6b7280;"></span>
+      <button onclick="fillDist(false)" class="bm-btn" title="给 stock_dist_snapshot 无数据的成分股补算当日快照">补齐缺失快照</button>
+      <button onclick="fillDist(true)" class="bm-btn" title="重算全部成分股当日快照">全部重算</button>
+      <span id="fillDistStatus" style="color:#6b7280;font-size:.8rem;"></span>
+      <label style="margin-left:auto;display:inline-flex;align-items:center;gap:.3rem;color:#6b7280;cursor:pointer;">
+        <input type="checkbox" id="quadLabels" checked onchange="drawQuad()"> 显示名称
+      </label>
+    </div>
+    <div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:.5rem;">
+      <div id="quadChart" style="width:100%;height:640px;">切到本标签后加载…</div>
+    </div>
+    <div style="color:#9ca3af;font-size:.75rem;margin-top:.4rem;line-height:1.7;">
+      X=周期长度分位、Y=振幅分位（均取「当前方向」的分位×100）。上涨取正、下跌取负 →
+      <b style="color:#dc2626;">右上象限=上涨</b>、<b style="color:#16a34a;">左下象限=下跌</b>。
+      越靠外圈(±100)＝当前振幅/时间越接近历史极限＝越"末期"；越靠中心＝越"初期"。
+    </div>
+  </div>
 </div>
 
 <style>
@@ -110,10 +144,14 @@
   .bm-btn-primary { padding:.35rem 1rem;background:#2563eb;color:#fff;border:none;border-radius:6px;font-size:.85rem;cursor:pointer; }
   #tb tr { border-top:1px solid #f3f4f6; }
   .pchip { border-radius:9999px;padding:.05rem .45rem;font-size:.72rem;font-weight:600; }
+  .bm-tab { padding:.4rem .9rem;border:1px solid #d1d5db;background:#fff;color:#374151;border-radius:6px;font-size:.85rem;cursor:pointer; }
+  .bm-tab-on { background:#2563eb;color:#fff;border-color:#2563eb; }
 </style>
 
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
 <script>
 const CODE = {{ board_code | tojson }};
+const INIT_QDATE = {{ init_qdate | tojson }};   // 路由传入的四象分布初始日期(空=最新)
 let ALL = [];                 // 全部成分股
 const SEL = new Set();        // 选中代码
 const STAGE_LBL = {up_early:'上涨初期',up_late:'上涨末期',down_early:'下跌初期',down_late:'下跌末期',unknown:'—'};
@@ -367,8 +405,122 @@ async function refreshCaps() {
   finally { btn.disabled = false; }
 }
 
+// ===== 视图切换：成分股列表 / 四象分布图 =====
+function switchView(v) {
+  const t = v === 'table';
+  document.getElementById('panelTable').style.display = t ? '' : 'none';
+  document.getElementById('panelChart').style.display = t ? 'none' : '';
+  document.getElementById('tabTable').classList.toggle('bm-tab-on', t);
+  document.getElementById('tabChart').classList.toggle('bm-tab-on', !t);
+  if (!t) { if (_quadLoaded) drawQuad(_quadDate); else loadQuadDate(); }
+}
+
+// ===== 四象分布图：X=周期长度分位 Y=振幅分位（上涨取正/下跌取负）=====
+// 数据来自 /quad 接口，可按日期切换到过去某天的分布快照（as-of 该日）。
+let _quadChart = null, _quadRows = [], _quadLoaded = false, _quadDate = null;
+
+async function loadQuadDate() {
+  const inp = document.getElementById('quadDate'), info = document.getElementById('quadInfo');
+  const ds = inp.value || '';
+  info.textContent = '加载中…';
+  try {
+    const j = await fetch(`/board_data/api/board/${encodeURIComponent(CODE)}/quad` + (ds ? `?date=${ds}` : ''))
+      .then(r => r.json());
+    if (!j.success) { info.textContent = j.message || '加载失败'; return; }
+    const d = j.data;
+    _quadRows = d.rows || [];
+    _quadLoaded = true;
+    _quadDate = d.date;
+    if (d.min_date) inp.min = d.min_date;
+    if (d.max_date) inp.max = d.max_date;
+    if (!inp.value && d.date) inp.value = d.date;   // 默认填最新快照日
+    drawQuad(d.date);
+    updateQuadUrl(d.date, d.date === d.max_date);   // 同步地址栏：最新→不带参，历史日→带 date=
+  } catch (e) { info.textContent = '加载异常：' + e.message; }
+}
+function quadLatest() { document.getElementById('quadDate').value = ''; loadQuadDate(); }
+
+// 地址栏带上四象分布的日期：最新快照日不带参（干净），历史日带 ?date=YYYY-MM-DD
+function updateQuadUrl(date, isLatest) {
+  const u = new URL(window.location.href);
+  u.searchParams.set('code', CODE);
+  if (date && !isLatest) u.searchParams.set('date', date);
+  else u.searchParams.delete('date');
+  history.replaceState(null, '', u);
+}
+
+function drawQuad(dateShown) {
+  const el = document.getElementById('quadChart');
+  if (!el || typeof echarts === 'undefined') return;
+  if (!_quadChart) _quadChart = echarts.init(el);
+  const showLabel = document.getElementById('quadLabels').checked;
+  const up = [], dn = [];
+  let nStale = 0;
+  _quadRows.forEach(s => {
+    if (s.amp_pct == null || s.len_pct == null || !s.direction) return;
+    const sign = s.direction > 0 ? 1 : -1;
+    const base = sign > 0 ? '#dc2626' : '#16a34a';
+    if (s.stale) nStale++;
+    const pt = { value: [sign * Math.round(s.len_pct * 100), sign * Math.round(s.amp_pct * 100)],
+                 name: s.stock_name || s.stock_code, code: s.stock_code, sig: s.signal_name || '',
+                 ampp: Math.round(s.amp_pct * 100), lenp: Math.round(s.len_pct * 100),
+                 sdate: s.snapshot_date, stale: !!s.stale,
+                 // 陈旧(该日无快照、用更早近似)→ 空心；否则实心
+                 itemStyle: s.stale ? { color: 'transparent', borderColor: base, borderWidth: 1.5, opacity: .7 }
+                                    : { color: base, opacity: .82 } };
+    (sign > 0 ? up : dn).push(pt);
+  });
+  const nWith = up.length + dn.length;
+  const total = ALL.length || _quadRows.length || nWith;
+  document.getElementById('quadInfo').innerHTML =
+    `有快照 <b>${nWith}/${total}</b> 只（<span style="color:#dc2626;">上涨 ${up.length}</span> · <span style="color:#16a34a;">下跌 ${dn.length}</span>）`
+    + (dateShown ? `　<span style="color:#2563eb;">快照日 ${dateShown}</span>` : '')
+    + (nStale ? `　<span style="color:#ca8a04;">${nStale} 只为历史近似(空心，非当日快照)，点「补齐缺失快照」补这天</span>` : '')
+    + (total > nWith ? `　<span style="color:#9ca3af;">${total - nWith} 只无数据</span>` : '');
+  const lbl = { show: showLabel, fontSize: 9, color: '#6b7280', position: 'right', formatter: p => p.data.name };
+  const mk = (data, color) => ({ type: 'scatter', data, symbolSize: 12, itemStyle: { color, opacity: .82 }, label: lbl });
+  _quadChart.setOption({
+    grid: { left: 60, right: 40, top: 40, bottom: 50 },
+    tooltip: { formatter: p => `<b>${p.data.name}</b> ${p.data.code}<br>${p.data.sig}<br>振幅分位 <b>${p.data.ampp}</b> · 长度分位 <b>${p.data.lenp}</b>`
+      + (p.data.stale ? `<br><span style="color:#ca8a04;">⚠ 历史近似（快照日 ${p.data.sdate}，非当日）</span>`
+                      : `<br><span style="color:#9ca3af;">快照日 ${p.data.sdate}</span>`) },
+    xAxis: { name: '周期长度分位', nameLocation: 'middle', nameGap: 26, min: -100, max: 100,
+             splitLine: { show: true, lineStyle: { color: '#f1f5f9' } }, axisLine: { onZero: true }, axisTick: { show: false } },
+    yAxis: { name: '振幅分位', min: -100, max: 100,
+             splitLine: { show: true, lineStyle: { color: '#f1f5f9' } }, axisLine: { onZero: true }, axisTick: { show: false } },
+    series: [ mk(up, '#dc2626'), mk(dn, '#16a34a') ],
+  }, true);
+  _quadChart.resize();
+}
+
+// ===== 补齐/更新分布快照（缺数据时用）=====
+let _fillTimer = null;
+async function fillDist(all) {
+  const st = document.getElementById('fillDistStatus');
+  const ds = document.getElementById('quadDate').value || '';   // 补齐"当前查看的日期"(历史日则 as-of 该日)
+  st.textContent = '启动中…';
+  try {
+    const r = await fetch(`/board_data/api/board/${encodeURIComponent(CODE)}/fill_dist`,
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ all: !!all, date: ds }) });
+    const j = await r.json();
+    if (!j.success) { st.textContent = j.message || '启动失败'; return; }
+  } catch (e) { st.textContent = '启动失败：' + e.message; return; }
+  clearInterval(_fillTimer);
+  _fillTimer = setInterval(async () => {
+    const s = await fetch(`/board_data/api/board/${encodeURIComponent(CODE)}/fill_dist_status`).then(r => r.json()).catch(() => null);
+    if (!s || !s.success) return;
+    const d = s.data;
+    if (d.running) { st.textContent = `补齐中… ${d.done}/${d.total}（${d.cur || ''}）`; return; }
+    clearInterval(_fillTimer);
+    st.textContent = d.error ? '失败：' + d.error : `完成：成功 ${d.ok} / 失败 ${d.fail}`;
+    if (!d.error) { load(); loadQuadDate(); }   // 刷新表格 + 重新拉四象数据(会含新补的快照)
+  }, 1200);
+}
+
 _refreshStratSel('');   // 载入已保存的筛选策略
 load();
+// 带 date 参数进入 → 直接打开「四象分布图」并定位到该历史日；无参则默认列表(图表默认最新)
+if (INIT_QDATE) { document.getElementById('quadDate').value = INIT_QDATE; switchView('chart'); }
 // 页面打开时若已有任务在跑，自动接上进度
 fetch('/board_data/api/repair_status').then(r => r.json()).then(j => {
   if (j && j.success && j.data.running) pollRepair();

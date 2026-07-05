@@ -300,10 +300,20 @@
 <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
 <script>
 const BOARD_CODE = "{{ board_code }}";
+const INIT_SOURCE = "{{ init_source }}";   // 路由传入的初始数据源 em/syn
 // K线/评分读取用的代码：'em' → BOARD_CODE(东财)，'syn' → BOARD_CODE+'S'(合成)。
 // 名单/持仓跟踪/历史评分等元数据仍固定用 BOARD_CODE。
-let DATA_CODE = BOARD_CODE;
+let DATA_CODE = (INIT_SOURCE === 'syn') ? BOARD_CODE + 'S' : BOARD_CODE;
 let _synTimer = null;
+
+// 把当前数据源写进地址栏（em 默认不带参，syn 带 ?source=syn），便于刷新/收藏/分享保持
+function updateSourceUrl(kind) {
+    const u = new URL(window.location.href);
+    u.searchParams.set('code', BOARD_CODE);
+    if (kind === 'syn') u.searchParams.set('source', 'syn');
+    else u.searchParams.delete('source');
+    history.replaceState(null, '', u);
+}
 
 async function setSource(kind) {
     // 切到「我的合成」前先确认已合成，未合成则引导先合成（避免直接 404）
@@ -321,6 +331,7 @@ async function setSource(kind) {
     DATA_CODE = (kind === 'syn') ? BOARD_CODE + 'S' : BOARD_CODE;
     document.getElementById('srcEm').classList.toggle('active', kind !== 'syn');
     document.getElementById('srcSyn').classList.toggle('active', kind === 'syn');
+    updateSourceUrl(kind);   // 同步到地址栏
     // 重新拉取 K线三图 + 多周期评分（元数据/历史不动）
     loadChart(); loadChart15m(); loadChart60m(); loadMultiScore();
 }
@@ -360,7 +371,8 @@ let _bdSuggestItems = [];
 
 function switchBoardTo(code) {
     if (!code) return;
-    window.location.href = `/board_data/board?code=${encodeURIComponent(code)}`;
+    const src = DATA_CODE.endsWith('S') ? '&source=syn' : '';   // 切板块时保留当前数据源
+    window.location.href = `/board_data/board?code=${encodeURIComponent(code)}${src}`;
 }
 
 function onBoardSearchInput() {
@@ -982,6 +994,10 @@ async function untrack() {
 document.getElementById('trackModal').addEventListener('click', e => {
     if (e.target.id === 'trackModal') closeTrackModal();
 });
+
+// 初始数据源高亮（DATA_CODE 已按 INIT_SOURCE 初始化，图表首次加载即用对应源）
+document.getElementById('srcEm').classList.toggle('active', INIT_SOURCE !== 'syn');
+document.getElementById('srcSyn').classList.toggle('active', INIT_SOURCE === 'syn');
 
 loadHistory();
 loadChart();

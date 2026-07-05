@@ -39,18 +39,24 @@ def page():
 def board_detail_page():
     """单板块详情：日 K / 15m 图 + 成分股 + 历次打分时间线。
     板块代码用查询参数传入：/board_data/board?code=BK0478
+    数据源用 source 区分：em=东方财富(默认) / syn=我的合成(读 BKxxxxS)。
     """
     code = request.args.get('code', '')
-    return render_template('strategy/board_detail.html', board_code=code)
+    source = (request.args.get('source') or 'em').strip().lower()
+    if source not in ('em', 'syn'):
+        source = 'em'
+    return render_template('strategy/board_detail.html', board_code=code, init_source=source)
 
 
 @board_data_bp.route('/members')
 def board_members_page():
     """板块成分股管理页：列出该板块成分股，可按趋势/信号/是否在池筛选，
     多选一键加入股票池。代码用查询参数：/board_data/members?code=BK1033
+    可选 date=YYYY-MM-DD：带此参数则直接进入「四象分布图」标签并定位到该历史日快照。
     """
     code = request.args.get('code', '')
-    return render_template('strategy/board_members.html', board_code=code)
+    init_qdate = (request.args.get('date') or '').strip()
+    return render_template('strategy/board_members.html', board_code=code, init_qdate=init_qdate)
 
 
 @board_data_bp.route('/api/repair_members', methods=['POST'])
@@ -93,6 +99,111 @@ def api_build_synth():
 def api_build_synth_status():
     from App.services.board_synth_service import get_status
     return jsonify({'success': True, 'data': get_status()})
+
+
+@board_data_bp.route('/api/board/<code>/fill_dist', methods=['POST'])
+def api_fill_dist(code):
+    """补齐/更新成分股分布快照。body{date:YYYY-MM-DD} 指定日期(默认今天，历史日则 as-of 重算)；
+    默认只补「该日无快照」的成分股；body{all:true} 则全部重算。"""
+    from datetime import datetime as _dt, date as _date
+    from App.services.minute_data_repair import start_fill_dist
+    from App.models.strategy.StockDistSnapshot import StockDistSnapshot
+    data = request.get_json(silent=True) or {}
+    codes = _board_member_codes(code)
+    ds = (data.get('date') or '').strip()
+    if ds:
+        try:
+            target_date = _dt.strptime(ds, '%Y-%m-%d').date()
+        except ValueError:
+            return jsonify({'success': False, 'message': '日期格式错误'}), 400
+    else:
+        target_date = _date.today()
+    if data.get('all'):
+        targets = codes
+    else:
+        # 缺该「具体日期」快照的成分股（非 as-of，要正好这天）
+        have = {row[0] for row in db.session.query(StockDistSnapshot.stock_code)
+                .filter(StockDistSnapshot.stock_code.in_(codes),
+                        StockDistSnapshot.merge_below == 0,
+                        StockDistSnapshot.snapshot_date == target_date).distinct().all()}
+        targets = [c for c in codes if c not in have]
+    app = current_app._get_current_object()
+    ok, msg = start_fill_dist(app, code, targets, snapshot_date=target_date)
+    return jsonify({'success': ok, 'message': msg, 'count': len(targets)}), (200 if ok else 409)
+
+
+@board_data_bp.route('/api/board/<code>/fill_dist_status')
+def api_fill_dist_status(code):
+    from App.services.minute_data_repair import get_fill_status
+    return jsonify({'success': True, 'data': get_fill_status()})
+
+
+@board_data_bp.route('/api/board/<code>/quad')
+def api_board_quad(code):
+    """四象分布图数据：每只成分股 as-of 指定日期的 15m 分布快照（振幅/长度分位 + 方向）。
+    ?date=YYYY-MM-DD 取「≤该日的最新快照」；不传取最新。附带可选日期范围 min/max。"""
+    from datetime import datetime as _dt
+    from App.models.strategy.StockDistSnapshot import StockDistSnapshot
+    from App.models.data.basic_info import StockInfo
+    codes = _board_member_codes(code)
+    if not codes:
+        return jsonify({'success': True, 'data': {'rows': [], 'date': None, 'min_date': None, 'max_date': None}})
+
+    rng = (db.session.query(db.func.min(StockDistSnapshot.snapshot_date),
+                            db.func.max(StockDistSnapshot.snapshot_date))
+           .filter(StockDistSnapshot.stock_code.in_(codes),
+                   StockDistSnapshot.merge_below == 0).first())
+    min_date, max_date = (rng[0], rng[1]) if rng else (None, None)
+
+    ds = (request.args.get('date') or '').strip()
+    if ds:
+        try:
+            target = _dt.strptime(ds, '%Y-%m-%d').date()
+        except ValueError:
+            return jsonify({'success': False, 'message': '日期格式错误'}), 400
+    else:
+        target = max_date
+    if target is None:
+        return jsonify({'success': True, 'data': {'rows': [], 'date': None,
+                        'min_date': None, 'max_date': None}})
+
+    # 每只成分股 ≤target 的最新一条快照（as-of，兼容周末/缺日）
+    snap_sub = (db.session.query(
+                    StockDistSnapshot.stock_code,
+                    db.func.max(StockDistSnapshot.snapshot_date).label('md'))
+                .filter(StockDistSnapshot.stock_code.in_(codes),
+                        StockDistSnapshot.merge_below == 0,
+                        StockDistSnapshot.snapshot_date <= target)
+                .group_by(StockDistSnapshot.stock_code).subquery())
+    snaps = (db.session.query(StockDistSnapshot)
+             .join(snap_sub, db.and_(
+                 StockDistSnapshot.stock_code == snap_sub.c.stock_code,
+                 StockDistSnapshot.snapshot_date == snap_sub.c.md))
+             .filter(StockDistSnapshot.merge_below == 0).all())
+
+    name_map = {r.code: r.name for r in StockInfo.query
+                .filter(StockInfo.code.in_(codes))
+                .with_entities(StockInfo.code, StockInfo.name).all() if r.name}
+    rows = []
+    for s in snaps:
+        up = s.current_direction == 1
+        dn = s.current_direction == -1
+        rows.append({
+            'stock_code': s.stock_code,
+            'stock_name': name_map.get(s.stock_code, s.stock_code),
+            'direction': s.current_direction,
+            'amp_pct': (s.amp_up_pct if up else s.amp_dn_pct if dn else None),
+            'len_pct': (s.len_up_pct if up else s.len_dn_pct if dn else None),
+            'signal_name': s.current_signal_name,
+            'snapshot_date': s.snapshot_date.isoformat() if s.snapshot_date else None,
+            # 该日无快照、用了更早的近似值（as-of 回退）→ 标记为陈旧，前端提示可「补齐这天」
+            'stale': bool(s.snapshot_date and s.snapshot_date != target),
+        })
+    return jsonify({'success': True, 'data': {
+        'rows': rows, 'date': target.isoformat(),
+        'min_date': min_date.isoformat() if min_date else None,
+        'max_date': max_date.isoformat() if max_date else None,
+    }})
 
 
 @board_data_bp.route('/api/synth_exists')
@@ -953,9 +1064,26 @@ def api_board_untrack(code):
         return jsonify({'success': False, 'message': str(e)}), 500
 
 
+def _stage_from_snapshot(snap):
+    """从 stock_dist_snapshot 派生「15m 趋势阶段」：
+    方向取 current_direction（1上/-1下/0或None=盘整未知）；
+    早/末期取当前振幅在历史分布的分位——amp_pct ≥ 0.5（超过历史中位）视为末期，否则初期。
+    复用页面既有的 up_early/up_late/down_early/down_late 标签。
+    """
+    if snap is None or not snap.current_direction:
+        return 'unknown'
+    is_up = snap.current_direction == 1
+    pct = snap.amp_up_pct if is_up else snap.amp_dn_pct
+    late = (pct is not None and pct >= 0.5)
+    if is_up:
+        return 'up_late' if late else 'up_early'
+    return 'down_late' if late else 'down_early'
+
+
 @board_data_bp.route('/api/board/<code>/stocks')
 def api_board_stocks(code):
-    """返回板块成分股清单（来源 industry_eastmoney 最新日期），LEFT JOIN 个股最新趋势打分。"""
+    """返回板块成分股清单（来源 industry_eastmoney 最新日期）。
+    趋势阶段列取 15m 口径（stock_dist_snapshot 当日快照）；信号/趋势分仍为日K综合(StockTrendScore)。"""
     try:
         from App.models.evaluation.StockTrendScore import StockTrendScore
 
@@ -996,6 +1124,25 @@ def api_board_stocks(code):
             .all())
         score_map = {s.stock_code: s for s in scores}
 
+        # 15m 当前趋势：取每只成分股最新一条分布快照（merge_below=0），供「趋势阶段」列(15m口径)
+        from App.models.strategy.StockDistSnapshot import StockDistSnapshot
+        snap_map = {}
+        try:
+            snap_sub = (db.session.query(
+                    StockDistSnapshot.stock_code,
+                    db.func.max(StockDistSnapshot.snapshot_date).label('md'))
+                .filter(StockDistSnapshot.stock_code.in_(stock_codes),
+                        StockDistSnapshot.merge_below == 0)
+                .group_by(StockDistSnapshot.stock_code).subquery())
+            snaps = (db.session.query(StockDistSnapshot)
+                .join(snap_sub, db.and_(
+                    StockDistSnapshot.stock_code == snap_sub.c.stock_code,
+                    StockDistSnapshot.snapshot_date == snap_sub.c.md))
+                .filter(StockDistSnapshot.merge_below == 0).all())
+            snap_map = {s.stock_code: s for s in snaps}
+        except Exception:
+            logger.exception('板块成分股取 15m 分布快照失败')
+
         # 实时市值拉取较慢(东财 HTTP，~10s+)。默认拉实时(保持板块详情页原行为)；
         # ?live=0 走快照市值(秒开)，成分股管理页用这个。
         cap_source = 'snapshot'
@@ -1012,16 +1159,28 @@ def api_board_stocks(code):
         out = []
         for r in rows:
             sc = score_map.get(r[0])
+            snap = snap_map.get(r[0])
             live = live_cap.get(r[0])
             total_cap = live['total_cap'] if live and live.get('total_cap') is not None else r[4]
             circ_cap = live['circ_cap'] if live and live.get('circ_cap') is not None else r[5]
+            # 按当前方向取对应的振幅/长度分位（供四象分布图；无快照则 None）
+            _up15 = bool(snap and snap.current_direction == 1)
+            _dn15 = bool(snap and snap.current_direction == -1)
+            amp_pct = (snap.amp_up_pct if _up15 else snap.amp_dn_pct if _dn15 else None) if snap else None
+            len_pct = (snap.len_up_pct if _up15 else snap.len_dn_pct if _dn15 else None) if snap else None
             out.append({
                 'stock_code': r[0],
                 'stock_name': r[1],
-                'trend_stage': sc.trend_stage if sc else None,
+                # 趋势阶段：15m 口径（stock_dist_snapshot 当日快照）
+                'trend_stage': _stage_from_snapshot(snap),
+                'trend_dir_15m': snap.current_direction if snap else None,
+                'trend_signal_name': snap.current_signal_name if snap else None,
+                'trend_snapshot_date': snap.snapshot_date.isoformat() if snap and snap.snapshot_date else None,
+                'amp_pct': amp_pct,   # 当前振幅分位 0~1（当前方向）
+                'len_pct': len_pct,   # 当前长度分位 0~1（当前方向）
                 'trend_strength': sc.trend_strength if sc else None,
-                'signal': sc.signal if sc else None,
-                'total_score': sc.total_score if sc else None,
+                'signal': sc.signal if sc else None,           # 日K综合信号(StockTrendScore)
+                'total_score': sc.total_score if sc else None,  # 日K综合分
                 'score_date': sc.record_date.isoformat() if sc and sc.record_date else None,
                 'total_cap': total_cap,
                 'circ_cap': circ_cap,
