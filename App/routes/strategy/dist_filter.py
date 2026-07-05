@@ -110,13 +110,17 @@ def _run_compute_all(app, target_date, merge_below=0):
 
 @screener_bp.route('/api/add_to_pool', methods=['POST'])
 def api_add_to_pool():
-    """把选中的代码批量加入股票池（仅入池，不带任何状态标签）。
+    """把选中的代码批量加入股票池，可选带一个状态标签。
 
-    body: { codes: [...] }
-    不在池 → 新建为"在池但无状态"（pool_states 为空）；已在池(活跃) → 跳过。
+    body: { codes: [...], state: ''|'watching'|'candidate'|'trading' }
+      state 为空/非法 → 仅入池(无标签)；
+      不在池 → 新建(按 state 设标签或无标签)；已在池(活跃) → 有 state 则追加该标签(去重)，否则跳过。
     """
     data = request.get_json(silent=True) or {}
     codes = [str(c).strip() for c in (data.get('codes') or []) if str(c).strip()]
+    state = (data.get('state') or '').strip()
+    if state not in StockPool.VALID_STATES:
+        state = ''   # 仅入池
     if not codes:
         return jsonify({'success': False, 'message': '未选择股票'}), 400
     # 批量取名字
@@ -128,19 +132,23 @@ def api_add_to_pool():
             name_map.setdefault(r.code, r.name)
     except Exception:
         logger.exception('[screener] 取股票名失败')
-    added = skipped = 0
+    added = tagged = skipped = 0
     try:
         for code in codes:
             existing = StockPool.query.filter_by(stock_code=code, is_active=True).first()
             if existing:
-                skipped += 1
+                if state and state not in existing.get_states():
+                    existing.add_state(state)
+                    tagged += 1
+                else:
+                    skipped += 1
             else:
-                # pool_type='' → 不在 VALID_STATES，create_manual 不设状态，入池但无标签
-                StockPool.create_manual(code, name_map.get(code), pool_type='')  # 内部已 commit
+                # pool_type=state(可为'')；'' 不在 VALID_STATES，create_manual 不设状态
+                StockPool.create_manual(code, name_map.get(code), pool_type=state)  # 内部已 commit
                 added += 1
         db.session.commit()
-        return jsonify({'success': True, 'added': added, 'skipped': skipped,
-                        'total': len(codes)})
+        return jsonify({'success': True, 'added': added, 'tagged': tagged,
+                        'skipped': skipped, 'state': state, 'total': len(codes)})
     except Exception as e:
         db.session.rollback()
         logger.exception('[screener] 加入股票池失败')
@@ -297,8 +305,12 @@ def api_filter():
                                 'total': 0, 'count': 0, 'conditions': applied_conditions,
                                 'data': []})
         else:
+            # 多状态：仅观察/候选/交易 = 拥有该状态标签的（用 pool_states，不止主状态）
             pool_codes = {r.stock_code for r in
-                          StockPool.query.filter_by(pool_type=pool_type, is_active=1).all()}
+                          StockPool.query.filter(
+                              StockPool.is_active == 1,
+                              text("FIND_IN_SET(:st, pool_states)").bindparams(st=pool_type)
+                          ).all()}
             if pool_codes:
                 q = q.filter(StockDistSnapshot.stock_code.in_(pool_codes))
             else:
@@ -340,6 +352,7 @@ def api_filter():
     rows = q.limit(limit).all()
     data = [r.to_dict() for r in rows]
     _enrich_boards(data)
+    _enrich_pool(data)
     return jsonify({
         'success': True,
         'date': target.isoformat(),
@@ -383,6 +396,25 @@ def _codes_by_board_stage(stage):
     except Exception:
         logger.exception('[screener] 按板块趋势筛选失败')
         return set()
+
+
+def _enrich_pool(data):
+    """给结果行附加：是否在我的股票池(活跃) + 其状态标签。"""
+    codes = [d['stock_code'] for d in data if d.get('stock_code')]
+    if not codes:
+        return
+    pool = {}
+    try:
+        for p in (StockPool.query
+                  .filter(StockPool.stock_code.in_(codes), StockPool.is_active == True)
+                  .all()):
+            pool[p.stock_code] = p.get_states()
+    except Exception:
+        logger.exception('[screener] 取股票池成员失败')
+    for d in data:
+        st = pool.get(d['stock_code'])
+        d['in_pool'] = st is not None
+        d['pool_states'] = st or []
 
 
 def _enrich_boards(data):

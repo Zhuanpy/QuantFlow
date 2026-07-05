@@ -10,6 +10,8 @@
         </div>
         <div class="header-actions">
             <button class="btn btn-primary" onclick="showAddModal()">+ 添加股票</button>
+            <button class="btn btn-outline" id="snapBtn" onclick="updateSnapshots()" data-running="0"
+                    title="按最新 15m 数据重算全部个股分布快照，刷新「当前趋势(15m)/预估目标价」">🔄 更新快照</button>
             <button class="btn btn-outline" onclick="showImportModal()">从记录导入</button>
             <button class="btn btn-outline" onclick="exportStocks()">导出</button>
             <a class="btn btn-outline" href="/trade/real?mode=real" target="_blank" title="打开交易管理(计划与成交)">📋 交易管理</a>
@@ -38,7 +40,7 @@
 
     <!-- Tab 切换 -->
     <div class="tab-bar">
-        <button class="tab active" data-type="" onclick="switchTab(this)">全部</button>
+        <button class="tab active" data-type="all" onclick="switchTab(this)">全部</button>
         <button class="tab" data-type="watching" onclick="switchTab(this)">观察</button>
         <button class="tab" data-type="candidate" onclick="switchTab(this)">候选</button>
         <button class="tab" data-type="trading" onclick="switchTab(this)">交易中</button>
@@ -47,6 +49,21 @@
             <!-- 筛选 -->
             <select id="boardFilter" class="sort-select" onchange="loadStocks()" title="按所属板块（东财行业）筛选">
                 <option value="">全部板块</option>
+            </select>
+            <select id="trendFilter" class="sort-select" onchange="loadStocks()" title="按当前 15m 分布快照的趋势方向筛选">
+                <option value="">全部趋势</option>
+                <option value="up">↑ 上涨</option>
+                <option value="down">↓ 下跌</option>
+            </select>
+            <select id="ampFilter" class="sort-select" onchange="loadStocks()" title="按当前周期振幅经验分位筛选">
+                <option value="">全部振幅</option>
+                <option value="high">振幅高位(≥80分)</option>
+                <option value="low">振幅低位(≤20分)</option>
+            </select>
+            <select id="lenFilter" class="sort-select" onchange="loadStocks()" title="按当前周期长度经验分位筛选">
+                <option value="">全部长度</option>
+                <option value="high">长度高位(≥80分)</option>
+                <option value="low">长度低位(≤20分)</option>
             </select>
             <select id="sortBy" class="sort-select" onchange="loadStocks()">
                 <option value="priority">优先级排序</option>
@@ -611,6 +628,7 @@ textarea.form-input { resize: vertical; }
 let currentPage = 1;
 let currentPoolType = '';
 let selectedIds = new Set();
+let pendingBoard = '';   // URL ?board= 里待恢复的板块（板块下拉是异步填充的，需等选项就绪后再选中）
 
 document.addEventListener('DOMContentLoaded', () => {
     const params = new URLSearchParams(location.search);
@@ -620,10 +638,22 @@ document.addEventListener('DOMContentLoaded', () => {
         const input = document.getElementById('searchInput');
         if (input) input.value = qsSearch.trim();
     }
-    // 从 URL ?tab=all|trading|watching|candidate 选中对应标签（兼容 ?pool_type=）
-    let tab = (params.get('tab') || params.get('pool_type') || '').trim();
-    if (tab === 'all') tab = '';
+    // 从 URL ?tab=all|trading|watching|candidate|board 选中对应标签（兼容 ?pool_type=；缺省=all 全部）
+    let tab = (params.get('tab') || params.get('pool_type') || 'all').trim();
+    if (!tab) tab = 'all';
     setActiveTab(tab);
+    // 从 URL 恢复其余筛选状态：排序 / 页码 / 板块（板块下拉异步填充，先记到 pendingBoard 由 loadBoards 兜底选中）
+    const qsSort = (params.get('sort') || '').trim();
+    if (qsSort) { const sb = document.getElementById('sortBy'); if (sb) sb.value = qsSort; }
+    const qsTrend = (params.get('trend') || '').trim();
+    if (qsTrend) { const tf = document.getElementById('trendFilter'); if (tf) tf.value = qsTrend; }
+    const qsAmp = (params.get('amp') || '').trim();
+    if (qsAmp) { const af = document.getElementById('ampFilter'); if (af) af.value = qsAmp; }
+    const qsLen = (params.get('len') || '').trim();
+    if (qsLen) { const lf = document.getElementById('lenFilter'); if (lf) lf.value = qsLen; }
+    const qsPage = parseInt(params.get('page'), 10);
+    if (qsPage > 1) currentPage = qsPage;
+    pendingBoard = (params.get('board') || '').trim();
     loadStats();   // 内部会 loadBoards()，故此处不再单独调用
     loadStocks();
     setupStockAutocomplete('addCode', 'addName', 'addCodeDropdown', 'addNameDropdown');
@@ -639,43 +669,59 @@ async function loadBoards() {
         if (!d.success) return;
         const sel = document.getElementById('boardFilter');
         if (!sel) return;
-        const cur = sel.value;
+        // 首次加载时下拉还是空的，用 URL ?board= 里待恢复的值兜底
+        const cur = sel.value || pendingBoard;
         const data = d.data || [];
         const codes = new Set(data.map(b => b.board_code));
         sel.innerHTML = '<option value="">全部板块</option>' +
             data.map(b => `<option value="${b.board_code}">${b.board_name}（${b.count}）</option>`).join('');
         if (cur && codes.has(cur)) {
             sel.value = cur;            // 选中板块仍有股票 → 保留
+            if (pendingBoard) { pendingBoard = ''; loadStocks(); }   // URL 恢复：选项就绪后重载一次带板块筛选的列表
         } else if (cur) {
             sel.value = '';            // 选中板块已无股票 → 回到「全部」并重载列表
+            pendingBoard = '';
             loadStocks();
         }
     } catch (e) { /* 板块下拉失败不影响主列表 */ }
 }
 
-// 选中指定标签（type: ''=全部 / trading / watching / candidate；未知值回退到「全部」）
+// 选中指定标签（type: all=全部 / trading / watching / candidate / board；未知值回退到「全部」）
 function setActiveTab(type) {
+    type = type || 'all';
     let matched = false;
     document.querySelectorAll('.tab').forEach(t => {
-        const on = (t.dataset.type || '') === (type || '');
+        const on = (t.dataset.type || '') === type;
         t.classList.toggle('active', on);
         if (on) matched = true;
     });
     if (!matched) {
-        const allBtn = document.querySelector('.tab[data-type=""]');
+        const allBtn = document.querySelector('.tab[data-type="all"]');
         if (allBtn) allBtn.classList.add('active');
-        type = '';
+        type = 'all';
     }
-    currentPoolType = type || '';
+    currentPoolType = type;
 }
 
-// 把当前标签 + 搜索写回 URL，便于分享/刷新/前进后退
+// 把当前全部筛选状态（标签 + 搜索 + 板块 + 排序 + 页码）写回 URL，便于分享/刷新/前进后退。
+// 默认值一律省略，保持 URL 干净：全部标签→无 tab、排序 priority→无 sort、第 1 页→无 page。
 function syncTabUrl() {
     const params = new URLSearchParams(location.search);
-    if (currentPoolType) params.set('tab', currentPoolType);
-    else params.delete('tab');                 // 「全部」= 不带 tab，URL 干净
+    if (currentPoolType) params.set('tab', currentPoolType);   // 含 all（全部）→ ?tab=all
+    else params.delete('tab');
     const sv = (document.getElementById('searchInput')?.value || '').trim();
     if (sv) params.set('search', sv); else params.delete('search');
+    const bv = (document.getElementById('boardFilter')?.value || '').trim();
+    if (bv) params.set('board', bv); else params.delete('board');
+    const tv = (document.getElementById('trendFilter')?.value || '').trim();
+    if (tv) params.set('trend', tv); else params.delete('trend');
+    const av = (document.getElementById('ampFilter')?.value || '').trim();
+    if (av) params.set('amp', av); else params.delete('amp');
+    const lv = (document.getElementById('lenFilter')?.value || '').trim();
+    if (lv) params.set('len', lv); else params.delete('len');
+    const sortv = (document.getElementById('sortBy')?.value || '').trim();
+    if (sortv && sortv !== 'priority') params.set('sort', sortv); else params.delete('sort');
+    if (currentPage > 1) params.set('page', currentPage); else params.delete('page');
     const qs = params.toString();
     history.replaceState(null, '', qs ? location.pathname + '?' + qs : location.pathname);
 }
@@ -709,10 +755,13 @@ function switchTab(el) {
     loadStocks();
 }
 
-// 重置：清空 板块/排序/搜索，回到「全部」标签
+// 重置：清空 板块/趋势/排序/搜索，回到「全部」标签
 function resetFilters() {
     document.getElementById('searchInput').value = '';
     const bf = document.getElementById('boardFilter'); if (bf) bf.value = '';
+    const tf = document.getElementById('trendFilter'); if (tf) tf.value = '';
+    const af = document.getElementById('ampFilter'); if (af) af.value = '';
+    const lf = document.getElementById('lenFilter'); if (lf) lf.value = '';
     document.getElementById('sortBy').value = 'priority';
     setActiveTab('');
     currentPage = 1;
@@ -766,6 +815,7 @@ async function loadBoardView() {
             <td class="c-mid">${signalCell(b.signal)}</td>
             <td class="c-mid">
               <button class="btn btn-sm" onclick="viewBoardStocks('${b.board_code}')" title="查看该板块在池股票">查看</button>
+              <a class="btn btn-sm" href="/board_data/members?code=${b.board_code}" target="_blank" title="该板块全部成分股(可筛选/加入股票池)">成分股</a>
               <button class="btn btn-sm btn-danger" onclick="removeBoard('${b.board_code}','${b.board_name}',${b.count})" title="把该板块在池股票全部移出">移除</button>
             </td></tr>`;
         const tableHtml = (arr) => arr.length ? `<table class="board-tbl"><thead><tr>
@@ -807,19 +857,70 @@ async function removeBoard(code, name, count) {
     } catch (e) { toast('操作失败', 'err'); }
 }
 
+// === 更新分布快照（重算池里的「当前趋势(15m)/预估目标价」）===
+// 复用 screener 的后台计算接口：POST 启动 → 轮询 compute_status → 完成后刷新列表。
+// 扫 data/15m 全量个股重算（原始口径 merge_below=0，与盘后流水线一致），约 20-30s。
+let _snapPolling = null;
+async function updateSnapshots() {
+    const btn = document.getElementById('snapBtn');
+    if (btn && btn.dataset.running === '1') return;   // 防重复点击
+    if (!confirm('按最新 15m 数据重算全部个股的分布快照？\n这会刷新池里的「当前趋势(15m)/预估目标价」，约需 20-30 秒。')) return;
+    try {
+        const r = await fetch('/screener/api/snapshots/compute', {
+            method: 'POST', headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({ merge_below: 0 })
+        });
+        const d = await r.json();
+        if (!d.success) {
+            // 409 = 已有计算在跑：不报错，直接跟随其进度
+            if (r.status === 409) { toast('已有快照计算在进行中，正在跟随进度…', 'warn'); pollSnapshot(); }
+            else toast(d.message || '启动失败', 'err');
+            return;
+        }
+        toast('已开始重算快照…', 'ok');
+        if (btn) { btn.dataset.running = '1'; btn.disabled = true; }
+        pollSnapshot();
+    } catch (e) { toast('启动失败', 'err'); }
+}
+
+function pollSnapshot() {
+    const btn = document.getElementById('snapBtn');
+    if (btn) { btn.dataset.running = '1'; btn.disabled = true; }
+    if (_snapPolling) clearInterval(_snapPolling);
+    _snapPolling = setInterval(async () => {
+        try {
+            const r = await fetch('/screener/api/snapshots/compute_status');
+            const d = await r.json();
+            const s = (d && d.data) || {};
+            if (btn && s.running) btn.textContent = `🔄 计算中 ${s.done || 0}/${s.total || 0}`;
+            if (!s.running) {
+                clearInterval(_snapPolling); _snapPolling = null;
+                if (btn) { btn.textContent = '🔄 更新快照'; btn.disabled = false; btn.dataset.running = '0'; }
+                if (s.error) { toast('快照计算异常：' + s.error, 'err'); return; }
+                toast(`快照已更新：成功 ${s.ok || 0}，空数据 ${s.empty || 0}，失败 ${s.fail || 0}`, 'ok');
+                loadStocks();   // 重新拉列表 → 趋势/预估目标价随之刷新
+            }
+        } catch (e) { /* 单次轮询失败，下个间隔再试 */ }
+    }, 1500);
+}
+
 // === 加载列表 ===
 async function loadStocks(page) {
     if (currentPoolType === 'board') { loadBoardView(); return; }   // 板块标签 → 板块汇总视图
     if (page) currentPage = page;
+    syncTabUrl();   // 每次列表变化（筛选/排序/翻页/搜索）都把状态写回 URL
     const list = document.getElementById('stockList');
     list.innerHTML = '<div class="loading">加载中...</div>';
 
     const params = new URLSearchParams({
         page: currentPage,
         page_size: 20,
-        pool_type: currentPoolType,
+        pool_type: currentPoolType === 'all' ? '' : currentPoolType,   // all=全部→后端按空(不筛池)处理
         search: document.getElementById('searchInput').value,
         board: (document.getElementById('boardFilter') || {}).value || '',
+        trend: (document.getElementById('trendFilter') || {}).value || '',
+        amp: (document.getElementById('ampFilter') || {}).value || '',
+        len: (document.getElementById('lenFilter') || {}).value || '',
         sort_by: document.getElementById('sortBy').value,
         is_active: 'true'
     });
@@ -865,7 +966,7 @@ function renderTable(stocks) {
             <th>名称</th>
             <th>池</th>
             <th>评分</th>
-            <th title="当前 15m 周期方向 + 已走振幅 / 均值振幅（来自最新分布快照）">当前趋势(15m)</th>
+            <th title="当前 15m 周期方向 + 已走振幅/均值振幅 + 周期振幅分位/周期长度分位（经验分位，来自最新分布快照）">当前趋势(15m)</th>
             ${healthCol}
             <th>优先级</th>
             <th>所属板块</th>
@@ -911,6 +1012,11 @@ function renderTable(stocks) {
                 <span style="color:#6b7280;font-size:.72rem;margin-left:.25rem;">${h.healthy_count}/${h.total_models}</span>`;
     };
 
+    // 交易中标签：个股链接指向盘中交易界面 /stock/live；其它标签仍看 15m 趋势
+    const isTrading = currentPoolType === 'trading';
+    const stockHref = (code) => isTrading ? `/stock/live?code=${code}` : `/stock/?code=${code}&period=15m`;
+    const stockTitle = isTrading ? '进入盘中交易界面' : '查看 15 分钟趋势';
+
     stocks.forEach(s => {
         const scoreColor = s.score >= 80 ? '#10b981' : s.score >= 60 ? '#f59e0b' : s.score >= 40 ? '#3b82f6' : '#9ca3af';
         const trendIcon = s.score_trend > 0 ? '<span class="score-trend up">&#9650;</span>' : s.score_trend < 0 ? '<span class="score-trend down">&#9660;</span>' : '';
@@ -924,8 +1030,8 @@ function renderTable(stocks) {
 
         html += `<tr>
             <td class="col-cb"><input type="checkbox" value="${s.id}" ${selectedIds.has(s.id)?'checked':''} onchange="toggleSel(${s.id})"></td>
-            <td class="col-code"><a href="/stock/?code=${s.stock_code}&period=15m" target="_blank" title="查看 ${s.stock_code} 15分钟趋势" style="color:#2563eb;text-decoration:none;font-weight:600;">${s.stock_code}</a></td>
-            <td><a href="/stock/?code=${s.stock_code}&period=15m" target="_blank" title="查看 ${s.stock_name || s.stock_code} 15分钟趋势" style="color:#2563eb;text-decoration:none;">${s.stock_name || '-'}</a></td>
+            <td class="col-code"><a href="${stockHref(s.stock_code)}" target="_blank" title="${stockTitle}：${s.stock_code}" style="color:#2563eb;text-decoration:none;font-weight:600;">${s.stock_code}</a></td>
+            <td><a href="${stockHref(s.stock_code)}" target="_blank" title="${stockTitle}：${s.stock_name || s.stock_code}" style="color:#2563eb;text-decoration:none;">${s.stock_name || '-'}</a></td>
             <td>${renderStateTags(s)}</td>
             <td><div class="score-cell">
                 <span class="score-val" style="color:${scoreColor}">${s.score.toFixed(1)}</span>
@@ -1483,7 +1589,7 @@ function poolName(t) {
     return { trading: '交易中', watching: '观察中', candidate: '候选', archived: '归档', general: '通用', training: '训练', testing: '测试', validation: '验证' }[t] || t;
 }
 
-// 「当前趋势(15m)」列：方向 + 已走振幅/均值振幅（来自最新分布快照）
+// 「当前趋势(15m)」列：方向 + 已走振幅/均值振幅 + 周期振幅/长度分位（来自最新分布快照）
 function renderCurTrend(s) {
     const t = s.cur_trend;
     if (!t || !t.direction) return '<span style="color:#9ca3af;font-size:.75rem;">—</span>';
@@ -1491,9 +1597,15 @@ function renderCurTrend(s) {
     const color = up ? '#b91c1c' : '#15803d';
     const cur = t.amp_current != null ? (t.amp_current * 100).toFixed(1) + '%' : '—';
     const mean = t.amp_mean != null ? (t.amp_mean * 100).toFixed(1) + '%' : '—';
-    return `<div style="white-space:nowrap;" title="趋势 ${t.signal_name || ''}｜已走振幅 ${cur} / 均值振幅 ${mean}｜快照 ${t.snapshot_date || '—'}">`
+    // 经验分位数（0~1 → 百分位），振幅分位越高=当前振幅已接近历史极值；长度分位越高=当前周期已偏长
+    const ampPct = t.amp_pct != null ? Math.round(t.amp_pct * 100) + '分' : '—';
+    const lenPct = t.len_pct != null ? Math.round(t.len_pct * 100) + '分' : '—';
+    const lenCur = t.len_current != null ? Math.round(t.len_current) + '根' : '—';
+    const pctColor = (p) => (p != null && p >= 0.8) ? '#b91c1c' : (p != null && p <= 0.2 ? '#15803d' : '#6b7280');
+    return `<div style="white-space:nowrap;" title="趋势 ${t.signal_name || ''}｜已走振幅 ${cur} / 均值振幅 ${mean}｜周期振幅分位 ${ampPct}｜周期长度 ${lenCur} 分位 ${lenPct}｜快照 ${t.snapshot_date || '—'}">`
         + `<span style="color:${color};font-weight:600;">${up ? '↑上涨' : '↓下跌'}</span>`
-        + `<div style="font-size:.72rem;color:#6b7280;font-family:monospace;">${cur} / ${mean}</div></div>`;
+        + `<div style="font-size:.72rem;color:#6b7280;font-family:monospace;">${cur} / ${mean}</div>`
+        + `<div style="font-size:.7rem;font-family:monospace;">振<span style="color:${pctColor(t.amp_pct)};font-weight:600;">${ampPct}</span> · 长<span style="color:${pctColor(t.len_pct)};font-weight:600;">${lenPct}</span></div></div>`;
 }
 
 // 「预估目标价」列：当前周期起点 ×(1±均值振幅)
