@@ -57,25 +57,52 @@ def _read_period_arg() -> str:
     return p if p in ('15m', '30m', '60m', 'daily') else '15m'
 
 
+def _resolve_stock_code(raw: str) -> str:
+    """把用户输入的标识符规整成股票代码（详情页 / 各 API 都按代码取数）。
+
+    用户可能输入名称（如「恩捷股份」）而非代码（002812）。详情页底层
+    （15m parquet / overview）一律按代码取数，名称会查不到数据。
+    含中文字符时反查 data_stock_info(name→code)，优先个股(sz/sh/bj)。
+    纯代码或查不到时原样返回。
+    """
+    if not raw:
+        return raw
+    raw = raw.strip()
+    if not any('一' <= ch <= '鿿' for ch in raw):
+        return raw
+    try:
+        rows = StockInfo.query.filter_by(name=raw).all()
+        for r in rows:
+            mc = (r.MarketCode or '').lower()
+            if mc.startswith(('sz', 'sh', 'bj')) and r.code:
+                return r.code
+        if rows and rows[0].code:
+            return rows[0].code
+    except Exception:
+        logger.exception(f'按名称反查代码失败: {raw}')
+    return raw
+
+
 @stock_detail_bp.route('/')
 @stock_detail_bp.route('/<code>')
 def stock_detail_page(code: str = None):
     if not code:
         code = (request.args.get('code') or '').strip()
+    code = _resolve_stock_code(code)
     return render_template('data/stock_view.html', stock_code=code,
                            view_mode='after_close', period=_read_period_arg())
 
 
 @stock_detail_bp.route('/live')
 def stock_live_page():
-    code = (request.args.get('code') or '').strip()
+    code = _resolve_stock_code((request.args.get('code') or '').strip())
     return render_template('data/stock_live.html', stock_code=code,
                            period=_read_period_arg())
 
 
 @stock_detail_bp.route('/replay')
 def stock_replay_page():
-    code = (request.args.get('code') or '').strip()
+    code = _resolve_stock_code((request.args.get('code') or '').strip())
     return render_template('data/stock_view.html', stock_code=code,
                            view_mode='replay', period=_read_period_arg())
 
@@ -83,7 +110,7 @@ def stock_replay_page():
 @stock_detail_bp.route('/onemin')
 def stock_onemin_check_page():
     """个股 1 分钟数据完整性检测页（按年份）。静态路径，优先于 /stock/<code>。"""
-    code = (request.args.get('code') or '').strip()
+    code = _resolve_stock_code((request.args.get('code') or '').strip())
     return render_template('data/onemin_check.html', stock_code=code)
 
 
@@ -125,6 +152,25 @@ def _parse_as_of(raw):
 
 
 # ==================== API ====================
+# A股交易费用（估算口径，用于把手续费折进持仓成本）：
+#   券商佣金 万2.5，单笔最低 5 元；过户费 0.001%（双向）；印花税 0.05%（仅卖出）。
+# 当前「浮盈」口径 = 买入费计入成本，卖出费不预扣，故这里只用到买入侧(佣金+过户费)。
+COMMISSION_RATE = 0.00025   # 佣金费率
+COMMISSION_MIN = 5.0        # 单笔最低佣金
+TRANSFER_FEE_RATE = 0.00001  # 过户费费率（双向）
+STAMP_TAX_RATE = 0.0005      # 印花税（仅卖出，预留）
+
+
+def _estimate_trade_fee(amount: float, side: str = 'buy') -> float:
+    """按标准费率估算单边交易费用。amount=成交金额，side='buy'/'sell'。"""
+    if not amount or amount <= 0:
+        return 0.0
+    commission = max(amount * COMMISSION_RATE, COMMISSION_MIN)
+    transfer = amount * TRANSFER_FEE_RATE
+    stamp = amount * STAMP_TAX_RATE if side == 'sell' else 0.0
+    return round(commission + transfer + stamp, 2)
+
+
 def _query_trade_info(code: str, latest_close):
     """汇总该股票的交易信息：持仓 / 模式 / 当前状态。
 
@@ -218,6 +264,11 @@ def _query_trade_info(code: str, latest_close):
     info['quantity'] = qty
     info['avg_cost'] = avg_cost
 
+    # 买入手续费估算（佣金+过户费）：折进持仓成本，让浮盈与真实账户对齐
+    buy_amount = (avg_cost * qty) if (avg_cost and qty > 0) else 0.0
+    buy_fee = _estimate_trade_fee(buy_amount, 'buy')
+    info['buy_fee'] = buy_fee
+
     if plan:
         info['active_plan'] = {
             'plan_id': plan.plan_id,
@@ -246,10 +297,12 @@ def _query_trade_info(code: str, latest_close):
         if manual.take_profit_price is not None:
             info['active_plan']['take_profit_price'] = float(manual.take_profit_price)
 
-    # 4) 浮盈/浮亏（持仓 + 有均价 + 有最新价时）
+    # 4) 浮盈/浮亏（持仓 + 有均价 + 有最新价时）：买入费计入成本
+    #    浮盈 = 市值 − (买入金额 + 买入费)；收益率 = 浮盈 / (买入金额 + 买入费)
     if qty > 0 and avg_cost and latest_close:
-        pnl = (float(latest_close) - avg_cost) * qty
-        rate = (float(latest_close) - avg_cost) / avg_cost
+        cost_with_fee = avg_cost * qty + buy_fee
+        pnl = float(latest_close) * qty - cost_with_fee
+        rate = pnl / cost_with_fee if cost_with_fee else 0.0
         info['unrealized_pnl'] = round(pnl, 2)
         info['unrealized_return_rate'] = round(rate, 4)
 
@@ -330,6 +383,37 @@ def _query_boards_and_caps(code: str):
     return boards, total_cap, circ_cap, cap_source
 
 
+def _resolve_stock_name(code, info):
+    """名称兜底：data_stock_info → 板块成分股名单(industry_eastmoney) → 股票池。
+
+    新股/未登记进 data_stock_info 的代码（如 301358）在主表查不到名字，
+    但板块成分股名单/股票池里通常有，回退取用，避免详情页显示「—」。
+    """
+    if info and info.name:
+        return info.name
+    try:
+        with db.engines['quanttradingsystem'].connect() as conn:
+            r = conn.execute(text(
+                "SELECT stock_name FROM industry_eastmoney "
+                "WHERE stock_code = :c AND stock_name IS NOT NULL AND stock_name <> '' "
+                "ORDER BY date DESC LIMIT 1"), {'c': code}).fetchone()
+            if r and r[0]:
+                return r[0]
+    except Exception:
+        logger.debug(f'{code} 板块名单取名失败', exc_info=True)
+    try:
+        from App.models.strategy.StockPool import StockPool
+        p = (StockPool.query
+             .filter(StockPool.stock_code == code, StockPool.stock_name.isnot(None),
+                     StockPool.stock_name != '')
+             .first())
+        if p and p.stock_name:
+            return p.stock_name
+    except Exception:
+        logger.debug(f'{code} 股票池取名失败', exc_info=True)
+    return None
+
+
 @stock_detail_bp.route('/api/<code>/overview', methods=['GET'])
 def api_overview(code):
     """股票基础信息 + 最新价 + 基金持仓数 + 所属板块 + 市值"""
@@ -348,7 +432,7 @@ def api_overview(code):
         'success': True,
         'data': {
             'code': code,
-            'name': info.name if info else None,
+            'name': _resolve_stock_name(code, info),
             'classification': classification.classification if classification else None,
             'es_code': info.EsCode if info else None,
             'market_code': info.MarketCode if info else None,

@@ -98,6 +98,11 @@
           <span id="stockName">—</span>
           <span style="color:#6b7280;font-weight:400;">({{ stock_code }})</span>
           <span id="poolBadge" style="display:none;margin-left:.5rem;font-size:.78rem;font-weight:600;padding:.15rem .5rem;border-radius:9999px;"></span>
+          {% if stock_code %}
+          <a id="emStockLink" href="#" target="_blank" rel="noopener"
+             title="在东方财富查看 {{ stock_code }} 个股信息"
+             style="margin-left:.5rem;font-size:.78rem;font-weight:500;color:#fff;background:#e11d48;padding:.15rem .5rem;border-radius:.35rem;text-decoration:none;vertical-align:middle;">东方财富 ↗</a>
+          {% endif %}
         </h1>
         <div id="overviewMeta" style="color:#6b7280;font-size:.875rem;margin-top:.25rem;">加载中…</div>
         <div id="overviewBoards" style="display:flex;align-items:center;flex-wrap:wrap;gap:.35rem;margin-top:.4rem;">
@@ -398,6 +403,17 @@
 <script>
 const CODE = '{{ stock_code }}';
 const API = `/stock/api/${CODE}`;
+// 东方财富个股页前缀：6→sh，0/3→sz，4/8/920→bj
+function emMarketPrefix(code) {
+  const c = String(code || '');
+  if (c.startsWith('6')) return 'sh';
+  if (c.startsWith('8') || c.startsWith('4') || c.startsWith('920')) return 'bj';
+  return 'sz';
+}
+(function setEmStockLink() {
+  const a = document.getElementById('emStockLink');
+  if (a && CODE) a.href = `https://quote.eastmoney.com/${emMarketPrefix(CODE)}${CODE}.html`;
+})();
 // 链接生成器：跳到另一只股票详情 —— 用新参数式 URL
 function stockUrl(code) { return '/stock/?code=' + encodeURIComponent(code); }
 
