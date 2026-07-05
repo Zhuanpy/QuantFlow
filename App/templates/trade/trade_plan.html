@@ -90,17 +90,19 @@
                         <th>方向</th>
                         <th>计划时间</th>
                         <th>入场价</th>
+                        <th>现价</th>
                         <th>止损</th>
                         <th>止盈</th>
                         <th>数量</th>
                         <th>风险比</th>
+                        <th>手续费</th>
                         <th>状态</th>
                         <th>盈亏</th>
                         <th>操作</th>
                     </tr>
                 </thead>
                 <tbody id="plansTableBody">
-                    <tr><td colspan="12" class="loading">加载中...</td></tr>
+                    <tr><td colspan="14" class="loading">加载中...</td></tr>
                 </tbody>
             </table>
         </div>
@@ -1625,7 +1627,7 @@ async function loadStatistics() {
 // 加载交易计划列表
 async function loadPlans() {
     const tbody = document.getElementById('plansTableBody');
-    tbody.innerHTML = '<tr><td colspan="12" class="loading">加载中...</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="14" class="loading">加载中...</td></tr>';
 
     try {
         let url = '/api/trade/plans?limit=100';
@@ -1643,18 +1645,30 @@ async function loadPlans() {
         if (plans.length > 0) {
             tbody.innerHTML = plans.map(plan => renderPlanRow(plan)).join('');
         } else {
-            tbody.innerHTML = '<tr><td colspan="12" class="loading">暂无交易计划</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="14" class="loading">暂无交易计划</td></tr>';
         }
     } catch (error) {
         console.error('加载计划失败:', error);
-        tbody.innerHTML = '<tr><td colspan="12" class="loading">加载失败</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="14" class="loading">加载失败</td></tr>';
     }
 }
 
 function renderPlanRow(plan) {
-    const profitClass = plan.profit_loss > 0 ? 'profit-positive' : (plan.profit_loss < 0 ? 'profit-negative' : '');
-    const profitDisplay = plan.profit_loss !== null ?
-        `<span class="${profitClass}">${plan.profit_loss > 0 ? '+' : ''}${plan.profit_loss.toFixed(2)}</span>` : '-';
+    // 盈亏：持仓中(active)显示「浮动盈亏」(现价 vs 入场，扣手续费)；已完成显示已实现盈亏
+    const isActive = plan.status === 'active';
+    const pnl = isActive ? plan.unrealized_pnl : plan.profit_loss;
+    const pnlPct = isActive ? plan.unrealized_pnl_pct : plan.profit_loss_pct;
+    const profitClass = pnl > 0 ? 'profit-positive' : (pnl < 0 ? 'profit-negative' : '');
+    const profitDisplay = (pnl !== null && pnl !== undefined) ?
+        `<span class="${profitClass}">${pnl > 0 ? '+' : ''}${pnl.toFixed(2)}`
+        + (pnlPct !== null && pnlPct !== undefined ? ` <small>(${pnlPct > 0 ? '+' : ''}${pnlPct}%)</small>` : '')
+        + `</span>` + (isActive ? '<br><small style="color:#9ca3af;">浮动</small>' : '') : '-';
+    // 现价 + 涨跌于入场价的颜色
+    const cur = plan.current_price;
+    const curDisplay = (cur !== null && cur !== undefined)
+        ? `<span class="${cur > plan.entry_price ? 'profit-positive' : (cur < plan.entry_price ? 'profit-negative' : '')}">${cur.toFixed(2)}</span>`
+        : '-';
+    const feeDisplay = plan.fee_total ? plan.fee_total.toFixed(2) : '-';
 
     // 格式化计划时间：显示入场时间 > 计划时间
     const timeStr = plan.entry_time || plan.plan_time || '';
@@ -1681,15 +1695,17 @@ function renderPlanRow(plan) {
 
     return `
         <tr>
-            <td class="stock-cell"><a class="stock-link" href="/stock/?code=${plan.stock_code}&period=15m" target="_blank" title="打开 ${plan.stock_code} 的 15m 趋势页">${plan.stock_code}</a><span class="stock-name">${plan.stock_name || ''}</span><a href="/stock_pool/?search=${plan.stock_code}" target="_blank" title="在股票池查看 ${plan.stock_code}" style="margin-left:0.4rem;font-size:0.75rem;text-decoration:none;color:#7c3aed;">🎯池</a></td>
+            <td class="stock-cell"><a class="stock-link" href="/stock/live?code=${plan.stock_code}" target="_blank" title="进入 ${plan.stock_code} 盘中 15m 交易界面">${plan.stock_code}</a><span class="stock-name">${plan.stock_name || ''}</span><a href="/stock_pool/?search=${plan.stock_code}" target="_blank" title="在股票池查看 ${plan.stock_code}" style="margin-left:0.4rem;font-size:0.75rem;text-decoration:none;color:#7c3aed;">🎯池</a></td>
             <td><span class="badge badge-${plan.trade_mode}">${plan.trade_mode === 'simulate' ? '模拟' : '实盘'}</span></td>
             <td><span class="badge badge-${plan.direction}">${plan.direction === 'long' ? '做多' : '做空'}</span></td>
             <td>${timeDisplay}</td>
             <td>${plan.entry_price || '-'}</td>
+            <td>${curDisplay}</td>
             <td>${plan.stop_loss_price || '-'}</td>
             <td>${plan.take_profit_price || '-'}</td>
             <td>${plan.quantity}</td>
             <td>${plan.risk_reward_ratio || '-'}</td>
+            <td>${feeDisplay}</td>
             <td><span class="badge badge-${plan.status}">${getStatusText(plan.status)}</span></td>
             <td>${profitDisplay}</td>
             <td class="action-cell">${actionButtons}</td>

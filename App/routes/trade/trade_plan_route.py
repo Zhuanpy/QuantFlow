@@ -262,9 +262,47 @@ def update_trade_record_reason(record_id):
 
 # ============ API 接口 ============
 
+def _latest_closes(codes):
+    """批量取各代码 data_stock_daily 最新收盘价，作为「现价」。返回 {code: close}。"""
+    codes = [c for c in set(codes) if c]
+    if not codes:
+        return {}
+    sub = (db.session.query(StockDaily.stock_code,
+                            db.func.max(StockDaily.date).label('md'))
+           .filter(StockDaily.stock_code.in_(codes))
+           .group_by(StockDaily.stock_code).subquery())
+    rows = (db.session.query(StockDaily.stock_code, StockDaily.close)
+            .join(sub, db.and_(StockDaily.stock_code == sub.c.stock_code,
+                               StockDaily.date == sub.c.md)).all())
+    return {c: float(cl) for c, cl in rows if cl is not None}
+
+
+def _plan_dict_with_pnl(plan, close_map):
+    """plan.to_dict() + 现价/手续费/浮动盈亏（持仓中才算浮盈）。"""
+    d = plan.to_dict()
+    d['commission'] = float(plan.commission or 0)
+    d['tax'] = float(plan.tax or 0)
+    d['fee_total'] = round(d['commission'] + d['tax'], 2)
+    cur = close_map.get(plan.stock_code)
+    if cur is None and d.get('current_price'):
+        cur = d['current_price']
+    d['current_price'] = cur
+    entry = d.get('entry_price')
+    qty = plan.quantity or 0
+    if plan.status == TradePlan.STATUS_ACTIVE and entry and cur and qty:
+        gross = ((cur - entry) * qty if plan.direction != TradePlan.DIRECTION_SHORT
+                 else (entry - cur) * qty)
+        net = gross - d['fee_total']            # 扣手续费+税
+        d['market_value'] = round(cur * qty, 2)
+        d['cost_amount'] = round(entry * qty, 2)
+        d['unrealized_pnl'] = round(net, 2)
+        d['unrealized_pnl_pct'] = round(net / (entry * qty) * 100, 2) if entry * qty else None
+    return d
+
+
 @trade_plan_bp.route('/api/trade/plans', methods=['GET'])
 def get_trade_plans():
-    """获取交易计划列表"""
+    """获取交易计划列表（持仓中的附带现价/手续费/浮动盈亏）"""
     try:
         trade_mode = request.args.get('mode', '')
         status = request.args.get('status', '')
@@ -284,11 +322,12 @@ def get_trade_plans():
             query = query.filter(TradePlan.status == status)
 
         plans = query.order_by(TradePlan.created_at.desc()).limit(limit).all()
+        close_map = _latest_closes([p.stock_code for p in plans])
 
         return jsonify({
             'success': True,
             'total': len(plans),
-            'plans': [p.to_dict() for p in plans]
+            'plans': [_plan_dict_with_pnl(p, close_map) for p in plans]
         })
     except Exception as e:
         logger.error(f"获取交易计划失败: {e}")
@@ -589,11 +628,12 @@ def get_active_plans():
         trade_mode = request.args.get('mode', '')
 
         plans = TradePlan.get_active_plans(trade_mode if trade_mode else None)
+        close_map = _latest_closes([p.stock_code for p in plans])
 
         return jsonify({
             'success': True,
             'total': len(plans),
-            'plans': [p.to_dict() for p in plans]
+            'plans': [_plan_dict_with_pnl(p, close_map) for p in plans]
         })
     except Exception as e:
         logger.error(f"获取活跃计划失败: {e}")

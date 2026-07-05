@@ -21,7 +21,14 @@ stock_pool_bp = Blueprint('stock_pool', __name__, url_prefix='/stock_pool')
 
 @stock_pool_bp.route('/')
 def stock_pool_page():
-    """股票池管理页面"""
+    """股票池管理页面。打开即按当前持仓(模拟+真实)双向同步「交易中」标签。"""
+    try:
+        from App.services.pool_holdings_sync import sync_trading_from_holdings
+        res = sync_trading_from_holdings()
+        if res['created'] or res['tagged'] or res['untagged']:
+            logger.info(f"[pool] 持仓同步: 入池{res['created']} 打标{res['tagged']} 摘标{res['untagged']}")
+    except Exception:
+        logger.exception('[pool] 打开页面同步持仓失败（不影响页面）')
     return render_template('strategy/stock_pool_management.html')
 
 
@@ -50,6 +57,58 @@ def _codes_latest_boards(codes):
     except Exception:
         logger.exception('[pool] 取板块映射失败')
     return out
+
+
+def _codes_by_trend(codes, trend='', amp='', length=''):
+    """codes → 同时满足 趋势方向/振幅分位/长度分位 三项条件(AND)的 stock_code 集合。
+
+    依据每只股票最新一条分布快照(merge_below=0);分位按当前方向取对应 up/dn 序列。
+      trend  : up=向上(current_direction==1) / down=向下(非空且非 1)
+      amp    : high=振幅经验分位≥0.8(近历史极值) / low=≤0.2
+      length : high=长度经验分位≥0.8(周期偏长) / low=≤0.2
+    空字符串表示该项不筛。
+    """
+    codes = [c for c in codes if c]
+    if not codes:
+        return set()
+    from App.models.strategy.StockDistSnapshot import StockDistSnapshot
+    from sqlalchemy import func
+    snap_sub = (db.session.query(
+                    StockDistSnapshot.stock_code,
+                    func.max(StockDistSnapshot.snapshot_date).label('md'))
+                .filter(StockDistSnapshot.stock_code.in_(codes),
+                        StockDistSnapshot.merge_below == 0)
+                .group_by(StockDistSnapshot.stock_code).subquery())
+    rows = (db.session.query(StockDistSnapshot)
+            .join(snap_sub, and_(
+                StockDistSnapshot.stock_code == snap_sub.c.stock_code,
+                StockDistSnapshot.snapshot_date == snap_sub.c.md))
+            .filter(StockDistSnapshot.merge_below == 0).all())
+
+    def _pct_ok(p, bucket):
+        if not bucket:
+            return True
+        if p is None:
+            return False
+        if bucket == 'high':
+            return p >= 0.8
+        if bucket == 'low':
+            return p <= 0.2
+        return True
+
+    keep = set()
+    for r in rows:
+        is_up = r.current_direction == 1
+        if trend == 'up' and not is_up:
+            continue
+        if trend == 'down' and not (r.current_direction is not None and not is_up):
+            continue
+        if not _pct_ok(r.amp_up_pct if is_up else r.amp_dn_pct, amp):
+            continue
+        if not _pct_ok(r.len_up_pct if is_up else r.len_dn_pct, length):
+            continue
+        keep.add(r.stock_code)
+    return keep
 
 
 @stock_pool_bp.route('/api/boards')
@@ -197,6 +256,17 @@ def get_stocks():
             keep = {c for c, (bc, _bn) in cb.items() if bc == board}
             query = query.filter(StockPool.stock_code.in_(keep or {'__none__'}))
 
+        # 趋势筛选：按最新 15m 分布快照（merge_below=0）分别筛 方向/振幅分位/长度分位（三项 AND）
+        #   trend: up/down　amp: high(≥0.8)/low(≤0.2)　len: high/low
+        trend = (request.args.get('trend') or '').strip()
+        amp = (request.args.get('amp') or '').strip()
+        length = (request.args.get('len') or '').strip()
+        if trend or amp or length:
+            cur_codes = [r.stock_code for r in
+                         query.with_entities(StockPool.stock_code).all()]
+            keep = _codes_by_trend(cur_codes, trend, amp, length)
+            query = query.filter(StockPool.stock_code.in_(keep or {'__none__'}))
+
         # 排序
         if sort_by == 'score_desc':
             query = query.order_by(StockPool.score.desc())
@@ -272,6 +342,9 @@ def get_stocks():
                         'signal_name': r.current_signal_name,
                         'amp_current': r.amp_up_current if is_up else r.amp_dn_current,
                         'amp_mean': amp_mean,
+                        'amp_pct': r.amp_up_pct if is_up else r.amp_dn_pct,
+                        'len_current': r.len_up_current if is_up else r.len_dn_current,
+                        'len_pct': r.len_up_pct if is_up else r.len_dn_pct,
                         'start_price': r.cur_start_price,
                         'last_price': r.cur_last_price,
                         'target_price': round(target, 2) if target is not None else None,
