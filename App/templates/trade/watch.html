@@ -1,0 +1,1535 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container">
+    <div class="header" style="display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap;">
+        <div>
+            <h1>盯盘</h1>
+            <p>持仓实时 · 底部放量提醒 · 自选池适配度</p>
+        </div>
+        <div class="action-buttons">
+            <a class="btn btn-secondary" href="/trade/real?mode=real">← 交易计划</a>
+        </div>
+    </div>
+
+    <!-- 量能图 modal -->
+    <div id="volModal" style="display:none;position:fixed;inset:0;z-index:1000;background:rgba(15,23,42,.55);align-items:center;justify-content:center;padding:1rem;"
+         onclick="if(event.target===this)closeVolChart()">
+        <div style="background:#fff;border-radius:12px;max-width:760px;width:100%;box-shadow:0 12px 40px rgba(0,0,0,.25);overflow:hidden;">
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:.9rem 1.1rem .5rem;">
+                <div>
+                    <div id="volModalTitle" style="font-weight:700;font-size:1.02rem;color:#1e293b;">量能图</div>
+                    <div id="volModalSub" style="font-size:.78rem;color:#6b7280;margin-top:.15rem;">加载中…</div>
+                </div>
+                <button onclick="closeVolChart()" style="border:none;background:#f1f5f9;color:#475569;width:30px;height:30px;border-radius:6px;cursor:pointer;font-size:1rem;">✕</button>
+            </div>
+            <div style="display:flex;gap:1rem;padding:0 1.1rem;border-bottom:1px solid #eef2f7;">
+                <a id="volTabChart" onclick="showVolPane('chart')" style="cursor:pointer;padding:.4rem 0;font-size:.86rem;font-weight:600;color:#2563eb;border-bottom:2px solid #2563eb;">量能图</a>
+                <a id="volTabHist" onclick="showVolPane('hist')" style="cursor:pointer;padding:.4rem 0;font-size:.86rem;font-weight:600;color:#94a3b8;border-bottom:2px solid transparent;">历史底部放量</a>
+            </div>
+
+            <div id="volChartPane" style="position:relative;padding:1rem 1.1rem 1.2rem;">
+                <canvas id="volModalCanvas" height="300" style="width:100%;display:block;"></canvas>
+                <div id="volModalTip" style="display:none;position:absolute;pointer-events:none;background:#111827;color:#fff;font-size:.72rem;padding:.35rem .5rem;border-radius:5px;white-space:nowrap;z-index:2;"></div>
+                <div style="display:flex;flex-wrap:wrap;gap:.3rem 1.1rem;margin-top:.7rem;font-size:.78rem;color:#6b7280;">
+                    <span style="display:inline-flex;align-items:center;gap:.35rem;"><i style="width:12px;height:12px;border-radius:3px;background:#94a3b8;"></i>普通量</span>
+                    <span style="display:inline-flex;align-items:center;gap:.35rem;"><i style="width:12px;height:12px;border-radius:3px;background:#cbd5e1;"></i>缩量</span>
+                    <span style="display:inline-flex;align-items:center;gap:.35rem;"><i style="width:12px;height:12px;border-radius:3px;background:#e0952f;"></i>放量(RVOL≥2)</span>
+                    <span style="display:inline-flex;align-items:center;gap:.35rem;"><i style="width:18px;border-top:2.5px dashed #0f9d94;"></i>前20根均量</span>
+                </div>
+            </div>
+
+            <div id="volHistPane" style="display:none;padding:.9rem 1.1rem 1.2rem;max-height:70vh;overflow-y:auto;">
+                <div style="display:flex;flex-wrap:wrap;gap:.6rem;align-items:center;font-size:.8rem;color:#475569;margin-bottom:.8rem;">
+                    <label>区间
+                        <select id="bhDays" style="padding:.2rem .4rem;border:1px solid #d1d5db;border-radius:.25rem;">
+                            <option value="120">近半年</option>
+                            <option value="240" selected>近1年</option>
+                            <option value="540">近1年半</option>
+                        </select>
+                    </label>
+                    <label>RVOL≥ <input id="bhRvol" type="number" step="0.1" value="1.8" style="width:56px;padding:.2rem .4rem;border:1px solid #d1d5db;border-radius:.25rem;"></label>
+                    <label style="display:inline-flex;align-items:center;gap:.25rem;cursor:pointer;"><input id="bhStab" type="checkbox"> 需止跌收上</label>
+                    <button class="btn btn-sm" onclick="loadVolHistory()">扫描</button>
+                </div>
+                <div id="bhTiles" style="display:flex;flex-wrap:wrap;gap:.5rem;margin-bottom:.7rem;"></div>
+                <div id="bhCompare" style="margin-bottom:.7rem;"></div>
+                <div id="bhNote" style="font-size:.75rem;color:#9ca3af;margin-bottom:.6rem;"></div>
+                <div id="bhTable"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 底部放量提醒 -->
+    <div class="plans-section" id="bvSection" style="margin-top:1.5rem;">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap;margin-bottom:.75rem;">
+            <h2 style="margin-bottom:0;">🔔 底部放量提醒
+                <span style="font-size:.72rem;color:#9ca3af;font-weight:normal;">（持仓+关注 · 下跌分位≥90% + 放量 + 止跌收上）</span>
+            </h2>
+            <div style="display:flex;gap:.75rem;align-items:center;">
+                <span id="bvMeta" style="font-size:.78rem;color:#6b7280;">加载中…</span>
+                <label style="font-size:.78rem;color:#374151;display:flex;align-items:center;gap:.25rem;cursor:pointer;">
+                    <input type="checkbox" id="bvNotifyToggle" checked> 弹窗+声音
+                </label>
+                <button class="btn btn-sm" onclick="scanBottomVolumeNow(this)">↻ 立即扫描</button>
+            </div>
+        </div>
+        <div id="bvList" style="font-size:.85rem;color:#6b7280;">加载中…</div>
+    </div>
+
+    <!-- 自选池底部放量适配度 -->
+    <div class="plans-section" id="wlSection" style="margin-top:1.5rem;">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap;margin-bottom:.75rem;">
+            <h2 style="margin-bottom:0;">📊 自选池 · 底部放量适配度
+                <span style="font-size:.72rem;color:#9ca3af;font-weight:normal;">（逐只回测：哪些票的底部放量历史上更靠谱）</span>
+            </h2>
+            <div style="display:flex;gap:.6rem;align-items:center;font-size:.8rem;color:#475569;">
+                <label>区间
+                    <select id="wlDays" style="padding:.2rem .4rem;border:1px solid #d1d5db;border-radius:.25rem;">
+                        <option value="240">近1年</option>
+                        <option value="540" selected>近1年半</option>
+                    </select>
+                </label>
+                <label>RVOL≥ <input id="wlRvol" type="number" step="0.1" value="1.8" style="width:56px;padding:.2rem .4rem;border:1px solid #d1d5db;border-radius:.25rem;"></label>
+                <button class="btn btn-sm" onclick="scanWatchlist(this)">扫描自选池</button>
+            </div>
+        </div>
+        <div id="wlBody" style="font-size:.85rem;color:#9ca3af;">点「扫描自选池」逐只回测持仓+关注（本地数据，稍等几秒）。</div>
+    </div>
+
+    <!-- 盯盘中（持仓实时）-->
+    <div class="plans-section" style="margin-top:1.5rem;">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap;margin-bottom:1rem;">
+            <h2 style="margin-bottom:0;">盯盘中 <span id="monitorBadge" style="font-size:.75rem;color:#6b7280;">…</span>
+                <span style="font-size:.72rem;color:#9ca3af;font-weight:normal;">（持仓中股票 · 每 5 分钟自动刷新实时行情）</span>
+            </h2>
+            <div style="display:flex;gap:.75rem;align-items:center;">
+                <span id="monitorMeta" style="font-size:.78rem;color:#6b7280;">加载中…</span>
+                <button class="btn btn-sm" onclick="loadMonitor()">↻ 刷新</button>
+            </div>
+        </div>
+        <div class="plans-table-wrapper">
+            <table class="plans-table">
+                <thead>
+                    <tr>
+                        <th>股票</th>
+                        <th>最新时间</th>
+                        <th>现价</th>
+                        <th>涨跌幅</th>
+                        <th>入场价</th>
+                        <th>数量</th>
+                        <th>浮动盈亏</th>
+                        <th>距止损</th>
+                        <th>距止盈</th>
+                        <th>量比</th>
+                        <th>换手</th>
+                        <th>放量</th>
+                        <th>盯盘状态</th>
+                    </tr>
+                </thead>
+                <tbody id="monitorTableBody">
+                    <tr><td colspan="13" class="loading">加载中...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+</div>
+
+<style>
+.container {
+    max-width: 1800px;
+    margin: 0 auto;
+    padding: 1rem 2rem;
+}
+
+.header {
+    text-align: center;
+    margin-bottom: 2rem;
+}
+
+.header h1 {
+    color: var(--primary-color);
+    margin-bottom: 0.5rem;
+}
+
+.header p {
+    color: var(--text-secondary);
+}
+
+/* 统计卡片 */
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 1.5rem;
+    margin-bottom: 2rem;
+}
+/* 单卡模式：压成一条横向状态条 */
+.stats-grid.single {
+    grid-template-columns: 1fr;
+    margin-bottom: 1rem;
+}
+.stats-grid.single .stat-card {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 0.4rem 0.9rem;
+}
+.stats-grid.single .stat-card h3 {
+    margin: 0;
+    font-size: 0.9rem;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+.stats-grid.single .stat-content {
+    display: flex;
+    flex: 1;
+    gap: 1.25rem;
+    justify-content: flex-start;
+}
+.stats-grid.single .stat-item {
+    display: flex;
+    align-items: baseline;
+    gap: 0.4rem;
+    text-align: left;
+}
+.stats-grid.single .stat-item .label {
+    margin: 0;
+    font-size: 0.78rem;
+}
+.stats-grid.single .stat-item .value {
+    font-size: 1rem;
+}
+
+.stat-card {
+    background: var(--card-background);
+    border-radius: 1rem;
+    padding: 1.5rem;
+    box-shadow: var(--shadow-md);
+}
+
+.stat-card.simulate {
+    border-left: 4px solid #3b82f6;
+}
+
+.stat-card.real {
+    border-left: 4px solid #10b981;
+}
+
+.stat-card h3 {
+    margin-bottom: 1rem;
+    color: var(--text-primary);
+}
+
+.stat-content {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1rem;
+}
+
+.stat-item {
+    text-align: center;
+}
+
+.stat-item .label {
+    display: block;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    margin-bottom: 0.25rem;
+}
+
+.stat-item .value {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--primary-color);
+}
+
+.stat-item .win-rate {
+    color: #10b981;
+}
+
+/* 统计卡里可点击的项 → 跳到对应筛选视图（?mode=&status=） */
+a.stat-link { text-decoration: none; color: inherit; border-radius: .4rem; transition: background .15s; cursor: pointer; }
+a.stat-link:hover { background: rgba(37,99,235,0.08); }
+a.stat-card-title { text-decoration: none; color: inherit; cursor: pointer; }
+a.stat-card-title:hover { color: var(--primary-color); text-decoration: underline; }
+
+/* 操作栏 */
+.action-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1.5rem;
+    flex-wrap: wrap;
+    gap: 1rem;
+}
+
+.mode-tabs {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.mode-tab {
+    padding: 0.5rem 1rem;
+    border: 2px solid var(--primary-color);
+    background: transparent;
+    color: var(--primary-color);
+    border-radius: 0.5rem;
+    cursor: pointer;
+    transition: all 0.3s;
+}
+
+.mode-tab.active, .mode-tab:hover {
+    background: var(--primary-color);
+    color: white;
+}
+
+.action-buttons {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.btn {
+    padding: 0.5rem 1rem;
+    border: none;
+    border-radius: 0.5rem;
+    cursor: pointer;
+    font-weight: 500;
+    transition: all 0.3s;
+    display: inline-block;
+    text-decoration: none;
+    line-height: 1.2;
+}
+a.btn { color: inherit; }
+
+.btn-primary {
+    background: var(--primary-color);
+    color: white;
+}
+
+.btn-primary:hover {
+    background: var(--secondary-color);
+}
+
+.btn-secondary {
+    background: var(--background-color);
+    color: var(--text-primary);
+}
+
+.btn-success {
+    background: #10b981;
+    color: white;
+}
+
+.btn-danger {
+    background: #ef4444;
+    color: white;
+}
+
+.btn-warning {
+    background: #f59e0b;
+    color: white;
+}
+
+.btn-sm {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.85rem;
+}
+
+/* 交易计划表格 */
+.plans-section {
+    background: var(--card-background);
+    border-radius: 1rem;
+    padding: 1.5rem;
+    box-shadow: var(--shadow-md);
+}
+
+.plans-section h2 {
+    margin-bottom: 1rem;
+    color: var(--primary-color);
+}
+
+.status-filter {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
+}
+
+.status-btn {
+    padding: 0.35rem 0.75rem;
+    border: 1px solid #ddd;
+    background: white;
+    border-radius: 1rem;
+    cursor: pointer;
+    font-size: 0.85rem;
+    transition: all 0.3s;
+}
+
+.status-btn.active, .status-btn:hover {
+    background: var(--primary-color);
+    color: white;
+    border-color: var(--primary-color);
+}
+
+.plans-table-wrapper {
+    overflow-x: auto;
+}
+
+.plans-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.plans-table th, .plans-table td {
+    padding: 0.75rem;
+    text-align: left;
+    border-bottom: 1px solid #eee;
+}
+
+.plans-table th {
+    background: var(--background-color);
+    font-weight: 600;
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+}
+
+.plans-table tr:hover {
+    background: #f8fafc;
+}
+
+.plans-table .loading {
+    text-align: center;
+    color: var(--text-secondary);
+    padding: 2rem;
+}
+
+.badge {
+    display: inline-block;
+    padding: 0.2rem 0.5rem;
+    border-radius: 0.25rem;
+    font-size: 0.75rem;
+    font-weight: 500;
+}
+
+.badge-simulate { background: #dbeafe; color: #1d4ed8; }
+.badge-real { background: #d1fae5; color: #059669; }
+.badge-long { background: #fef3c7; color: #d97706; }
+.badge-short { background: #fce7f3; color: #db2777; }
+.badge-planning { background: #e5e7eb; color: #374151; }
+.badge-pending { background: #fef3c7; color: #d97706; }
+.badge-active { background: #dbeafe; color: #1d4ed8; }
+.badge-completed { background: #d1fae5; color: #059669; }
+.badge-cancelled { background: #fee2e2; color: #dc2626; }
+
+.profit-positive { color: #10b981; font-weight: 600; }
+.profit-negative { color: #ef4444; font-weight: 600; }
+
+.action-cell {
+    display: flex;
+    gap: 0.25rem;
+    flex-wrap: nowrap;
+    white-space: nowrap;
+}
+.action-cell .btn { flex: 0 0 auto; }
+
+.stock-cell { white-space: nowrap; }
+.stock-cell strong { font-weight: 600; }
+.stock-cell .stock-name {
+    margin-left: 0.4rem;
+    color: var(--text-secondary);
+    font-size: 0.82rem;
+}
+
+/* 股票代码可点击：跳转到持仓实时 15m 详情页 */
+.stock-link {
+    color: #2563eb;
+    text-decoration: none;
+    font-weight: 600;
+    cursor: pointer;
+    border-bottom: 1px dashed transparent;
+}
+.stock-link:hover {
+    border-bottom-color: #2563eb;
+    color: #1d4ed8;
+}
+.stock-link::after {
+    content: '↗';
+    margin-left: 2px;
+    font-size: 0.7em;
+    opacity: 0.6;
+}
+
+/* 模态框 */
+.modal {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0,0,0,0.5);
+    z-index: 1000;
+    align-items: center;
+    justify-content: center;
+}
+
+.modal.active {
+    display: flex;
+}
+
+.modal-content {
+    background: white;
+    border-radius: 1rem;
+    width: 90%;
+    max-width: 600px;
+    max-height: 90vh;
+    overflow-y: auto;
+}
+
+.modal-small {
+    max-width: 400px;
+}
+
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid #eee;
+}
+
+.modal-header h3 {
+    margin: 0;
+    color: var(--primary-color);
+}
+
+.close-btn {
+    background: none;
+    border: none;
+    font-size: 1.5rem;
+    cursor: pointer;
+    color: var(--text-secondary);
+}
+
+#planForm {
+    padding: 1.5rem;
+}
+
+.form-row {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 1rem;
+}
+
+.form-group {
+    margin-bottom: 1rem;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 0.25rem;
+    font-weight: 500;
+    color: var(--text-primary);
+}
+
+.form-group input, .form-group select, .form-group textarea {
+    width: 100%;
+    padding: 0.5rem;
+    border: 1px solid #ddd;
+    border-radius: 0.5rem;
+    font-size: 1rem;
+}
+
+.form-group input:focus, .form-group select:focus, .form-group textarea:focus {
+    outline: none;
+    border-color: var(--primary-color);
+}
+
+.form-section {
+    background: #f8fafc;
+    padding: 1rem;
+    border-radius: 0.5rem;
+    margin-bottom: 1rem;
+}
+
+.form-section h4 {
+    margin-bottom: 1rem;
+    color: var(--text-secondary);
+}
+
+.risk-preview {
+    background: #fffbeb;
+    padding: 1rem;
+    border-radius: 0.5rem;
+    margin-bottom: 1rem;
+}
+
+.risk-preview h4 {
+    margin-bottom: 0.5rem;
+    color: #d97706;
+}
+
+.risk-items {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 0.5rem;
+}
+
+.risk-item {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.9rem;
+}
+
+.form-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
+    padding-top: 1rem;
+    border-top: 1px solid #eee;
+}
+
+/* 股票自动补全 */
+.stock-autocomplete-group {
+    position: relative;
+}
+
+.autocomplete-dropdown {
+    display: none;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    background: white;
+    border: 1px solid #ddd;
+    border-top: none;
+    border-radius: 0 0 0.5rem 0.5rem;
+    max-height: 240px;
+    overflow-y: auto;
+    z-index: 1100;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+}
+
+.autocomplete-dropdown.show {
+    display: block;
+}
+
+.autocomplete-item {
+    padding: 0.5rem 0.75rem;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid #f0f0f0;
+    transition: background 0.15s;
+}
+
+.autocomplete-item:last-child {
+    border-bottom: none;
+}
+
+.autocomplete-item:hover, .autocomplete-item.active {
+    background: #f0f7ff;
+}
+
+.autocomplete-item .stock-code {
+    font-weight: 600;
+    color: var(--primary-color);
+    min-width: 70px;
+}
+
+.autocomplete-item .stock-name {
+    flex: 1;
+    margin-left: 0.5rem;
+    color: var(--text-primary);
+}
+
+.autocomplete-item .stock-industry {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    margin-left: 0.5rem;
+}
+
+.autocomplete-empty {
+    padding: 0.75rem;
+    text-align: center;
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+}
+
+@media (max-width: 768px) {
+    .stats-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .stat-content {
+        grid-template-columns: repeat(2, 1fr);
+    }
+
+    .form-row {
+        grid-template-columns: 1fr;
+    }
+
+    .action-bar {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .mode-tabs {
+        justify-content: center;
+    }
+
+    .action-buttons {
+        justify-content: center;
+    }
+}
+</style>
+
+<script>
+let currentMode = '';   // 盯盘页展示全部持仓（不按 sim/real 过滤）
+
+// ============ 盯盘中（持仓实时）============
+let _monitorTimer = null;
+const MONITOR_INTERVAL_MS = 5 * 60 * 1000;   // 5 分钟，与后台自动拉取同频
+
+function _monFmtPnl(v, pct) {
+    if (v == null) return '<span style="color:#9ca3af;">-</span>';
+    const c = v >= 0 ? '#059669' : '#dc2626';
+    const sign = v >= 0 ? '+' : '';
+    const pctStr = (pct == null) ? '' : ` (${sign}${Number(pct).toFixed(2)}%)`;
+    return `<span style="color:${c};font-weight:600;">${sign}${Number(v).toFixed(2)}${pctStr}</span>`;
+}
+
+// ============ 底部放量提醒（弹窗 + 声音 + 服务端推送状态）============
+let _bvSeen = new Set();     // 已提醒过的 (fired_at|code)，避免重复弹
+let _bvTimer = null;
+let _bvAudioCtx = null;
+let _bvFirstLoad = true;
+
+function _bvBeep() {
+    try {
+        _bvAudioCtx = _bvAudioCtx || new (window.AudioContext || window.webkitAudioContext)();
+        const ctx = _bvAudioCtx, o = ctx.createOscillator(), g = ctx.createGain();
+        o.type = 'sine'; o.frequency.value = 880; o.connect(g); g.connect(ctx.destination);
+        g.gain.setValueAtTime(0.001, ctx.currentTime);
+        g.gain.exponentialRampToValueAtTime(0.35, ctx.currentTime + 0.02);
+        g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.6);
+        o.start(); o.stop(ctx.currentTime + 0.6);
+    } catch (e) {}
+}
+
+function _bvDesktopNotify(hits) {
+    if (!('Notification' in window) || Notification.permission !== 'granted') return;
+    hits.forEach(h => {
+        try {
+            new Notification('底部放量 · ' + (h.name || h.code), {
+                body: `${h.code} 价${h.price==null?'-':h.price} · ${(h.reasons||[]).join(' · ')}`,
+            });
+        } catch (e) {}
+    });
+}
+
+function _bvRowHtml(h, dim) {
+    const lvlBadge = h.is_signal
+        ? '<span style="background:#fee2e2;color:#991b1b;padding:.1rem .5rem;border-radius:.25rem;font-weight:700;">底部放量</span>'
+        : '<span style="background:#fef3c7;color:#92400e;padding:.1rem .5rem;border-radius:.25rem;">放量留意</span>';
+    const kind = h.kind === 'holding' ? '持仓' : '关注';
+    return `<div style="display:flex;gap:.75rem;align-items:center;padding:.4rem .2rem;border-bottom:1px solid #f1f5f9;${dim?'opacity:.65;':''}">
+        ${lvlBadge}
+        <a href="/stock/live?code=${h.code}" target="_blank" style="color:#2563eb;font-weight:600;text-decoration:none;">${h.code}</a>
+        <span>${h.name||''}</span>
+        <span style="color:#9ca3af;">${kind}</span>
+        <span style="color:#374151;">价 ${h.price==null?'-':h.price}</span>
+        <span style="color:#6b7280;">${(h.reasons||[]).join(' · ')}</span>
+        <a onclick="openVolChart('${h.code}','${(h.name||'').replace(/'/g,'')}')" style="cursor:pointer;color:#0f9d94;font-size:.78rem;">量图</a>
+        <span style="margin-left:auto;color:#9ca3af;font-size:.75rem;">${h.last_bar_time||''}</span>
+    </div>`;
+}
+
+async function loadBottomVolume() {
+    const list = document.getElementById('bvList');
+    const meta = document.getElementById('bvMeta');
+    if (!list) return;
+    try {
+        const r = await fetch('/api/trade/signals/bottom_volume').then(r => r.json());
+        if (!r.success) { list.innerHTML = `<span style="color:#dc2626;">加载失败：${r.message||''}</span>`; return; }
+        const d = r.data || {};
+        const sigs = d.signals || [];
+        const hits = sigs.filter(s => s.is_signal);
+        const watch = sigs.filter(s => !s.is_signal && s.level === 'watch');
+        if (meta) {
+            const ch = d.push_channels || [];
+            meta.textContent = `命中 ${hits.length} · 留意 ${watch.length} · 扫描 ${d.count||0} 只 · ${d.as_of||'—'}`
+                + (ch.length ? ` · 推送:${ch.join('/')}` : ' · 推送未配置');
+        }
+        list.innerHTML = (hits.length || watch.length)
+            ? hits.map(h => _bvRowHtml(h, false)).join('') + watch.map(h => _bvRowHtml(h, true)).join('')
+            : '<span style="color:#9ca3af;">暂无命中（交易时段每 5 分钟自动扫描；也可点「立即扫描」）</span>';
+
+        // 弹窗+声音：仅对「新命中」(recent_alerts 里未提醒过的)；首次加载只标记不弹
+        const alerts = d.recent_alerts || [];
+        const fresh = alerts.filter(a => {
+            const k = a.fired_at + '|' + a.code;
+            if (_bvSeen.has(k)) return false;
+            _bvSeen.add(k); return true;
+        });
+        const notifyOn = document.getElementById('bvNotifyToggle');
+        if (!_bvFirstLoad && notifyOn && notifyOn.checked && fresh.length) {
+            _bvBeep(); _bvDesktopNotify(fresh);
+        }
+        _bvFirstLoad = false;
+    } catch (e) {
+        list.innerHTML = `<span style="color:#dc2626;">加载失败：${e}</span>`;
+    }
+}
+
+async function scanBottomVolumeNow(btn) {
+    const old = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = '扫描中…'; }
+    try {
+        const r = await fetch('/api/trade/signals/scan_now', { method: 'POST' }).then(r => r.json());
+        if (r.success) await loadBottomVolume();
+        else alert('扫描失败：' + (r.message || ''));
+    } catch (e) {
+        alert('扫描失败：' + e);
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = old; }
+    }
+}
+
+function startBottomVolumePolling() {
+    if (_bvTimer) clearInterval(_bvTimer);
+    _bvTimer = setInterval(loadBottomVolume, 60 * 1000);   // 展示每 60s 刷新；命中由后台每 5min 产出
+}
+
+// ============ 自选池底部放量适配度 ============
+function _wlRating(rating) {
+    const map = {
+        '适合':   ['#dcfce7', '#166534'],
+        '一般':   ['#fef3c7', '#92400e'],
+        '不适合': ['#fee2e2', '#991b1b'],
+        '样本不足': ['#f1f5f9', '#64748b'],
+    };
+    const c = map[rating] || map['样本不足'];
+    return `<span style="background:${c[0]};color:${c[1]};padding:.1rem .5rem;border-radius:.25rem;font-size:.75rem;font-weight:700;">${rating}</span>`;
+}
+
+async function scanWatchlist(btn) {
+    const body = document.getElementById('wlBody');
+    const days = document.getElementById('wlDays').value;
+    const rvol = document.getElementById('wlRvol').value || '1.8';
+    const old = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = '扫描中…'; }
+    body.innerHTML = '<span style="color:#6b7280;">逐只回测中，稍等…</span>';
+    try {
+        const r = await fetch(`/api/trade/watchlist/bottom_volume_scan?days=${days}&rvol=${rvol}`).then(r => r.json());
+        if (!r.success) { body.innerHTML = `<span style="color:#dc2626;">扫描失败：${r.message||''}</span>`; return; }
+        const rows = r.data.rows || [];
+        if (!rows.length) { body.innerHTML = '<span style="color:#9ca3af;">自选池为空（无持仓/关注）。</span>'; return; }
+        const pct = v => v == null ? '<span style="color:#9ca3af;">-</span>' : v + '%';
+        const winColor = v => v == null ? '#64748b' : (v >= 50 ? '#059669' : '#dc2626');
+        const tr = rows.map(x => {
+            if (!x.ok) return `<tr><td style="padding:.35rem .5rem;">${x.code} ${x.name||''}</td><td colspan="7" style="padding:.35rem .5rem;color:#9ca3af;">${x.message||'数据不足'}</td></tr>`;
+            const kind = x.kind === 'holding' ? '持仓' : '关注';
+            return `<tr style="cursor:pointer;" onclick="openVolChart('${x.code}','${(x.name||'').replace(/'/g,'')}')" title="点看该股量能图/历史">
+                <td style="padding:.35rem .5rem;"><span style="color:#2563eb;font-weight:600;">${x.code}</span> ${x.name||''} <span style="color:#9ca3af;font-size:.72rem;">${kind}</span></td>
+                <td style="padding:.35rem .5rem;text-align:right;">${x.count}</td>
+                <td style="padding:.35rem .5rem;text-align:right;color:#b45309;font-weight:600;">${x.rvol_p50==null?'-':x.rvol_p50}</td>
+                <td style="padding:.35rem .5rem;text-align:right;color:${winColor(x.naive_fwd2_win)};">${pct(x.naive_fwd2_win)}</td>
+                <td style="padding:.35rem .5rem;text-align:right;">${pct(x.confirm_rate)}</td>
+                <td style="padding:.35rem .5rem;text-align:right;color:${winColor(x.conf_fwd2_win)};font-weight:600;">${pct(x.conf_fwd2_win)}</td>
+                <td style="padding:.35rem .5rem;text-align:right;">${_wlRating(x.rating)}</td>
+            </tr>`;
+        }).join('');
+        body.innerHTML = `
+        <div style="font-size:.74rem;color:#94a3b8;margin-bottom:.4rem;">胜率=命中后2日收盘上涨占比；「确认」=放量次根站上放量柱高点后入场。样本(命中)太小则评级不可靠。点行看该股详情。</div>
+        <div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:.8rem;min-width:640px;">
+          <thead><tr style="background:#f1f5f9;color:#475569;">
+            <th style="padding:.4rem .5rem;text-align:left;">股票</th>
+            <th style="padding:.4rem .5rem;text-align:right;">命中</th>
+            <th style="padding:.4rem .5rem;text-align:right;">RVOL中位</th>
+            <th style="padding:.4rem .5rem;text-align:right;">当根2日胜率</th>
+            <th style="padding:.4rem .5rem;text-align:right;">确认率</th>
+            <th style="padding:.4rem .5rem;text-align:right;">确认后2日胜率</th>
+            <th style="padding:.4rem .5rem;text-align:right;">适配</th>
+          </tr></thead><tbody>${tr}</tbody></table></div>`;
+    } catch (e) {
+        body.innerHTML = `<span style="color:#dc2626;">扫描失败：${e}</span>`;
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = old; }
+    }
+}
+
+// ============ 量能图 modal（真实 15m 成交量 + RVOL）============
+let _volData = null;      // {bars, base_avg, last_rvol, ...}
+let _volGeom = null;      // 命中检测用：{padL, slot, ...}
+
+function openVolChart(code, name) {
+    const modal = document.getElementById('volModal');
+    _volCode = code; _volName = name; _bhLoaded = false;
+    document.getElementById('volModalTitle').textContent = (name ? name + ' ' : '') + code + ' · 15m 量能';
+    document.getElementById('volModalSub').textContent = '加载中…';
+    modal.style.display = 'flex';
+    showVolPane('chart');
+    fetch(`/api/trade/${code}/volume_15m?bars=48`).then(r => r.json()).then(r => {
+        if (!r.success) { document.getElementById('volModalSub').textContent = '加载失败：' + (r.message || ''); return; }
+        _volData = r.data;
+        const rv = _volData.last_rvol;
+        const pj = _volData.projection || {};
+        let sub = `最新一根 RVOL <b style="color:${rv>=2?'#b45309':'#334155'}">${rv==null?'-':rv.toFixed(2)}</b>`
+          + ` · 均量基准 ${_volData.base_avg==null?'-':Math.round(_volData.base_avg).toLocaleString()}`
+          + ` · 末根 ${_volData.last_time||''} · 共 ${_volData.bars.length} 根`;
+        if (pj.is_forming) {
+            const phot = pj.projected_rvol != null && pj.projected_rvol >= (_volData.rvol_min || 2);
+            sub += ` · <span style="color:${phot?'#b45309':'#64748b'};">末根进行中(已走${Math.round(pj.elapsed_min)}/15分)，`
+                 + `预估RVOL <b>${pj.projected_rvol==null?'-':pj.projected_rvol.toFixed(2)}</b>${phot?' ★放量':''}</span>`;
+        }
+        document.getElementById('volModalSub').innerHTML = sub;
+        drawVolModal();
+    }).catch(e => { document.getElementById('volModalSub').textContent = '加载失败：' + e; });
+}
+
+function closeVolChart() {
+    document.getElementById('volModal').style.display = 'none';
+    _volData = null;
+}
+
+function drawVolModal() {
+    if (!_volData) return;
+    const canvas = document.getElementById('volModalCanvas');
+    const cssH = 300;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const w = canvas.parentElement.clientWidth - 0;
+    canvas.style.height = cssH + 'px';
+    canvas.width = Math.round(w * dpr); canvas.height = Math.round(cssH * dpr);
+    const ctx = canvas.getContext('2d'); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, cssH);
+
+    const bars = _volData.bars, base = _volData.base_avg;
+    const proj = _volData.projection || {};
+    const padL = 12, padR = 12, padT = 40, padB = 30;
+    const plotW = w - padL - padR, plotH = cssH - padT - padB;
+    const projTop = proj.is_forming ? proj.projected_vol : 0;
+    const maxV = Math.max(base || 0, projTop, ...bars.map(b => b.volume)) * 1.14 || 1;
+    const n = bars.length, slot = plotW / n, bw = Math.min(slot * 0.64, 22);
+    const yOf = v => padT + plotH - (v / maxV) * plotH;
+    const font = getComputedStyle(document.body).fontFamily;
+    _volGeom = { padL, slot, bw, yOf, plotH, padT, n };
+
+    function rr(x, y, ww, hh, r) {
+        r = Math.min(r, ww / 2, Math.abs(hh) / 2); const y2 = y + hh;
+        ctx.beginPath(); ctx.moveTo(x, y2); ctx.lineTo(x, y + r); ctx.arcTo(x, y, x + r, y, r);
+        ctx.lineTo(x + ww - r, y); ctx.arcTo(x + ww, y, x + ww, y + r, r); ctx.lineTo(x + ww, y2); ctx.closePath(); ctx.fill();
+    }
+    // baseline
+    if (base) {
+        const yb = yOf(base);
+        ctx.strokeStyle = '#0f9d94'; ctx.lineWidth = 2; ctx.setLineDash([6, 5]);
+        ctx.beginPath(); ctx.moveTo(padL, yb); ctx.lineTo(w - padR, yb); ctx.stroke(); ctx.setLineDash([]);
+        ctx.fillStyle = '#0f9d94'; ctx.font = '600 11px ' + font; ctx.textAlign = 'left';
+        ctx.fillText('前20根均量 ' + Math.round(base).toLocaleString(), padL + 2, yb - 5);
+    }
+    // bars
+    for (let i = 0; i < n; i++) {
+        const b = bars[i], x = padL + slot * i + (slot - bw) / 2, y = yOf(b.volume), bh = padT + plotH - y;
+        ctx.fillStyle = b.hot ? '#e0952f' : (b.faint ? '#cbd5e1' : '#94a3b8');
+        rr(x, y, bw, bh, 4);
+    }
+    // 末根预估：现量之上叠浅色"预估增量"块（虚线边）+ 预估RVOL 标注
+    const last = bars[n - 1];
+    if (proj.is_forming) {
+        const i = n - 1, x = padL + slot * i + (slot - bw) / 2;
+        const yA = yOf(proj.actual_vol), yP = yOf(proj.projected_vol);
+        const phot = proj.projected_rvol != null && proj.projected_rvol >= (_volData.rvol_min || 2);
+        ctx.fillStyle = phot ? 'rgba(224,149,47,0.35)' : 'rgba(148,163,184,0.30)';
+        ctx.fillRect(x, yP, bw, yA - yP);
+        ctx.strokeStyle = '#e0952f'; ctx.lineWidth = 1.2; ctx.setLineDash([4, 3]);
+        ctx.strokeRect(x, yP, bw, yA - yP); ctx.setLineDash([]);
+        ctx.fillStyle = phot ? '#b45309' : '#64748b'; ctx.font = '700 12px ' + font; ctx.textAlign = 'right';
+        ctx.fillText('预估RVOL ' + (proj.projected_rvol == null ? '-' : proj.projected_rvol.toFixed(2)) + (phot ? ' ★放量' : ''),
+                     w - padR, yP - 6);
+    } else if (last && last.rvol != null) {
+        // last bar callout（已走完的末根）
+        ctx.fillStyle = last.hot ? '#b45309' : '#64748b'; ctx.font = '700 12px ' + font; ctx.textAlign = 'right';
+        ctx.fillText((last.hot ? '放量 ' : 'RVOL ') + last.rvol.toFixed(2) + (last.hot ? '×' : ''), w - padR, yOf(last.volume) - 6);
+    }
+}
+
+(function initVolHover() {
+    const canvas = document.getElementById('volModalCanvas');
+    const tip = document.getElementById('volModalTip');
+    if (!canvas) return;
+    canvas.addEventListener('mousemove', e => {
+        if (!_volData || !_volGeom) return;
+        const rect = canvas.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const i = Math.floor((x - _volGeom.padL) / _volGeom.slot);
+        if (i < 0 || i >= _volData.bars.length) { tip.style.display = 'none'; return; }
+        const b = _volData.bars[i];
+        tip.innerHTML = `${b.t}<br>量 ${b.volume.toLocaleString()} · RVOL ${b.rvol==null?'-':b.rvol.toFixed(2)}`;
+        tip.style.display = 'block';
+        tip.style.left = Math.min(x + 12, rect.width - 130) + 'px';
+        tip.style.top = '8px';
+    });
+    canvas.addEventListener('mouseleave', () => { tip.style.display = 'none'; });
+})();
+
+window.addEventListener('resize', () => { if (_volData && document.getElementById('volModal').style.display !== 'none') drawVolModal(); });
+
+// ---- 弹窗页签 + 历史底部放量 ----
+let _volCode = null, _volName = null, _bhLoaded = false;
+
+function showVolPane(which) {
+    const chart = document.getElementById('volChartPane');
+    const hist = document.getElementById('volHistPane');
+    const tC = document.getElementById('volTabChart'), tH = document.getElementById('volTabHist');
+    const on = c => { c.style.color = '#2563eb'; c.style.borderBottomColor = '#2563eb'; };
+    const off = c => { c.style.color = '#94a3b8'; c.style.borderBottomColor = 'transparent'; };
+    if (which === 'hist') {
+        chart.style.display = 'none'; hist.style.display = 'block'; on(tH); off(tC);
+        if (!_bhLoaded) loadVolHistory();
+    } else {
+        hist.style.display = 'none'; chart.style.display = 'block'; on(tC); off(tH);
+        if (_volData) drawVolModal();
+    }
+}
+
+function _bhTile(label, value, color, sub) {
+    return `<div style="flex:1 1 120px;min-width:110px;padding:.5rem .7rem;background:#f8fafc;border:1px solid #eef2f7;border-radius:8px;">
+        <div style="font-size:.68rem;color:#94a3b8;">${label}</div>
+        <div style="font-size:1.05rem;font-weight:700;color:${color||'#1e293b'};">${value}</div>
+        ${sub?`<div style="font-size:.66rem;color:#9ca3af;margin-top:.1rem;">${sub}</div>`:''}
+    </div>`;
+}
+
+async function loadVolHistory() {
+    if (!_volCode) return;
+    const tiles = document.getElementById('bhTiles');
+    const note = document.getElementById('bhNote');
+    const table = document.getElementById('bhTable');
+    const days = document.getElementById('bhDays').value;
+    const rvol = document.getElementById('bhRvol').value || '1.8';
+    const stab = document.getElementById('bhStab').checked ? '1' : '0';
+    tiles.innerHTML = ''; table.innerHTML = '<div style="color:#6b7280;padding:1rem 0;">扫描中…</div>'; note.textContent = '';
+    try {
+        const r = await fetch(`/api/trade/${_volCode}/bottom_volume_history?days=${days}&rvol=${rvol}&stabilize=${stab}`).then(r => r.json());
+        if (!r.success) { table.innerHTML = `<div style="color:#dc2626;">${r.message||'加载失败'}</div>`; return; }
+        _bhLoaded = true;
+        const d = r.data, s = d.summary, sc = d.summary_confirmed || {};
+        const winColor = w => (w == null ? '#64748b' : (w >= 50 ? '#059669' : '#dc2626'));
+        // 形态量能画像（与入场方式无关）
+        tiles.innerHTML =
+            _bhTile('命中次数', s.count, '#1e293b', d.data_range.join(' ~ '))
+          + _bhTile('放量倍数 RVOL', s.rvol_p50==null?'-':s.rvol_p50, '#b45309', `p25–p75 ${s.rvol_p25}–${s.rvol_p75}`)
+          + _bhTile('命中量(手)', s.vol_p50==null?'-':(s.vol_p50/10000).toFixed(0)+'万', '#1e293b', `p75 ${s.vol_p75==null?'-':(s.vol_p75/10000).toFixed(0)+'万'}`);
+
+        // 两种入场对比
+        const wc = w => (w == null ? '#64748b' : (w >= 50 ? '#059669' : '#dc2626'));
+        const mc = m => (m == null ? '#64748b' : (m >= 0 ? '#059669' : '#dc2626'));
+        const cell = v => v == null ? '<span style="color:#9ca3af;">-</span>' : v;
+        const cmp = document.getElementById('bhCompare');
+        cmp.innerHTML = `
+        <div style="font-size:.72rem;color:#94a3b8;margin-bottom:.25rem;">两种入场方式对比（胜率=命中后收盘上涨占比）</div>
+        <table style="width:100%;border-collapse:collapse;font-size:.8rem;">
+          <thead><tr style="background:#f1f5f9;color:#475569;">
+            <th style="padding:.35rem .5rem;text-align:left;">入场方式</th>
+            <th style="padding:.35rem .5rem;text-align:right;">样本</th>
+            <th style="padding:.35rem .5rem;text-align:right;">次日胜率</th>
+            <th style="padding:.35rem .5rem;text-align:right;">次日中位</th>
+            <th style="padding:.35rem .5rem;text-align:right;">2日胜率</th>
+            <th style="padding:.35rem .5rem;text-align:right;">2日中位</th>
+          </tr></thead><tbody>
+            <tr>
+              <td style="padding:.35rem .5rem;">当根买入<span style="color:#9ca3af;">(放量收盘)</span></td>
+              <td style="padding:.35rem .5rem;text-align:right;">${s.count}</td>
+              <td style="padding:.35rem .5rem;text-align:right;color:${wc(s.fwd1_win)};font-weight:600;">${cell(s.fwd1_win==null?null:s.fwd1_win+'%')}</td>
+              <td style="padding:.35rem .5rem;text-align:right;color:${mc(s.fwd1_med)};">${cell(s.fwd1_med==null?null:(s.fwd1_med>=0?'+':'')+s.fwd1_med+'%')}</td>
+              <td style="padding:.35rem .5rem;text-align:right;color:${wc(s.fwd2_win)};font-weight:600;">${cell(s.fwd2_win==null?null:s.fwd2_win+'%')}</td>
+              <td style="padding:.35rem .5rem;text-align:right;color:${mc(s.fwd2_med)};">${cell(s.fwd2_med==null?null:(s.fwd2_med>=0?'+':'')+s.fwd2_med+'%')}</td>
+            </tr>
+            <tr style="background:#fffdf5;">
+              <td style="padding:.35rem .5rem;">次根确认买入<span style="color:#9ca3af;">(站上放量柱高点)</span></td>
+              <td style="padding:.35rem .5rem;text-align:right;">${sc.count==null?'-':sc.count}<span style="color:#9ca3af;font-size:.72rem;">${sc.confirm_rate==null?'':' / 确认率'+sc.confirm_rate+'%'}</span></td>
+              <td style="padding:.35rem .5rem;text-align:right;color:${wc(sc.fwd1_win)};font-weight:600;">${cell(sc.fwd1_win==null?null:sc.fwd1_win+'%')}</td>
+              <td style="padding:.35rem .5rem;text-align:right;color:${mc(sc.fwd1_med)};">${cell(sc.fwd1_med==null?null:(sc.fwd1_med>=0?'+':'')+sc.fwd1_med+'%')}</td>
+              <td style="padding:.35rem .5rem;text-align:right;color:${wc(sc.fwd2_win)};font-weight:600;">${cell(sc.fwd2_win==null?null:sc.fwd2_win+'%')}</td>
+              <td style="padding:.35rem .5rem;text-align:right;color:${mc(sc.fwd2_med)};">${cell(sc.fwd2_med==null?null:(sc.fwd2_med>=0?'+':'')+sc.fwd2_med+'%')}</td>
+            </tr>
+          </tbody></table>`;
+
+        note.innerHTML = `条件：下跌段 + 段内跌幅≥${Math.round(d.params.min_drop*100)}% + 贴近段内新低 + RVOL_slot≥${d.params.rvol_min}`
+            + `${d.params.require_stabilize?' + 止跌收上':''}。放量按<b>时段对齐</b>(已排除早盘天量)。`
+            + `「确认率」低说明多数放量后没能站上高点(放量续跌)；样本太小则结论不可靠。`;
+        const rows = (d.events||[]).map(e => {
+            const c1 = e.fwd_1d==null?'#9ca3af':(e.fwd_1d>=0?'#059669':'#dc2626');
+            const c2 = e.fwd_2d==null?'#9ca3af':(e.fwd_2d>=0?'#059669':'#dc2626');
+            const conf = e.confirmed
+                ? `<span style="color:#059669;">✓ ${e.cfwd_1d==null?'':(e.cfwd_1d>=0?'+':'')+e.cfwd_1d+'%'}</span>`
+                : '<span style="color:#cbd5e1;">✕</span>';
+            return `<tr>
+                <td style="padding:.3rem .5rem;">${e.time}</td>
+                <td style="padding:.3rem .5rem;text-align:right;">${e.price}</td>
+                <td style="padding:.3rem .5rem;text-align:right;">${(e.volume/10000).toFixed(0)}万</td>
+                <td style="padding:.3rem .5rem;text-align:right;color:#b45309;font-weight:600;">${e.rvol_slot}</td>
+                <td style="padding:.3rem .5rem;text-align:right;color:#dc2626;">-${e.drop_pct}%</td>
+                <td style="padding:.3rem .5rem;text-align:right;color:${c1};">${e.fwd_1d==null?'-':(e.fwd_1d>=0?'+':'')+e.fwd_1d+'%'}</td>
+                <td style="padding:.3rem .5rem;text-align:right;color:${c2};">${e.fwd_2d==null?'-':(e.fwd_2d>=0?'+':'')+e.fwd_2d+'%'}</td>
+                <td style="padding:.3rem .5rem;text-align:right;" title="下一根是否站上放量柱高点及确认后次日涨跌">${conf}</td>
+            </tr>`;
+        }).join('');
+        table.innerHTML = rows
+            ? `<table style="width:100%;border-collapse:collapse;font-size:.8rem;">
+                 <thead><tr style="background:#f1f5f9;color:#475569;">
+                   <th style="padding:.35rem .5rem;text-align:left;">时间</th><th style="padding:.35rem .5rem;text-align:right;">价</th>
+                   <th style="padding:.35rem .5rem;text-align:right;">量</th><th style="padding:.35rem .5rem;text-align:right;">RVOL</th>
+                   <th style="padding:.35rem .5rem;text-align:right;">段跌</th><th style="padding:.35rem .5rem;text-align:right;">次日</th>
+                   <th style="padding:.35rem .5rem;text-align:right;">2日</th><th style="padding:.35rem .5rem;text-align:right;">确认</th>
+                 </tr></thead><tbody>${rows}</tbody></table>`
+            : '<div style="color:#9ca3af;padding:1rem 0;">该区间/阈值下无命中</div>';
+    } catch (e) {
+        table.innerHTML = `<div style="color:#dc2626;">加载失败：${e}</div>`;
+    }
+}
+
+function _monDist(v, kind) {
+    // kind='sl' 距止损（<0 已破位，<3% 逼近）；kind='tp' 距止盈
+    if (v == null) return '<span style="color:#9ca3af;">-</span>';
+    let c = '#374151';
+    if (kind === 'sl') c = v <= 0 ? '#dc2626' : (v < 3 ? '#f59e0b' : '#374151');
+    return `<span style="color:${c};">${Number(v).toFixed(2)}%</span>`;
+}
+
+// 均线图标题戳：显示该图数据「最新一根K线时间 + 下载正常/失败」
+// lastT=末根时间字符串（无=没拿到数据→失败）；数据存在即视为下载正常
+function _maStamp(lastT) {
+    const badge = lastT
+        ? '<span style="color:#059669;">✓正常</span>'
+        : '<span style="color:#dc2626;">✕失败</span>';
+    return `<span style="float:right;font-weight:600;">最新 `
+        + `<span style="color:#334155;">${lastT || '—'}</span> · ${badge}</span>`;
+}
+
+function renderMonitorRow(r) {
+    const price = (r.current_price == null)
+        ? '<span style="color:#9ca3af;">-</span>'
+        : Number(r.current_price).toFixed(2)
+          + (r.price_source === 'daily' ? ' <span style="color:#f59e0b;font-size:.7rem;">昨收</span>' : '');
+    const chg = (r.change_pct == null)
+        ? '<span style="color:#9ca3af;">-</span>'
+        : `<span style="color:${r.change_pct>=0?'#059669':'#dc2626'};">${r.change_pct>=0?'+':''}${Number(r.change_pct).toFixed(2)}%</span>`;
+    const badge = r.monitoring
+        ? '<span style="background:#dcfce7;color:#166534;padding:.1rem .5rem;border-radius:.25rem;font-size:.75rem;font-weight:600;">● 盯盘中</span>'
+        : `<span style="background:#f1f5f9;color:#64748b;padding:.1rem .5rem;border-radius:.25rem;font-size:.75rem;">${r.monitor_label||'未盯盘'}</span>`;
+    return `<tr>
+        <td><a href="/stock/live?code=${r.stock_code}" target="_blank" style="color:#2563eb;text-decoration:none;font-weight:600;">${r.stock_code}</a> ${r.stock_name||''}</td>
+        <td>${r.quote_time || '<span style="color:#9ca3af;">-</span>'}</td>
+        <td>${price}</td>
+        <td>${chg}</td>
+        <td>${r.entry_price==null?'-':Number(r.entry_price).toFixed(2)}</td>
+        <td>${r.quantity==null?'-':Number(r.quantity).toLocaleString()}</td>
+        <td>${_monFmtPnl(r.unrealized_pnl, r.unrealized_pnl_pct)}</td>
+        <td>${_monDist(r.dist_to_sl_pct, 'sl')}</td>
+        <td>${_monDist(r.dist_to_tp_pct, 'tp')}</td>
+        <td>${r.volume_ratio==null?'<span style="color:#9ca3af;">-</span>':Number(r.volume_ratio).toFixed(2)}</td>
+        <td>${r.turnover==null?'<span style="color:#9ca3af;">-</span>':Number(r.turnover).toFixed(2)+'%'}</td>
+        <td style="cursor:pointer;" title="点看 15m 量能图" onclick="openVolChart('${r.stock_code}','${(r.stock_name||'').replace(/'/g,'')}')">${_monVol(r)}</td>
+        <td>${badge}</td>
+    </tr>
+    <tr class="wd-row">
+        <td colspan="13" style="padding:.45rem .75rem .7rem;background:#fbfdff;border-bottom:2px solid #eef2f7;">
+            <div id="wd-${r.stock_code}" style="display:flex;gap:.6rem;flex-wrap:wrap;align-items:stretch;">
+                <span style="color:#9ca3af;font-size:.78rem;align-self:center;">盯盘明细加载中…</span>
+            </div>
+        </td>
+    </tr>`;
+}
+
+// ============ 盯盘明细（每只股票下常驻一行：5m三均线 / 板块15m同步 / 放量）============
+function _wdBox(title, tone, headline, sub, extra) {
+    const tones = {
+        sell: ['#fee2e2', '#991b1b'], buy: ['#dcfce7', '#166534'],
+        warn: ['#fef3c7', '#92400e'], wait: ['#f1f5f9', '#475569'],
+        na:   ['#f8fafc', '#9ca3af'],
+    };
+    const c = tones[tone] || tones.na;
+    return `<div style="flex:1 1 240px;min-width:210px;background:${c[0]};border:1px solid ${c[0]};border-radius:8px;padding:.45rem .65rem;">
+        <div style="font-size:.68rem;color:#94a3b8;margin-bottom:.15rem;">${title}</div>
+        <div style="font-size:.9rem;font-weight:700;color:${c[1]};">${headline}</div>
+        ${sub ? `<div style="font-size:.72rem;color:#64748b;margin-top:.15rem;">${sub}</div>` : ''}
+        ${extra || ''}
+    </div>`;
+}
+
+function _dirArrow(d) {
+    if (d === 1) return '<span style="color:#059669;">↑涨</span>';
+    if (d === -1) return '<span style="color:#dc2626;">↓跌</span>';
+    return '<span style="color:#9ca3af;">—</span>';
+}
+
+// 三均线图例 + mini 图 canvas（个股 5m 与 15m 并排，图形随后由 _wdDrawChart 画入）
+// 标题右侧标注该图数据最新一根K线时间 + 下载正常/失败
+function _wd1Chart(code, w) {
+    const s5 = (w && w.series) || [];
+    const s15 = (w && w.series_15m) || [];
+    const t5 = s5.length ? s5[s5.length - 1].t : null;
+    const t15 = s15.length ? s15[s15.length - 1].t : null;
+    return `<div style="margin-top:.35rem;display:flex;gap:.5rem;">
+        <div style="flex:1;min-width:0;">
+            <div style="font-size:.62rem;color:#94a3b8;margin-bottom:.05rem;">个股 5m ${_maStamp(t5)}</div>
+            <canvas id="wdc-${code}" height="52" style="width:100%;height:52px;display:block;"></canvas>
+        </div>
+        <div style="flex:1;min-width:0;">
+            <div style="font-size:.62rem;color:#94a3b8;margin-bottom:.05rem;">个股 15m ${_maStamp(t15)}</div>
+            <canvas id="wdc15-${code}" height="52" style="width:100%;height:52px;display:block;"></canvas>
+        </div>
+    </div>
+    <div style="display:flex;gap:.55rem;flex-wrap:wrap;font-size:.62rem;color:#94a3b8;margin-top:.1rem;">
+        <span style="color:#1e293b;">— 收</span>
+        <span style="color:#e0952f;">— MA5</span>
+        <span style="color:#0f9d94;">— MA10</span>
+        <span style="color:#a855f7;">— MA20</span>
+        <span>｜红/绿柱=高低价 已跌破/已站上均线带</span>
+    </div>`;
+}
+
+function _wdWatch1(w, code) {
+    if (!w || !w.ok) {
+        const bars = w && w.bars != null ? `（仅 ${w.bars} 根 5m，需 ${20 + 7} 根）` : '';
+        return _wdBox('盯盘1 · 5m三均线', 'na', '数据不足', '5m 根数不够算 MA20+7' + bars);
+    }
+    const m = w.ma || {};
+    const maStr = `MA ${m.ma5 ?? '-'} / ${m.ma10 ?? '-'} / ${m.ma20 ?? '-'}`;
+    const price = w.price == null ? '-' : w.price;
+    let tone, headline, sub;
+    if (w.action === 'sell') {
+        tone = 'sell'; headline = '⚑ 卖出（跌破均线）';
+        sub = `连续 ${w.streak} 根高点跌破三均线 · 防继续下跌 · 现价 ${price} < ${maStr} · ${w.last_bar_time || ''}`;
+    } else if (w.action === 'hold_buy') {
+        tone = 'buy'; headline = '✓ 持有／空仓可买';
+        sub = `连续 ${w.streak} 根低点站上三均线 · 空仓买入避免踏空 · 现价 ${price} > ${maStr} · ${w.last_bar_time || ''}`;
+    } else {
+        const biasTxt = w.bias === 'down' ? '偏弱（贴近带下沿）' : (w.bias === 'up' ? '偏强（贴近带上沿）' : '');
+        tone = 'wait'; headline = '观望（均线纠缠）';
+        sub = `未连续 7 根确认${w.streak ? `（当前 ${w.streak} 根）` : ''} ${biasTxt} · 现价 ${price} · ${maStr}`;
+    }
+    // 在方块内嵌 mini 图（若有 series）
+    const extra = (w.series && w.series.length) ? _wd1Chart(code, w) : '';
+    return _wdBox('盯盘1 · 5m三均线', tone, headline, sub, extra);
+}
+
+// 画三均线缩略图：高低价竖柱 + 三均线 + 收盘线。
+// plain=false（盯盘1）时按「是否跌破/站上均线带」给竖柱上红/绿；plain=true（盯盘2 板块）时竖柱统一灰。
+function _wdDrawChart(cv, s, plain) {
+    if (!cv || !s || !s.length) return;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const cssW = cv.clientWidth || 220, cssH = 52;
+    cv.width = Math.round(cssW * dpr); cv.height = Math.round(cssH * dpr);
+    const ctx = cv.getContext('2d'); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cssW, cssH);
+    const padT = 3, padB = 3, padL = 2, padR = 2;
+    const W = cssW - padL - padR, H = cssH - padT - padB;
+    const vals = [];
+    s.forEach(b => ['h', 'l', 'c', 'ma5', 'ma10', 'ma20'].forEach(k => { if (b[k] != null) vals.push(b[k]); }));
+    if (!vals.length) return;
+    const mn = Math.min(...vals), mx = Math.max(...vals), rng = (mx - mn) || 1;
+    const n = s.length, slot = W / n;
+    const X = i => padL + slot * (i + 0.5);
+    const Y = v => padT + H - ((v - mn) / rng) * H;
+    // 高低价竖柱：颜色标示是否已跌破/站上三均线带
+    s.forEach((b, i) => {
+        if (b.h == null || b.l == null) return;
+        let color = '#d7dde5';
+        if (!plain && b.ma5 != null && b.ma10 != null && b.ma20 != null) {
+            const bandLow = Math.min(b.ma5, b.ma10, b.ma20), bandHigh = Math.max(b.ma5, b.ma10, b.ma20);
+            if (b.h < bandLow) color = '#f0a3a3';
+            else if (b.l > bandHigh) color = '#a7d9bf';
+        }
+        ctx.strokeStyle = color; ctx.lineWidth = Math.max(1, slot * 0.55);
+        ctx.beginPath(); ctx.moveTo(X(i), Y(b.h)); ctx.lineTo(X(i), Y(b.l)); ctx.stroke();
+    });
+    const line = (k, color, lw) => {
+        ctx.strokeStyle = color; ctx.lineWidth = lw; ctx.beginPath(); let started = false;
+        s.forEach((b, i) => {
+            if (b[k] == null) return;
+            const px = X(i), py = Y(b[k]);
+            if (!started) { ctx.moveTo(px, py); started = true; } else ctx.lineTo(px, py);
+        });
+        ctx.stroke();
+    };
+    line('ma20', '#a855f7', 1.2);
+    line('ma10', '#0f9d94', 1.2);
+    line('ma5', '#e0952f', 1.2);
+    line('c', '#1e293b', 1);
+}
+
+// 板块 15m 三均线 mini 图 canvas
+// 标题行标注板块 15m 数据最新一根K线时间 + 下载正常/失败
+function _wd2Chart(code, boardTxt, w) {
+    const bs = (w && w.board_series) || [];
+    const bt = bs.length ? bs[bs.length - 1].t : null;
+    return `<div style="margin-top:.35rem;">
+        <div style="font-size:.62rem;color:#94a3b8;margin-bottom:.05rem;">板块 ${boardTxt} 15m ${_maStamp(bt)}</div>
+        <canvas id="wdbc-${code}" height="52" style="width:100%;height:52px;display:block;"></canvas>
+        <div style="display:flex;gap:.55rem;flex-wrap:wrap;font-size:.62rem;color:#94a3b8;margin-top:.1rem;">
+            <span style="color:#1e293b;">— 收</span>
+            <span style="color:#e0952f;">— MA5</span>
+            <span style="color:#0f9d94;">— MA10</span>
+            <span style="color:#a855f7;">— MA20</span>
+        </div>
+    </div>`;
+}
+
+function _wdWatch2(w, code) {
+    if (!w) return _wdBox('盯盘2 · 板块15m同步', 'na', '无数据', '');
+    const boardTxt = w.board_name ? `${w.board_name}` : (w.board_code || '未知板块');
+    const legs = `个股15m ${_dirArrow(w.stock_dir)} · 板块 ${_dirArrow(w.board_dir)}（${boardTxt}）`;
+    const extra = (w.board_series && w.board_series.length) ? _wd2Chart(code, boardTxt, w) : '';
+    let tone, headline, sub = legs;
+    if (w.verdict === 'sync_down') { tone = 'sell'; headline = '⚑ 同步下跌 → 止损/观望'; }
+    else if (w.verdict === 'sync_up') { tone = 'buy'; headline = '✓ 同步上涨 → 持有/买入'; }
+    else if (w.verdict === 'mixed') { tone = 'warn'; headline = '个股与板块分歧'; sub = legs + ' · 以板块方向为主'; }
+    else { tone = 'na'; headline = '方向未知'; }
+    return _wdBox('盯盘2 · 板块15m同步', tone, headline, sub, extra);
+}
+
+// 盯盘3 · 放量：文字结论 + 左「15m 量柱(含末根现量/预估)」+ 右「RVOL 对比柱(现/预估 vs 放量线)」
+function _wdVol3Chart(code) {
+    return `<div style="margin-top:.4rem;display:flex;gap:.45rem;align-items:stretch;">
+        <div style="flex:1 1 auto;min-width:0;">
+            <canvas id="wdvol-${code}" height="60" style="width:100%;height:60px;display:block;"></canvas>
+            <div style="display:flex;gap:.4rem;flex-wrap:wrap;font-size:.58rem;color:#94a3b8;margin-top:.1rem;">
+                <span style="color:#e0952f;">▮放量</span>
+                <span style="color:#94a3b8;">▮普通</span>
+                <span style="color:#cbd5e1;">▮缩量</span>
+                <span style="color:#0f9d94;">—均量</span>
+                <span style="color:#e0952f;">▨预估</span>
+            </div>
+        </div>
+        <div style="flex:0 0 78px;">
+            <canvas id="wdvolcmp-${code}" height="60" style="width:100%;height:60px;display:block;"></canvas>
+            <div style="font-size:.58rem;color:#94a3b8;text-align:center;margin-top:.1rem;">现/预估 vs 放量线</div>
+        </div>
+    </div>`;
+}
+
+function _wdWatch3(w, code) {
+    const vc = w && w.vol_chart;
+    const hasChart = vc && vc.bars && vc.bars.length;
+    const chartHtml = hasChart ? _wdVol3Chart(code) : '';
+    let tone = 'wait', headline = '量能正常', sub;
+    if (!w || !w.ok) {
+        tone = 'na'; headline = hasChart ? '量能' : '暂无量能数据';
+        sub = hasChart ? '下图 15m 量柱，末根含现量+预估' : '待后台扫描';
+    } else {
+        const rv = w.rvol == null ? '' : `RVOL ${Number(w.rvol).toFixed(2)}`;
+        const pj = (vc && vc.projection) || {};
+        let projTxt = '';
+        if (pj.is_forming) {
+            const phot = pj.projected_rvol != null && pj.projected_rvol >= (vc.rvol_min || 2);
+            projTxt = ` · 末根进行中→预估RVOL ${pj.projected_rvol==null?'-':pj.projected_rvol.toFixed(2)}${phot?' ★放量':''}`;
+        }
+        if (w.state === 'bottom_vol') { tone = 'warn'; headline = '● 底部放量'; sub = `下跌末端放量+止跌收上 · ${rv}${projTxt}`; }
+        else if (w.state === 'watch') { tone = 'warn'; headline = '放量留意'; sub = `放量但未确认止跌 · ${rv}${projTxt}`; }
+        else if (w.state === 'vol_up') { tone = 'warn'; headline = '放量'; sub = `成交明显放大 · ${rv}${projTxt}`; }
+        else { tone = 'wait'; headline = '量能正常'; sub = (rv || '未放量') + projTxt; }
+    }
+    return _wdBox('盯盘3 · 放量', tone, headline, sub, chartHtml);
+}
+
+function renderWatchBoxes(d) {
+    if (!d || d.error) return `<span style="color:#dc2626;font-size:.78rem;">明细加载失败：${d && d.error || ''}</span>`;
+    return _wdWatch1(d.watch1, d.code) + _wdWatch2(d.watch2, d.code) + _wdWatch3(d.watch3, d.code);
+}
+
+let _wdSeries = {};       // code -> 个股 5m series（盯盘1，带均线带红绿）
+let _wdSeries15 = {};     // code -> 个股 15m series（盯盘1，带均线带红绿）
+let _wdBoardSeries = {};  // code -> 板块 15m series（盯盘2，plain）
+let _wdVolChart = {};     // code -> 盯盘3 量柱数据（bars/base_avg/projection）
+
+// 盯盘3 · 15m 成交量 mini 柱状图：放量橙/缩量浅灰/普通灰 + 前20均量虚线 + 末根预估增量斜块
+function _wdDrawVol(cv, vc) {
+    if (!cv || !vc || !vc.bars || !vc.bars.length) return;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const cssW = cv.clientWidth || 240, cssH = 60;
+    cv.width = Math.round(cssW * dpr); cv.height = Math.round(cssH * dpr);
+    const ctx = cv.getContext('2d'); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cssW, cssH);
+    const bars = vc.bars, base = vc.base_avg, proj = vc.projection || {};
+    const padT = 4, padB = 2, padL = 2, padR = 2;
+    const W = cssW - padL - padR, H = cssH - padT - padB;
+    const projTop = proj.is_forming ? proj.projected_vol : 0;
+    const maxV = Math.max(base || 0, projTop, ...bars.map(b => b.volume)) * 1.12 || 1;
+    const n = bars.length, slot = W / n, bw = Math.min(slot * 0.7, 14);
+    const yOf = v => padT + H - (v / maxV) * H;
+    if (base) {
+        const yb = yOf(base);
+        ctx.strokeStyle = '#0f9d94'; ctx.lineWidth = 1; ctx.setLineDash([4, 3]);
+        ctx.beginPath(); ctx.moveTo(padL, yb); ctx.lineTo(cssW - padR, yb); ctx.stroke(); ctx.setLineDash([]);
+    }
+    for (let i = 0; i < n; i++) {
+        const b = bars[i], x = padL + slot * i + (slot - bw) / 2, y = yOf(b.volume);
+        let col = b.hot ? '#e0952f' : (b.faint ? '#cbd5e1' : '#94a3b8');
+        if (proj.is_forming && i === n - 1) col = '#64748b';   // 现量部分中性深灰
+        ctx.fillStyle = col; ctx.fillRect(x, y, bw, padT + H - y);
+    }
+    if (proj.is_forming) {
+        const i = n - 1, x = padL + slot * i + (slot - bw) / 2;
+        const yA = yOf(proj.actual_vol), yP = yOf(proj.projected_vol);
+        const phot = proj.projected_rvol != null && proj.projected_rvol >= (vc.rvol_min || 2);
+        ctx.fillStyle = phot ? 'rgba(224,149,47,0.42)' : 'rgba(148,163,184,0.32)';
+        ctx.fillRect(x, yP, bw, yA - yP);
+        ctx.strokeStyle = '#e0952f'; ctx.lineWidth = 1; ctx.setLineDash([3, 2]);
+        ctx.strokeRect(x, yP, bw, yA - yP); ctx.setLineDash([]);
+    }
+}
+
+// 盯盘3 · RVOL 对比柱：红色"放量线"(=RVOL阈值) + 现RVOL / 预估RVOL 两根柱（≥阈值变橙=放量）
+function _wdDrawVolCmp(cv, vc) {
+    if (!cv || !vc || !vc.bars || !vc.bars.length) return;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const cssW = cv.clientWidth || 78, cssH = 60;
+    cv.width = Math.round(cssW * dpr); cv.height = Math.round(cssH * dpr);
+    const ctx = cv.getContext('2d'); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cssW, cssH);
+    const thr = vc.rvol_min || 2;
+    const proj = vc.projection || {};
+    const curRv = (vc.bars[vc.bars.length - 1] || {}).rvol;
+    const prjRv = proj.is_forming ? proj.projected_rvol : null;
+    const items = [];
+    if (curRv != null) items.push({ label: '现', rv: curRv });
+    if (prjRv != null) items.push({ label: '预估', rv: prjRv });
+    if (!items.length) return;
+    const font = getComputedStyle(document.body).fontFamily;
+    const padT = 10, padB = 11, padL = 3, padR = 3;
+    const W = cssW - padL - padR, H = cssH - padT - padB;
+    const maxRv = Math.max(thr * 1.3, ...items.map(i => i.rv || 0)) * 1.05 || 1;
+    const yOf = v => padT + H - (Math.max(0, v) / maxRv) * H;
+    // 放量线
+    const yt = yOf(thr);
+    ctx.strokeStyle = '#ef4444'; ctx.lineWidth = 1; ctx.setLineDash([3, 2]);
+    ctx.beginPath(); ctx.moveTo(padL, yt); ctx.lineTo(cssW - padR, yt); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle = '#ef4444'; ctx.font = '600 8px ' + font; ctx.textAlign = 'left';
+    ctx.fillText('放量' + thr.toFixed(thr % 1 ? 1 : 0), padL, yt - 2);
+    // 柱
+    const n = items.length, slot = W / n, bw = Math.min(slot * 0.5, 16);
+    items.forEach((it, i) => {
+        const x = padL + slot * i + (slot - bw) / 2, y = yOf(it.rv);
+        const hot = it.rv >= thr;
+        ctx.fillStyle = hot ? '#e0952f' : '#94a3b8';
+        ctx.fillRect(x, y, bw, padT + H - y);
+        ctx.fillStyle = hot ? '#b45309' : '#64748b'; ctx.font = '700 8px ' + font; ctx.textAlign = 'center';
+        ctx.fillText(it.rv.toFixed(2), x + bw / 2, y - 2);
+        ctx.fillStyle = '#94a3b8'; ctx.font = '8px ' + font;
+        ctx.fillText(it.label, x + bw / 2, cssH - 2);
+    });
+}
+
+function _wdDrawAll() {
+    Object.keys(_wdSeries).forEach(code => {
+        const cv = document.getElementById('wdc-' + code);
+        if (cv) _wdDrawChart(cv, _wdSeries[code], false);
+    });
+    Object.keys(_wdSeries15).forEach(code => {
+        const cv = document.getElementById('wdc15-' + code);
+        if (cv) _wdDrawChart(cv, _wdSeries15[code], false);
+    });
+    Object.keys(_wdBoardSeries).forEach(code => {
+        const cv = document.getElementById('wdbc-' + code);
+        if (cv) _wdDrawChart(cv, _wdBoardSeries[code], true);
+    });
+    Object.keys(_wdVolChart).forEach(code => {
+        const cv = document.getElementById('wdvol-' + code);
+        if (cv) _wdDrawVol(cv, _wdVolChart[code]);
+        const cvc = document.getElementById('wdvolcmp-' + code);
+        if (cvc) _wdDrawVolCmp(cvc, _wdVolChart[code]);
+    });
+}
+
+async function loadWatchDetails() {
+    try {
+        let url = '/api/trade/monitor/watch_details';
+        if (currentMode) url += '?mode=' + currentMode;
+        const r = await fetch(url).then(r => r.json());
+        if (!r.success) return;
+        const d = r.details || {};
+        _wdSeries = {}; _wdSeries15 = {}; _wdBoardSeries = {}; _wdVolChart = {};
+        Object.keys(d).forEach(code => {
+            const el = document.getElementById('wd-' + code);
+            if (el) el.innerHTML = renderWatchBoxes(d[code]);
+            const w1 = d[code] && d[code].watch1;
+            if (w1 && w1.series && w1.series.length) _wdSeries[code] = w1.series;
+            if (w1 && w1.series_15m && w1.series_15m.length) _wdSeries15[code] = w1.series_15m;
+            const s2 = d[code] && d[code].watch2 && d[code].watch2.board_series;
+            if (s2 && s2.length) _wdBoardSeries[code] = s2;
+            const w3 = d[code] && d[code].watch3;
+            if (w3 && w3.vol_chart && w3.vol_chart.bars && w3.vol_chart.bars.length) _wdVolChart[code] = w3.vol_chart;
+        });
+        // DOM/布局就绪后再画 canvas（flex 宽度此时才确定）
+        requestAnimationFrame(_wdDrawAll);
+    } catch (e) { /* 明细失败不影响主表 */ }
+}
+
+window.addEventListener('resize', _wdDrawAll);
+
+function _monVol(r) {
+    const rv = (r.rvol == null) ? '' : 'RVOL ' + Number(r.rvol).toFixed(2);
+    if (r.bottom_vol)
+        return `<span style="background:#fee2e2;color:#991b1b;padding:.1rem .45rem;border-radius:.25rem;font-size:.72rem;font-weight:700;">● 底部放量</span>`
+             + (rv ? ` <span style="font-size:.7rem;color:#6b7280;">${rv}</span>` : '');
+    if (r.signal_level === 'watch')
+        return `<span style="background:#fef3c7;color:#92400e;padding:.1rem .45rem;border-radius:.25rem;font-size:.72rem;">放量留意</span>`
+             + (rv ? ` <span style="font-size:.7rem;color:#6b7280;">${rv}</span>` : '');
+    return rv ? `<span style="color:#6b7280;">${rv}</span>` : '<span style="color:#9ca3af;">-</span>';
+}
+
+async function loadMonitor() {
+    const tbody = document.getElementById('monitorTableBody');
+    const meta  = document.getElementById('monitorMeta');
+    const badge = document.getElementById('monitorBadge');
+    if (!tbody) return;
+    try {
+        let url = '/api/trade/monitor';
+        if (currentMode) url += '?mode=' + currentMode;
+        const r = await fetch(url).then(r => r.json());
+        if (!r.success) {
+            tbody.innerHTML = `<tr><td colspan="13" class="loading">加载失败：${r.message||''}</td></tr>`;
+            return;
+        }
+        const rows = r.rows || [];
+        const af = r.autofetch || {};
+        if (badge) {
+            const on = af.running && af.in_session_now;
+            badge.textContent = on ? '● 盯盘中' : (r.monitor_label || '未启动');
+            badge.style.cssText = 'font-size:.75rem;font-weight:600;padding:.1rem .55rem;border-radius:.3rem;'
+                + (on ? 'background:#dcfce7;color:#166534;' : 'background:#f1f5f9;color:#64748b;');
+        }
+        if (meta) {
+            const bits = [`持仓 ${rows.length} 只`, `更新 ${r.as_of||''}`];
+            if (af.interval_sec) bits.push(`每 ${Math.round(af.interval_sec/60)} 分钟`);
+            if (af.running && af.next_run) bits.push(`下轮 ${String(af.next_run).slice(11)}`);
+            meta.textContent = bits.join(' · ');
+        }
+        tbody.innerHTML = rows.length
+            ? rows.map(renderMonitorRow).join('')
+            : '<tr><td colspan="13" class="loading">当前无持仓中的股票</td></tr>';
+        if (rows.length) loadWatchDetails();   // 主表渲染后异步填充盯盘明细行
+    } catch (e) {
+        tbody.innerHTML = `<tr><td colspan="13" class="loading">加载失败：${e}</td></tr>`;
+    }
+}
+
+function startMonitorPolling() {
+    if (_monitorTimer) clearInterval(_monitorTimer);
+    _monitorTimer = setInterval(loadMonitor, MONITOR_INTERVAL_MS);
+}
+
+document.addEventListener('DOMContentLoaded', function () {
+    loadMonitor();
+    startMonitorPolling();
+    loadBottomVolume();
+    startBottomVolumePolling();
+    try { if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission(); } catch (e) {}
+});
+</script>
+{% endblock %}

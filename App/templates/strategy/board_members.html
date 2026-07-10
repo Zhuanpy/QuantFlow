@@ -7,6 +7,9 @@
     <div style="display:flex;gap:.7rem;align-items:center;font-size:.85rem;flex-wrap:wrap;">
       <button id="repairBtn" onclick="repairData()" class="bm-btn-primary"
               title="修复本板块全部成分股的1分钟数据：本地zip全量 + TDX补近~90天 + 重生成15m（后台运行）">🛠 修复数据</button>
+      <button id="repairAllBtn" onclick="repairAll()" class="bm-btn"
+              title="一键修复全部板块(86个)去重后的所有成分股 1m/15m/日K；会先跳过已最新的，可随时暂停/继续">🛠 修复全部板块</button>
+      <button id="pauseBtn" onclick="togglePause()" class="bm-btn" style="display:none;">⏸ 暂停</button>
       <label style="display:inline-flex;align-items:center;gap:.25rem;font-size:.8rem;color:#374151;cursor:pointer;"
              title="修复(下载最新1m)跑完后自动接力重算趋势打分+分布快照，一步到位">
         <input type="checkbox" id="chainTrend" checked> 完成后自动重算
@@ -329,22 +332,85 @@ function pollRepair() {
     const j = await fetch('/board_data/api/repair_status').then(r => r.json()).catch(() => null);
     if (!j || !j.success) return;
     const s = j.data;
+    const pb = document.getElementById('pauseBtn');
     if (s.running) {
-      st.textContent = `修复中… ${s.done}/${s.total}（成功 ${s.ok} / 失败 ${s.fail}，当前 ${s.cur || '—'}）`;
+      if (pb) { pb.style.display = ''; updatePauseBtn(s.paused); }
+      const boardTxt = s.board_total
+        ? `板块 ${s.board_idx}/${s.board_total}「${s.cur_board || '—'}」(本板块 ${s.cur_board_done}/${s.cur_board_total} 只) · ` : '';
+      st.textContent = (s.paused ? '⏸ 已暂停 ' : '修复中… ')
+        + boardTxt + `总 ${s.done}/${s.total}（成功 ${s.ok} / 失败 ${s.fail}，当前 ${s.cur || '—'}）`;
     } else {
       clearInterval(_repairTimer);
+      if (pb) pb.style.display = 'none';
       btn.disabled = false;
       st.textContent = s.error ? `失败：${s.error}`
-        : `修复完成：成功 ${s.ok} / 失败 ${s.fail}`
+        : `修复${s.stopped ? '已停止' : '完成'}：成功 ${s.ok} / 失败 ${s.fail}`
           + (s.skipped ? `，跳过 ${s.skipped} 只已最新` : '')
           + `，1m 新增 ${(s.zip_added||0)+(s.tdx_added||0)} 根，补日K ${s.daily_added||0} 天`
-          + (_repairChained ? '，正在重算趋势/分布…' : '');
-      if (!s.error) {
+          + (_repairChained && !s.stopped ? '，正在重算趋势/分布…' : '');
+      if (!s.error && !s.stopped) {
         load();   // 重新拉取成分股（更新趋势/在池等）
         if (_repairChained) pollTrend();   // 后端已自动接力重算，前端接上进度
       }
     }
   }, 1500);
+}
+
+// ===== 一键修复全部板块 + 暂停/继续 =====
+async function repairAll() {
+  const chain = document.getElementById('chainTrend').checked;
+  // 1) 先预览：便宜地(纯SQL/文件名)算出 要修多少 / 已最新跳多少 / 从未下载多少
+  let pv;
+  try {
+    pv = await fetch('/board_data/api/repair_all', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ preview: true })
+    }).then(r => r.json());
+  } catch (e) { alert('预览失败：' + e.message); return; }
+  if (!pv || !pv.success) { alert('预览失败'); return; }
+  const summary = `全部板块成分股 ${pv.total_members} 只（去重）：\n`
+    + `· 已最新，跳过：${pv.skipped_current} 只\n`
+    + `· 从未下载(本地无数据)：${pv.new_available} 只 —— 默认跳过\n`
+    + `· 有数据但落后，实需修复：${pv.count} 只\n\n`
+    + `开始修复这 ${pv.count} 只？（可随时暂停/继续）`;
+  if (!confirm(summary)) return;
+  // 2) 如有"从未下载"的，问是否连它们一起下载(量大)
+  let includeNew = false;
+  if (pv.new_available > 0) {
+    includeNew = confirm(`是否连同 ${pv.new_available} 只「从未下载」的成分股一起下载它们的 1m 历史？\n（量大耗时；\n确定=一起下 共修 ${pv.count + pv.new_available} 只；\n取消=只修有数据的 ${pv.count} 只）`);
+  }
+  _repairChained = chain;
+  document.getElementById('repairBtn').disabled = true;
+  document.getElementById('repairAllBtn').disabled = true;
+  try {
+    const r = await fetch('/board_data/api/repair_all', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ with_trend: chain, include_new: includeNew })
+    });
+    const j = await r.json();
+    document.getElementById('repairAllBtn').disabled = false;
+    if (!j.success) { alert(j.message || '启动失败'); document.getElementById('repairBtn').disabled = false; return; }
+    document.getElementById('repairStatus').textContent =
+      `已启动：实修 ${j.count} 只（已最新跳过 ${j.skipped_current}` + (j.skipped_new ? `，从未下载跳过 ${j.skipped_new}` : '') + `）`;
+    pollRepair();
+  } catch (e) {
+    document.getElementById('repairAllBtn').disabled = false;
+    document.getElementById('repairBtn').disabled = false;
+    alert('启动失败：' + e.message);
+  }
+}
+async function togglePause() {
+  try {
+    const j = await fetch('/board_data/api/repair_pause', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ action: 'toggle' })
+    }).then(r => r.json());
+    if (j && j.success) updatePauseBtn(j.data && j.data.paused);
+  } catch (e) {}
+}
+function updatePauseBtn(paused) {
+  const b = document.getElementById('pauseBtn');
+  if (b) b.textContent = paused ? '▶ 继续' : '⏸ 暂停';
 }
 
 // ===== 重算趋势打分 + 分布快照（数据修复后用）=====

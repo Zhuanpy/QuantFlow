@@ -34,6 +34,18 @@ def real_trade_page():
     return render_template('trade/trade_plan.html', trade_mode='real')
 
 
+@trade_plan_bp.route('/trade/watch')
+def watch_page():
+    """盯盘页：持仓实时 + 底部放量提醒 + 自选池适配度（从交易计划页拆出）。"""
+    try:
+        from flask import current_app
+        from App.services.holdings_1m_autofetch import ensure_started
+        ensure_started(current_app._get_current_object())
+    except Exception as e:
+        logger.warning(f'盯盘页兜底自启失败: {e}')
+    return render_template('trade/watch.html')
+
+
 @trade_plan_bp.route('/trade/statistics')
 def trade_statistics_page():
     """历史交易统计独立页面。
@@ -638,3 +650,328 @@ def get_active_plans():
     except Exception as e:
         logger.error(f"获取活跃计划失败: {e}")
         return jsonify({'success': False, 'message': str(e)})
+
+
+@trade_plan_bp.route('/api/trade/monitor', methods=['GET'])
+def get_monitor_holdings():
+    """盯盘面板：持仓中(active)股票 + 实时现价/涨跌/浮动盈亏 + 盯盘状态。
+
+    - 行来源：active 交易计划（排除 MANUAL-<code> 幽灵持仓），可按 ?mode= 过滤。
+    - 现价：优先东财实时行情（push2），失败回退 data_stock_daily 收盘价。
+    - 盯盘状态：来自持仓 1m 自动拉取后台线程（holdings_1m_autofetch）——
+      线程运行 + 交易时段 + 该股在当前持仓(trade_records)里才算「盯盘中」。
+
+    该接口是「盯盘」独立面板的数据源，字段可按需扩展（后续加更多列只需在此补字段）。
+    """
+    try:
+        from datetime import datetime as _dt
+        from App.services.stock_quote_service import fetch_stock_quote
+
+        trade_mode = (request.args.get('mode') or '').strip()
+        plans = TradePlan.get_active_plans(trade_mode if trade_mode else None)
+        # 排除 MANUAL-<code>（止损止盈容器，非真实仓位）
+        plans = [p for p in plans if not (p.plan_id or '').startswith('MANUAL-')]
+
+        # 实时行情（持仓通常很少，逐只拉；失败的留空回退当日收盘）
+        rt_price, rt_change, rt_extra = {}, {}, {}
+        for p in plans:
+            try:
+                q = fetch_stock_quote(p.stock_code)
+            except Exception:
+                q = None
+            if q and q.get('price'):        # 排除 None / 0（盘前或异常返回 0 价）
+                rt_price[p.stock_code] = q['price']
+                rt_change[p.stock_code] = q.get('change_pct')
+                rt_extra[p.stock_code] = {
+                    'turnover': q.get('turnover'),          # 换手率 %
+                    'volume_ratio': q.get('volume_ratio'),  # 量比
+                    'ts': q.get('ts'),                      # 行情时间戳（unix 秒）
+                }
+
+        missing = [p.stock_code for p in plans if p.stock_code not in rt_price]
+        close_map = _latest_closes(missing) if missing else {}
+        price_map = {**close_map, **rt_price}   # 实时优先
+
+        # 盯盘线程状态 + 当前实际持仓集合
+        try:
+            from App.services.holdings_1m_autofetch import get_status as _af_status
+            af = _af_status()
+        except Exception:
+            af = {'running': False, 'in_session_now': False}
+        running = bool(af.get('running'))
+        in_session = bool(af.get('in_session_now'))
+        try:
+            from App.services.realtime_data_service import get_current_holdings
+            holding_codes = {h['stock_code'] for h in get_current_holdings()}
+        except Exception:
+            holding_codes = None   # 交叉校验不可用时退化为全局状态
+
+        def _row_monitor(code):
+            in_hold = True if holding_codes is None else (code in holding_codes)
+            monitoring = running and in_session and in_hold
+            if monitoring:
+                label = '盯盘中'
+            elif not running:
+                label = '未启动'
+            elif not in_session:
+                label = '休市待盘'
+            elif not in_hold:
+                label = '无成交数据'
+            else:
+                label = '未盯盘'
+            return monitoring, label
+
+        # 全局状态标签（页头徽标用）
+        global_label = '盯盘中' if (running and in_session) else ('休市待盘' if running else '未启动')
+
+        try:
+            from App.services.bottom_volume_signal import get_signal as _bv_get
+        except Exception:
+            _bv_get = None
+
+        rows = []
+        for p in plans:
+            d = _plan_dict_with_pnl(p, price_map)
+            d['change_pct'] = rt_change.get(p.stock_code)
+            d['price_source'] = ('realtime' if p.stock_code in rt_price
+                                 else ('daily' if p.stock_code in close_map else None))
+            d['monitoring'], d['monitor_label'] = _row_monitor(p.stock_code)
+            # 距止损 / 距止盈（相对现价的百分比；正=现价仍在止损上方 / 止盈下方）
+            cur = d.get('current_price')
+            sl = d.get('stop_loss_price')
+            tp = d.get('take_profit_price')
+            d['dist_to_sl_pct'] = round((cur - sl) / cur * 100, 2) if (cur and sl) else None
+            d['dist_to_tp_pct'] = round((tp - cur) / cur * 100, 2) if (cur and tp) else None
+            q_extra = rt_extra.get(p.stock_code) or {}
+            d['turnover'] = q_extra.get('turnover')
+            d['volume_ratio'] = q_extra.get('volume_ratio')
+            # 最新时间：实时行情时间戳 → HH:MM:SS；回退当日收盘则无
+            ts = q_extra.get('ts')
+            try:
+                d['quote_time'] = _dt.fromtimestamp(int(ts)).strftime('%H:%M:%S') if ts else None
+            except Exception:
+                d['quote_time'] = None
+            # 底部放量信号（由后台扫描写入，按 code 取用；无则空）
+            sig = _bv_get(p.stock_code) if _bv_get else None
+            d['rvol'] = sig.get('rvol') if sig else None
+            d['amp_dn_pct'] = sig.get('amp_dn_pct') if sig else None
+            d['bottom_vol'] = bool(sig.get('is_signal')) if sig else False
+            d['signal_level'] = sig.get('level') if sig else None
+            rows.append(d)
+
+        return jsonify({
+            'success': True,
+            'as_of': _dt.now().strftime('%H:%M:%S'),
+            'monitor_label': global_label,
+            'autofetch': {
+                'running': running,
+                'in_session_now': in_session,
+                'interval_sec': af.get('interval_sec'),
+                'last_run': af.get('last_run'),
+                'last_run_reason': af.get('last_run_reason'),
+                'next_run': af.get('next_run'),
+                # 最近一轮下载成败（供页面显示「下载状态：正常/失败」）
+                'last_codes': af.get('last_codes'),
+                'last_ok': af.get('last_ok'),
+                'last_fail': af.get('last_fail'),
+                'last_error': af.get('last_error'),
+            },
+            'rows': rows,
+        })
+    except Exception as e:
+        logger.exception('盯盘面板加载失败')
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@trade_plan_bp.route('/api/trade/monitor/watch_details', methods=['GET'])
+def get_monitor_watch_details():
+    """盯盘明细：为盯盘面板每只持仓股生成三条盯盘判断（5m三均线 / 板块15m同步 / 放量）。
+
+    行来源与 /api/trade/monitor 一致（active 计划，排除 MANUAL-<code>）。计算较重
+    （逐只拉 5m + 板块 15m 打分，均带缓存），故前端在主表渲染后单独异步拉取本接口填充明细行。
+    """
+    try:
+        from datetime import datetime as _dt
+        from App.services.watch_detail_signal import evaluate_all
+
+        trade_mode = (request.args.get('mode') or '').strip()
+        plans = TradePlan.get_active_plans(trade_mode if trade_mode else None)
+        plans = [p for p in plans if not (p.plan_id or '').startswith('MANUAL-')]
+
+        details = {}
+        for p in plans:
+            try:
+                details[p.stock_code] = evaluate_all(p.stock_code, p.stock_name)
+            except Exception as e:
+                details[p.stock_code] = {'code': p.stock_code, 'error': str(e)}
+
+        return jsonify({
+            'success': True,
+            'as_of': _dt.now().strftime('%H:%M:%S'),
+            'details': details,
+        })
+    except Exception as e:
+        logger.exception('盯盘明细加载失败')
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@trade_plan_bp.route('/api/trade/signals/bottom_volume', methods=['GET'])
+def get_bottom_volume_signals():
+    """底部放量信号列表（持仓+关注，后台每 5 分钟扫描的最近结果）。
+
+    返回 signals（全部评估结果，含未命中）、recent_alerts（新命中告警，带 fired_at）、
+    push_channels（已配置的推送渠道）。前端据此渲染提醒区 + 触发弹窗/声音。
+    """
+    try:
+        from App.services.bottom_volume_signal import get_signals
+        data = get_signals()
+        try:
+            from App.services.notifier import channels_configured
+            data['push_channels'] = channels_configured()
+        except Exception:
+            data['push_channels'] = []
+        return jsonify({'success': True, 'data': data})
+    except Exception as e:
+        logger.exception('底部放量信号加载失败')
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@trade_plan_bp.route('/api/trade/<code>/volume_15m', methods=['GET'])
+def get_volume_15m(code):
+    """某股最近 N 根 15m 成交量 + 逐根 RVOL（当前量/前20根均量），供量能图。
+
+    ?bars=40（20~160）。数据取 历史+当日实时 15m 合并（refresh=0 读缓存，快）。
+    每根标注 hot（RVOL≥2 放量）/ faint（低于其滚动均量=缩量）。
+    """
+    try:
+        import pandas as pd
+        from App.services.realtime_data_service import merge_history_and_today_15m
+        from App.services.bottom_volume_signal import RVOL_MIN, RVOL_N
+
+        try:
+            bars = int(request.args.get('bars', 40))
+        except ValueError:
+            bars = 40
+        bars = max(20, min(bars, 160))
+
+        res = merge_history_and_today_15m(code, refresh=False)
+        df = res.get('df')
+        if df is None or df.empty:
+            return jsonify({'success': False, 'message': f'{code} 无 15m 数据'}), 404
+
+        df = df.sort_values('date').reset_index(drop=True)
+        vol = pd.to_numeric(df['volume'], errors='coerce')
+        roll = vol.rolling(RVOL_N, min_periods=5).mean().shift(1)   # 前 N 根均量（不含当前）
+        rvol = vol / roll
+
+        sub = df.tail(bars)
+        rows = []
+        for i in sub.index:
+            v = vol.iloc[i]
+            rv = rvol.iloc[i]
+            rmean = roll.iloc[i]
+            hot = bool(pd.notna(rv) and rv >= RVOL_MIN)
+            faint = bool((not hot) and pd.notna(rmean) and pd.notna(v) and v < rmean)
+            rows.append({
+                't': pd.to_datetime(sub['date'][i]).strftime('%m-%d %H:%M'),
+                'volume': int(v) if pd.notna(v) else 0,
+                'rvol': round(float(rv), 2) if pd.notna(rv) else None,
+                'hot': hot, 'faint': faint,
+            })
+
+        base_avg = round(float(roll.iloc[-1]), 0) if pd.notna(roll.iloc[-1]) else None
+        last_rvol = round(float(rvol.iloc[-1]), 2) if pd.notna(rvol.iloc[-1]) else None
+        # 末根若在形成中，给出现量→预估全量（供前端画预估虚柱、标预估 RVOL）
+        from App.services.volume_projection import current_bar_projection
+        projection = current_bar_projection(
+            df['date'].iloc[-1],
+            float(vol.iloc[-1]) if pd.notna(vol.iloc[-1]) else None,
+            base_avg)
+        return jsonify({
+            'success': True,
+            'data': {
+                'code': code,
+                'bars': rows,
+                'base_avg': base_avg,
+                'last_rvol': last_rvol,
+                'last_time': rows[-1]['t'] if rows else None,
+                'rvol_min': RVOL_MIN,
+                'projection': projection,
+            },
+        })
+    except Exception as e:
+        logger.exception(f'量能图数据失败 {code}')
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@trade_plan_bp.route('/api/trade/<code>/bottom_volume_history', methods=['GET'])
+def get_bottom_volume_history(code):
+    """历史底部放量扫描：?days=240&rvol=1.8&min_drop=0.05&stabilize=0。"""
+    try:
+        from App.services.bottom_volume_backtest import scan_history
+
+        def _f(name, default):
+            try:
+                return float(request.args.get(name, default))
+            except (TypeError, ValueError):
+                return default
+
+        days = int(_f('days', 240))
+        rvol_min = _f('rvol', 1.8)
+        min_drop = _f('min_drop', 0.05)
+        stabilize = (request.args.get('stabilize') or '0').strip() in ('1', 'true', 'yes')
+
+        data = scan_history(code, days=days, rvol_min=rvol_min,
+                            min_drop=min_drop, require_stabilize=stabilize)
+        if not data.get('ok'):
+            return jsonify({'success': False, 'message': data.get('message', '无数据')}), 404
+        return jsonify({'success': True, 'data': data})
+    except Exception as e:
+        logger.exception(f'历史底部放量扫描失败 {code}')
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@trade_plan_bp.route('/api/trade/watchlist/bottom_volume_scan', methods=['GET'])
+def scan_watchlist_bottom_volume():
+    """批量扫 持仓+关注 的底部放量适配度：?days=240&rvol=1.8&stabilize=0。"""
+    try:
+        from flask import current_app
+        from App.services.bottom_volume_backtest import scan_watchlist
+
+        def _f(name, default):
+            try:
+                return float(request.args.get(name, default))
+            except (TypeError, ValueError):
+                return default
+
+        days = int(_f('days', 240))
+        rvol_min = _f('rvol', 1.8)
+        min_drop = _f('min_drop', 0.05)
+        stabilize = (request.args.get('stabilize') or '0').strip() in ('1', 'true', 'yes')
+
+        data = scan_watchlist(current_app._get_current_object(), days=days,
+                              rvol_min=rvol_min, min_drop=min_drop, require_stabilize=stabilize)
+        return jsonify({'success': True, 'data': data})
+    except Exception as e:
+        logger.exception('自选池底部放量扫描失败')
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@trade_plan_bp.route('/api/trade/signals/scan_now', methods=['POST'])
+def scan_bottom_volume_now():
+    """立即同步扫一轮底部放量（手动触发/自测），返回本轮命中数。"""
+    try:
+        from flask import current_app
+        from App.services.bottom_volume_signal import scan_focus
+        results, hits = scan_focus(current_app._get_current_object())
+        return jsonify({
+            'success': True,
+            'data': {
+                'scanned': len(results),
+                'hits': len(hits),
+                'hit_codes': [h['code'] for h in hits],
+            },
+        })
+    except Exception as e:
+        logger.exception('底部放量手动扫描失败')
+        return jsonify({'success': False, 'message': str(e)}), 500

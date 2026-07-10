@@ -20,6 +20,7 @@
             <a class="btn btn-secondary" href="{{ url_for('trade_plan.trade_statistics_page') }}" target="_blank">📊 历史交易统计</a>
             <button class="btn btn-secondary" onclick="openImportModal()" title="从同花顺导出的成交记录文件（TSV/Excel）导入到 trade_records 表">⬇ 导入成交</button>
             <button class="btn btn-secondary" onclick="inferPlans()" title="按股票汇总 trade_records：净买入→持仓中计划，完全平仓→已完成计划，含盈亏">🧮 从成交推断持仓</button>
+            <a class="btn btn-secondary" href="/trade/watch" target="_blank">🎯 盯盘页</a>
             <button class="btn btn-secondary" onclick="loadPlans()">刷新</button>
         </div>
     </div>

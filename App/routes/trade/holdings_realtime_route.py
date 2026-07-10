@@ -8,7 +8,7 @@
 import logging
 
 import pandas as pd
-from flask import Blueprint, render_template, jsonify, request
+from flask import Blueprint, render_template, jsonify, request, current_app
 
 from App.services.realtime_data_service import (
     get_focus_stocks,
@@ -26,6 +26,12 @@ holdings_realtime_bp = Blueprint('holdings_realtime', __name__)
 @holdings_realtime_bp.route('/trade/holdings/realtime')
 def holdings_realtime_list_page():
     """当前持仓列表页"""
+    # 兜底自启持仓 1m 自动拉取后台线程（进程内只会真正启动一次）
+    try:
+        from App.services.holdings_1m_autofetch import ensure_started
+        ensure_started(current_app._get_current_object())
+    except Exception as e:
+        logger.warning(f'持仓 1m 自动拉取兜底自启失败: {e}')
     return render_template('trade/holdings_realtime_list.html')
 
 
@@ -159,4 +165,65 @@ def api_refresh(code):
         })
     except Exception as e:
         logger.exception(f'刷新 API 异常 {code}: {e}')
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+# ============ 持仓 1m 自动拉取（交易时段每 5 分钟后台线程）============
+
+@holdings_realtime_bp.route('/api/trade/holdings/autofetch/status')
+def api_autofetch_status():
+    """自动拉取线程状态"""
+    try:
+        from App.services.holdings_1m_autofetch import get_status
+        return jsonify({'success': True, 'data': get_status()})
+    except Exception as e:
+        logger.exception('autofetch status 异常')
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@holdings_realtime_bp.route('/api/trade/holdings/autofetch/start', methods=['POST'])
+def api_autofetch_start():
+    """启动自动拉取线程"""
+    try:
+        from App.services.holdings_1m_autofetch import start_autofetch, get_status
+        ok, msg = start_autofetch(current_app._get_current_object())
+        return jsonify({'success': ok, 'message': msg, 'data': get_status()})
+    except Exception as e:
+        logger.exception('autofetch start 异常')
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@holdings_realtime_bp.route('/api/trade/holdings/autofetch/stop', methods=['POST'])
+def api_autofetch_stop():
+    """停止自动拉取线程"""
+    try:
+        from App.services.holdings_1m_autofetch import stop_autofetch, get_status
+        ok, msg = stop_autofetch()
+        return jsonify({'success': ok, 'message': msg, 'data': get_status()})
+    except Exception as e:
+        logger.exception('autofetch stop 异常')
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@holdings_realtime_bp.route('/api/trade/holdings/autofetch/run_once', methods=['POST'])
+def api_autofetch_run_once():
+    """立即同步拉一轮（不经线程），返回本轮摘要"""
+    try:
+        from App.services.holdings_1m_autofetch import run_once_now
+        summary = run_once_now(current_app._get_current_object())
+        return jsonify({'success': True, 'data': summary})
+    except Exception as e:
+        logger.exception('autofetch run_once 异常')
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@holdings_realtime_bp.route('/api/trade/holdings/daily_summary', methods=['POST'])
+def api_daily_summary():
+    """立即给每只监测股（持仓+关注）发一封当日盯盘小结邮件（手动触发，不等收盘）。"""
+    try:
+        from App.services.watch_daily_summary import send_daily_summary
+        res = send_daily_summary(current_app._get_current_object())
+        return jsonify({'success': True, 'data': res})
+    except Exception as e:
+        logger.exception('daily_summary 手动触发异常')
         return jsonify({'success': False, 'message': str(e)}), 500

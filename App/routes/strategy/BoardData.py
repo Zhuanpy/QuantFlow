@@ -80,6 +80,88 @@ def api_repair_status():
     return jsonify({'success': True, 'data': get_status()})
 
 
+@board_data_bp.route('/api/repair_all', methods=['POST'])
+def api_repair_all():
+    """一键修复全部板块成分股（去重）。先做「便宜的」上层预筛(纯SQL/文件名，不读parquet)：
+    · 已最新(日K已到市场最新交易日) → 跳过；
+    · 从未下载(本地无 15m 也无日K) → 默认跳过(repair 只修已有数据)，body{include_new:true} 才纳入；
+    · 其余(有数据但落后) → 进入修复。可暂停/继续。"""
+    from pathlib import Path
+    from config import Config
+    from sqlalchemy import bindparam
+    from App.services.minute_data_repair import start_repair
+    data = request.get_json(silent=True) or {}
+    include_new = bool(data.get('include_new'))
+
+    eng = db.engines['quanttradingsystem']
+    # 遍历板块：每个板块最新名单的 (板块码, 板块名, 成分股)，按板块→代码排序
+    with eng.connect() as conn:
+        board_rows = conn.execute(text(
+            """
+            SELECT ie.board_code, ie.board_name, ie.stock_code FROM industry_eastmoney ie
+            JOIN (SELECT board_code, MAX(date) d FROM industry_eastmoney GROUP BY board_code) m
+              ON ie.board_code = m.board_code AND ie.date = m.d
+            WHERE ie.stock_code NOT LIKE 'BK%'
+            ORDER BY ie.board_code, ie.stock_code
+            """)).fetchall()
+        codes = list({r[2] for r in board_rows})
+        mkt = conn.execute(text(
+            "SELECT MAX(date) FROM data_stock_daily WHERE stock_code NOT LIKE 'BK%'")).scalar()
+        latest = ({r[0]: r[1] for r in conn.execute(text(
+            'SELECT stock_code, MAX(date) FROM data_stock_daily WHERE stock_code IN :codes '
+            'GROUP BY stock_code').bindparams(bindparam('codes', expanding=True)),
+            {'codes': codes}).fetchall()} if codes else {})
+    have15 = {p.stem for p in (Path(Config.get_project_root()) / 'data' / '15m').glob('*.parquet')}
+
+    def _has_data(c):
+        return c in have15 or latest.get(c) is not None
+
+    def _is_current(c):
+        return mkt is not None and latest.get(c) == mkt
+
+    skipped_current = sum(1 for c in codes if _is_current(c))
+    new_available = sum(1 for c in codes if not _has_data(c))   # 从未下载的数量
+
+    # 一个板块一个板块地归集候选：每只候选股票归到它出现的第一个板块（不重复修）
+    assigned = set()
+    ordered, code2board = [], {}
+    for bcode, bname, code in board_rows:
+        if code in assigned or _is_current(code) or not (_has_data(code) or include_new):
+            continue
+        assigned.add(code)
+        ordered.append(code)
+        code2board[code] = f'{bname or bcode}'
+    board_total = len(set(code2board.values()))
+
+    # 预览：只返回数量，不启动修复
+    if data.get('preview'):
+        return jsonify({'success': True, 'preview': True, 'count': len(ordered),
+                        'total_members': len(codes), 'skipped_current': skipped_current,
+                        'new_available': new_available, 'board_total': board_total})
+
+    app = current_app._get_current_object()
+    ok, msg = start_repair(app, '全部板块', ordered, then_trend=bool(data.get('with_trend')),
+                           board_map=code2board, board_total=board_total)
+    return jsonify({
+        'success': ok, 'message': msg, 'count': len(ordered), 'board_total': board_total,
+        'total_members': len(codes), 'skipped_current': skipped_current,
+        'skipped_new': (0 if include_new else new_available),
+    }), (200 if ok else 409)
+
+
+@board_data_bp.route('/api/repair_pause', methods=['POST'])
+def api_repair_pause():
+    """暂停/继续当前修复任务。body{action:'pause'|'resume'|'toggle'(默认)}"""
+    from App.services.minute_data_repair import pause_repair, resume_repair, get_status
+    action = (request.get_json(silent=True) or {}).get('action', 'toggle')
+    st = get_status()
+    if action == 'resume' or (action == 'toggle' and st.get('paused')):
+        resume_repair()
+    else:
+        pause_repair()
+    return jsonify({'success': True, 'data': get_status()})
+
+
 @board_data_bp.route('/api/build_synth', methods=['POST'])
 def api_build_synth():
     """用成分股(重新)合成「我的板块」指数（写到合成代码 BKxxxxS，不覆盖东财数据）。"""

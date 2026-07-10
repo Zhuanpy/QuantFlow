@@ -62,8 +62,29 @@ def create_app(config_name='default'):
     
     # 注册蓝图
     register_blueprints(app)
-    
+
+    # 持仓当日 1m 自动拉取（交易时段每 5 分钟）——后台 daemon 线程
+    _maybe_start_holdings_autofetch(app)
+
     return app
+
+
+def _maybe_start_holdings_autofetch(app):
+    """启动持仓 1m 自动拉取后台线程。
+
+    debug=True 时 Werkzeug reloader 会在「父（监视）+ 子（服务）」两个进程各建一次 app，
+    只在真正服务请求的子进程（环境变量 WERKZEUG_RUN_MAIN=='true'）里起线程，避免父进程
+    也每 5 分钟拉一次。未走 reloader 的场景（该变量为 None）此处不起，改由首次访问
+    /trade/holdings/realtime 时 ensure_started 兜底自启。
+    """
+    if os.environ.get('WERKZEUG_RUN_MAIN') != 'true':
+        return
+    try:
+        from App.services.holdings_1m_autofetch import start_autofetch
+        ok, msg = start_autofetch(app)
+        print(f"持仓 1m 自动拉取: {msg}")
+    except Exception as e:
+        print(f"警告: 持仓 1m 自动拉取未启动: {e}")
 
 def register_blueprints(app):
     """注册所有蓝图"""

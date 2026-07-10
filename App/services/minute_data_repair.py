@@ -30,8 +30,33 @@ _state = {
     'running': False, 'board': None, 'done': 0, 'total': 0, 'skipped': 0,
     'ok': 0, 'fail': 0, 'zip_added': 0, 'tdx_added': 0, 'daily_added': 0,
     'cur': None, 'error': None, 'failed': [], 'started': None,
+    'paused': False, 'stopped': False,
+    'cur_board': None, 'board_idx': 0, 'board_total': 0,   # 全部板块修复：板块级进度
+    'cur_board_total': 0, 'cur_board_done': 0,             # 当前板块待更新数 / 已处理数
 }
 _lock = threading.Lock()
+_pause = threading.Event()   # set = 暂停
+_stop = threading.Event()    # set = 请求停止
+
+
+def pause_repair():
+    _pause.set()
+    with _lock:
+        _state['paused'] = True
+    return True, '已暂停（当前这只处理完即停）'
+
+
+def resume_repair():
+    _pause.clear()
+    with _lock:
+        _state['paused'] = False
+    return True, '已继续'
+
+
+def stop_repair():
+    _stop.set()
+    _pause.clear()   # 若在暂停中，解除以便循环退出
+    return True, '已请求停止'
 
 
 def get_status() -> dict:
@@ -201,7 +226,7 @@ def _write_quarters(df, code, dq, write_quarter):
     return added
 
 
-def _run(app, board_code, codes, zip_dir, tdx_days, then_trend=False):
+def _run(app, board_code, codes, zip_dir, tdx_days, then_trend=False, board_map=None):
     from config import Config
     # 复用 import_minute_zips 的解析/写入/重采样逻辑
     from scripts.Others.import_minute_zips import (
@@ -250,6 +275,13 @@ def _run(app, board_code, codes, zip_dir, tdx_days, then_trend=False):
         need_tdx = (api is not None) and not up_to_date
         need_15m = not (d15 / f'{code}.parquet').exists()
         (todo if (need_zip or need_tdx or need_15m) else skipped).append((code, earliest, latest))
+    # 每个板块实际待更新数（用精筛后的 todo 统计，供进度显示「本板块 X/Y」）
+    board_counts = {}
+    if board_map:
+        for c, _e, _l in todo:
+            b = board_map.get(c)
+            if b:
+                board_counts[b] = board_counts.get(b, 0) + 1
     with _lock:
         _state['total'] = len(todo)
         _state['skipped'] = len(skipped)
@@ -259,6 +291,25 @@ def _run(app, board_code, codes, zip_dir, tdx_days, then_trend=False):
     try:
         with app.app_context():
             for code, earliest, latest in todo:
+                # 暂停：卡在这只之前等待，直到继续或停止
+                while _pause.is_set() and not _stop.is_set():
+                    with _lock:
+                        _state['cur'] = '(已暂停)'
+                    time.sleep(0.5)
+                if _stop.is_set():
+                    with _lock:
+                        _state['stopped'] = True
+                    logger.info('[repair] 已按请求停止')
+                    break
+                # 板块级进度：进入新板块时推进 cur_board / board_idx，并设本板块待更新数
+                if board_map:
+                    b = board_map.get(code)
+                    if b and b != _state.get('cur_board'):
+                        with _lock:
+                            _state['cur_board'] = b
+                            _state['board_idx'] += 1
+                            _state['cur_board_total'] = board_counts.get(b, 0)
+                            _state['cur_board_done'] = 0
                 with _lock:
                     _state['cur'] = code
                 try:
@@ -323,6 +374,7 @@ def _run(app, board_code, codes, zip_dir, tdx_days, then_trend=False):
                 finally:
                     with _lock:
                         _state['done'] += 1
+                        _state['cur_board_done'] += 1
             # 修复完自动接力：重算趋势打分 + 分布快照（另起线程，前端接着轮询）
             if then_trend and codes:
                 start_trend_recompute(app, board_code, codes)
@@ -413,25 +465,33 @@ def start_trend_recompute(app, board_code, codes):
     return True, f'已开始重算 {board_code} 的 {len(codes)} 只成分股趋势/分布'
 
 
-def start_repair(app, board_code, codes, zip_dir=DEFAULT_ZIP_DIR, tdx_days=90, then_trend=False):
+def start_repair(app, board_code, codes, zip_dir=DEFAULT_ZIP_DIR, tdx_days=90, then_trend=False,
+                 board_map=None, board_total=0):
     """启动后台修复。返回 (ok, message)。已有任务在跑则拒绝。
 
     then_trend=True 时，修复循环跑完会自动接力 start_trend_recompute（趋势打分+分布快照），
     实现「下载更新最新数据 + 重算趋势/分布」一步到位。
+    board_map: {code: 板块名}（全部板块修复时用，按板块顺序处理并展示板块级进度）。
     """
     codes = [c for c in codes if c]
+    _pause.clear()
+    _stop.clear()
     with _lock:
         if _state['running']:
             return False, '已有修复任务在进行中'
         _state.update({'running': True, 'board': board_code, 'done': 0,
                        'total': len(codes), 'skipped': 0, 'ok': 0, 'fail': 0,
                        'zip_added': 0, 'tdx_added': 0, 'daily_added': 0, 'cur': None,
-                       'error': None, 'failed': [], 'started': time.strftime('%H:%M:%S')})
+                       'error': None, 'failed': [], 'started': time.strftime('%H:%M:%S'),
+                       'paused': False, 'stopped': False,
+                       'cur_board': None, 'board_idx': 0, 'board_total': board_total,
+                       'cur_board_total': 0, 'cur_board_done': 0})
     if not codes:
         with _lock:
             _state['running'] = False
         return False, '该板块没有成分股可修复'
-    threading.Thread(target=_run, args=(app, board_code, codes, zip_dir, tdx_days, then_trend),
+    threading.Thread(target=_run,
+                     args=(app, board_code, codes, zip_dir, tdx_days, then_trend, board_map),
                      daemon=True).start()
     tail = '（完成后自动重算趋势/分布）' if then_trend else ''
     return True, f'已开始修复 {board_code} 的 {len(codes)} 只成分股{tail}'

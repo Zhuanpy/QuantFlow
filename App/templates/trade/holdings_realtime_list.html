@@ -36,6 +36,16 @@
 .hr-muted { color: #cbd5e1; }
 .hr-section { color: #475569; font-weight: 600; font-size: 0.85rem;
               padding: 0.5rem 0.9rem; background: #f8fafc; }
+.af-panel { display: flex; align-items: center; flex-wrap: wrap; gap: 0.6rem;
+            padding: 0.6rem 0.9rem; margin-bottom: 1rem; background: #fff;
+            border: 1px solid #e2e8f0; border-radius: 6px; font-size: 0.85rem;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+.af-dot { width: 9px; height: 9px; border-radius: 50%; background: #cbd5e1; display: inline-block; }
+.af-dot.on  { background: #22c55e; box-shadow: 0 0 0 3px rgba(34,197,94,0.18); }
+.af-dot.off { background: #ef4444; }
+.af-title { font-weight: 600; color: #1e293b; }
+.af-info { color: #64748b; }
+.af-spacer { flex: 1; }
 </style>
 
 <div class="hr-container">
@@ -52,6 +62,16 @@
                title="去交易计划/成交管理页（新标签打开）">📋 管理列表来源</a>
             <button class="hr-btn" onclick="loadHoldings()">↻ 刷新列表</button>
         </div>
+    </div>
+
+    <div class="af-panel" id="afPanel">
+        <span class="af-dot" id="afDot"></span>
+        <span class="af-title">持仓 1m 自动拉取</span>
+        <span class="af-info" id="afInfo">状态加载中…</span>
+        <span class="af-spacer"></span>
+        <button class="hr-btn primary" id="afStart" onclick="afControl('start')">▶ 启动</button>
+        <button class="hr-btn" id="afStop" onclick="afControl('stop')">⏸ 停止</button>
+        <button class="hr-btn" id="afRunOnce" onclick="afRunOnce()" title="立即为当前持仓拉一轮 1m">↻ 立即拉一轮</button>
     </div>
 
     <table class="hr-table" id="hrTable" style="display:none;">
@@ -181,6 +201,73 @@ async function loadHoldings() {
         meta.textContent = '加载失败：' + e;
     }
 }
+
+// ============ 持仓 1m 自动拉取控制/状态 ============
+const AF_API = '/api/trade/holdings/autofetch';
+
+function renderAutofetch(st) {
+    const dot   = document.getElementById('afDot');
+    const info  = document.getElementById('afInfo');
+    const start = document.getElementById('afStart');
+    const stop  = document.getElementById('afStop');
+    if (!st) { info.textContent = '状态未知'; return; }
+
+    const running = !!st.running;
+    dot.className = 'af-dot ' + (running ? 'on' : 'off');
+    start.style.display = running ? 'none' : '';
+    stop.style.display  = running ? '' : 'none';
+
+    const parts = [];
+    parts.push(running ? '运行中' : '已停止');
+    parts.push(st.in_session_now ? '交易时段' : '非交易时段');
+    if (st.interval_sec) parts.push(`每 ${Math.round(st.interval_sec / 60)} 分钟`);
+    if (st.last_run) parts.push(`上轮 ${st.last_run}（持仓 ${st.last_codes || 0} 只 · 成功 ${st.last_ok || 0} / 失败 ${st.last_fail || 0}）`);
+    else if (st.last_run_reason) parts.push(st.last_run_reason);
+    if (st.next_run && running) parts.push(`下轮 ${st.next_run}`);
+    if (st.last_error) parts.push(`⚠ ${st.last_error}`);
+    info.textContent = parts.join(' · ');
+}
+
+async function loadAutofetch() {
+    try {
+        const r = await fetch(`${AF_API}/status`).then(r => r.json());
+        if (r.success) renderAutofetch(r.data);
+    } catch (e) {
+        document.getElementById('afInfo').textContent = '状态加载失败：' + e;
+    }
+}
+
+async function afControl(action) {
+    try {
+        const r = await fetch(`${AF_API}/${action}`, { method: 'POST' }).then(r => r.json());
+        if (r.data) renderAutofetch(r.data); else loadAutofetch();
+    } catch (e) {
+        alert('操作失败：' + e);
+    }
+}
+
+async function afRunOnce() {
+    const btn = document.getElementById('afRunOnce');
+    const old = btn.textContent;
+    btn.disabled = true; btn.textContent = '拉取中…';
+    try {
+        const r = await fetch(`${AF_API}/run_once`, { method: 'POST' }).then(r => r.json());
+        if (r.success) {
+            const d = r.data || {};
+            alert(`本轮完成：持仓 ${d.codes || 0} 只 · 成功 ${d.ok || 0} / 失败 ${d.fail || 0}`);
+        } else {
+            alert('拉取失败：' + (r.message || '未知错误'));
+        }
+    } catch (e) {
+        alert('拉取失败：' + e);
+    } finally {
+        btn.disabled = false; btn.textContent = old;
+        loadAutofetch();
+    }
+}
+
+loadAutofetch();
+setInterval(loadAutofetch, 30 * 1000);   // 每 30s 刷新状态
 
 loadHoldings();
 </script>
