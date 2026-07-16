@@ -101,10 +101,11 @@
     <div class="plans-section" style="margin-top:1.5rem;">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap;margin-bottom:1rem;">
             <h2 style="margin-bottom:0;">盯盘中 <span id="monitorBadge" style="font-size:.75rem;color:#6b7280;">…</span>
-                <span style="font-size:.72rem;color:#9ca3af;font-weight:normal;">（持仓中股票 · 每 5 分钟自动刷新实时行情）</span>
+                <span style="font-size:.72rem;color:#9ca3af;font-weight:normal;">（持仓 + 计划中待买入 · 每 5 分钟自动刷新实时行情）</span>
             </h2>
             <div style="display:flex;gap:.75rem;align-items:center;">
                 <span id="monitorMeta" style="font-size:.78rem;color:#6b7280;">加载中…</span>
+                <button class="btn btn-sm btn-primary" onclick="openQuickWatch()">+ 加入待买入</button>
                 <button class="btn btn-sm" onclick="loadMonitor()">↻ 刷新</button>
             </div>
         </div>
@@ -134,6 +135,62 @@
         </div>
     </div>
 
+</div>
+
+<!-- 快捷加入待买入（在盯盘页直接建 planning 做多计划，免跳交易计划页）-->
+<div id="qwModal" style="display:none;position:fixed;inset:0;z-index:1000;background:rgba(15,23,42,.55);align-items:center;justify-content:center;padding:1rem;"
+     onclick="if(event.target===this)closeQuickWatch()">
+    <div style="background:#fff;border-radius:12px;max-width:440px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.25);overflow:visible;">
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:.9rem 1.1rem;border-bottom:1px solid #eef2f7;">
+            <div style="font-weight:700;font-size:1.02rem;color:#1e293b;">+ 加入待买入</div>
+            <button onclick="closeQuickWatch()" style="border:none;background:none;font-size:1.3rem;color:#94a3b8;cursor:pointer;line-height:1;">&times;</button>
+        </div>
+        <div style="padding:1rem 1.1rem 1.2rem;">
+            <div style="position:relative;margin-bottom:.7rem;">
+                <label style="display:block;font-size:.78rem;color:#475569;margin-bottom:.25rem;">股票代码 / 名称 *</label>
+                <input id="qwSearch" type="text" placeholder="输入代码或名称搜索" autocomplete="off"
+                       style="width:100%;padding:.45rem .6rem;border:1px solid #d1d5db;border-radius:.35rem;font-size:.9rem;">
+                <div id="qwDropdown" style="display:none;position:absolute;left:0;right:0;top:100%;z-index:5;background:#fff;border:1px solid #e2e8f0;border-radius:.35rem;box-shadow:0 8px 24px rgba(0,0,0,.12);max-height:220px;overflow-y:auto;margin-top:2px;"></div>
+                <div id="qwPicked" style="display:none;margin-top:.35rem;font-size:.82rem;color:#166534;font-weight:600;"></div>
+            </div>
+            <div style="display:flex;gap:.6rem;margin-bottom:.7rem;">
+                <div style="flex:1;">
+                    <label style="display:block;font-size:.78rem;color:#475569;margin-bottom:.25rem;">目标买入价 *</label>
+                    <input id="qwEntry" type="number" step="0.001" placeholder="想低吸的价位"
+                           style="width:100%;padding:.45rem .6rem;border:1px solid #d1d5db;border-radius:.35rem;font-size:.9rem;">
+                </div>
+                <div style="flex:1;">
+                    <label style="display:block;font-size:.78rem;color:#475569;margin-bottom:.25rem;">数量</label>
+                    <input id="qwQty" type="number" value="100"
+                           style="width:100%;padding:.45rem .6rem;border:1px solid #d1d5db;border-radius:.35rem;font-size:.9rem;">
+                </div>
+            </div>
+            <div style="display:flex;gap:.6rem;margin-bottom:.7rem;">
+                <div style="flex:1;">
+                    <label style="display:block;font-size:.78rem;color:#475569;margin-bottom:.25rem;">止损价（选填）</label>
+                    <input id="qwSl" type="number" step="0.001"
+                           style="width:100%;padding:.45rem .6rem;border:1px solid #d1d5db;border-radius:.35rem;font-size:.9rem;">
+                </div>
+                <div style="flex:1;">
+                    <label style="display:block;font-size:.78rem;color:#475569;margin-bottom:.25rem;">止盈价（选填）</label>
+                    <input id="qwTp" type="number" step="0.001"
+                           style="width:100%;padding:.45rem .6rem;border:1px solid #d1d5db;border-radius:.35rem;font-size:.9rem;">
+                </div>
+            </div>
+            <div style="margin-bottom:.9rem;">
+                <label style="display:block;font-size:.78rem;color:#475569;margin-bottom:.25rem;">交易模式</label>
+                <select id="qwMode" style="width:100%;padding:.45rem .6rem;border:1px solid #d1d5db;border-radius:.35rem;font-size:.9rem;">
+                    <option value="simulate">模拟交易</option>
+                    <option value="real">实盘交易</option>
+                </select>
+            </div>
+            <div id="qwMsg" style="font-size:.8rem;color:#dc2626;min-height:1.1em;margin-bottom:.6rem;"></div>
+            <div style="display:flex;justify-content:flex-end;gap:.6rem;">
+                <button class="btn btn-sm" onclick="closeQuickWatch()">取消</button>
+                <button id="qwSubmit" class="btn btn-sm btn-primary" onclick="submitQuickWatch(this)">加入盯盘</button>
+            </div>
+        </div>
+    </div>
 </div>
 
 <style>
@@ -1110,7 +1167,15 @@ function _maStamp(lastT) {
         + `<span style="color:#334155;">${lastT || '—'}</span> · ${badge}</span>`;
 }
 
+// 待买入行：距目标买入价（<=0 已进低吸区/绿；>0 仍高于买入价/灰）
+function _monEntryDist(pct) {
+    if (pct == null) return '<span style="color:#9ca3af;">-</span>';
+    if (pct <= 0) return `<span style="color:#059669;font-weight:600;">已到买价 ${Number(pct).toFixed(2)}%</span>`;
+    return `<span style="color:#64748b;">高 ${Number(pct).toFixed(2)}%</span>`;
+}
+
 function renderMonitorRow(r) {
+    const watching = r.kind === 'watching';
     const price = (r.current_price == null)
         ? '<span style="color:#9ca3af;">-</span>'
         : Number(r.current_price).toFixed(2)
@@ -1119,16 +1184,24 @@ function renderMonitorRow(r) {
         ? '<span style="color:#9ca3af;">-</span>'
         : `<span style="color:${r.change_pct>=0?'#059669':'#dc2626'};">${r.change_pct>=0?'+':''}${Number(r.change_pct).toFixed(2)}%</span>`;
     const badge = r.monitoring
-        ? '<span style="background:#dcfce7;color:#166534;padding:.1rem .5rem;border-radius:.25rem;font-size:.75rem;font-weight:600;">● 盯盘中</span>'
+        ? `<span style="background:#dcfce7;color:#166534;padding:.1rem .5rem;border-radius:.25rem;font-size:.75rem;font-weight:600;">● ${watching?'盯买点':'盯盘中'}</span>`
         : `<span style="background:#f1f5f9;color:#64748b;padding:.1rem .5rem;border-radius:.25rem;font-size:.75rem;">${r.monitor_label||'未盯盘'}</span>`;
+    const nameTag = watching
+        ? ' <span style="background:#eff6ff;color:#1d4ed8;padding:.02rem .35rem;border-radius:.25rem;font-size:.66rem;font-weight:600;">待买入</span>'
+        : '';
+    const entryCell = (r.entry_price==null?'-':Number(r.entry_price).toFixed(2))
+        + (watching ? ' <span style="color:#94a3b8;font-size:.66rem;">目标</span>' : '');
+    // 待买入无浮盈，该列改显「距买入价」；持仓照常显浮动盈亏
+    const pnlCell = watching ? _monEntryDist(r.dist_to_entry_pct)
+                             : _monFmtPnl(r.unrealized_pnl, r.unrealized_pnl_pct);
     return `<tr>
-        <td><a href="/stock/live?code=${r.stock_code}" target="_blank" style="color:#2563eb;text-decoration:none;font-weight:600;">${r.stock_code}</a> ${r.stock_name||''}</td>
+        <td><a href="/stock/live?code=${r.stock_code}" target="_blank" style="color:#2563eb;text-decoration:none;font-weight:600;">${r.stock_code}</a> ${r.stock_name||''}${nameTag}</td>
         <td>${r.quote_time || '<span style="color:#9ca3af;">-</span>'}</td>
         <td>${price}</td>
         <td>${chg}</td>
-        <td>${r.entry_price==null?'-':Number(r.entry_price).toFixed(2)}</td>
-        <td>${r.quantity==null?'-':Number(r.quantity).toLocaleString()}</td>
-        <td>${_monFmtPnl(r.unrealized_pnl, r.unrealized_pnl_pct)}</td>
+        <td>${entryCell}</td>
+        <td>${watching?'<span style="color:#9ca3af;">-</span>':(r.quantity==null?'-':Number(r.quantity).toLocaleString())}</td>
+        <td>${pnlCell}</td>
         <td>${_monDist(r.dist_to_sl_pct, 'sl')}</td>
         <td>${_monDist(r.dist_to_tp_pct, 'tp')}</td>
         <td>${r.volume_ratio==null?'<span style="color:#9ca3af;">-</span>':Number(r.volume_ratio).toFixed(2)}</td>
@@ -1143,6 +1216,19 @@ function renderMonitorRow(r) {
             </div>
         </td>
     </tr>`;
+}
+
+// 按 kind 分「持仓」「待买入」两组，各组前插一条分组标题行（后端已排好序：holding 在前）
+function _monGroupHeader(text) {
+    return `<tr><td colspan="13" style="padding:.3rem .75rem;background:#f8fafc;border-bottom:1px solid #e2e8f0;font-size:.74rem;font-weight:700;color:#475569;letter-spacing:.02em;">${text}</td></tr>`;
+}
+function renderMonitorRows(rows) {
+    const hold = rows.filter(x => x.kind !== 'watching');
+    const watch = rows.filter(x => x.kind === 'watching');
+    let html = '';
+    if (hold.length) html += _monGroupHeader(`持仓 · ${hold.length} 只`) + hold.map(renderMonitorRow).join('');
+    if (watch.length) html += _monGroupHeader(`待买入（计划中）· ${watch.length} 只`) + watch.map(renderMonitorRow).join('');
+    return html;
 }
 
 // ============ 盯盘明细（每只股票下常驻一行：5m三均线 / 板块15m同步 / 放量）============
@@ -1504,15 +1590,17 @@ async function loadMonitor() {
             badge.style.cssText = 'font-size:.75rem;font-weight:600;padding:.1rem .55rem;border-radius:.3rem;'
                 + (on ? 'background:#dcfce7;color:#166534;' : 'background:#f1f5f9;color:#64748b;');
         }
+        const nHold = rows.filter(x => x.kind !== 'watching').length;
+        const nWatch = rows.length - nHold;
         if (meta) {
-            const bits = [`持仓 ${rows.length} 只`, `更新 ${r.as_of||''}`];
+            const bits = [`持仓 ${nHold} · 待买入 ${nWatch}`, `更新 ${r.as_of||''}`];
             if (af.interval_sec) bits.push(`每 ${Math.round(af.interval_sec/60)} 分钟`);
             if (af.running && af.next_run) bits.push(`下轮 ${String(af.next_run).slice(11)}`);
             meta.textContent = bits.join(' · ');
         }
         tbody.innerHTML = rows.length
-            ? rows.map(renderMonitorRow).join('')
-            : '<tr><td colspan="13" class="loading">当前无持仓中的股票</td></tr>';
+            ? renderMonitorRows(rows)
+            : '<tr><td colspan="13" class="loading">当前无持仓，也无「计划中·待买入」的做多计划。到交易计划页把想低吸的票建成 planning/pending 计划即可进来盯买点。</td></tr>';
         if (rows.length) loadWatchDetails();   // 主表渲染后异步填充盯盘明细行
     } catch (e) {
         tbody.innerHTML = `<tr><td colspan="13" class="loading">加载失败：${e}</td></tr>`;
@@ -1524,11 +1612,95 @@ function startMonitorPolling() {
     _monitorTimer = setInterval(loadMonitor, MONITOR_INTERVAL_MS);
 }
 
+// ============ 快捷加入待买入 ============
+let _qwPick = null;       // {code, name}
+let _qwSearchTimer = null;
+
+function openQuickWatch() {
+    _qwPick = null;
+    ['qwSearch','qwEntry','qwSl','qwTp'].forEach(id => { const e=document.getElementById(id); if(e) e.value=''; });
+    document.getElementById('qwQty').value = '100';
+    document.getElementById('qwMsg').textContent = '';
+    const picked = document.getElementById('qwPicked'); picked.style.display='none'; picked.textContent='';
+    document.getElementById('qwDropdown').style.display='none';
+    document.getElementById('qwModal').style.display='flex';
+    setTimeout(() => document.getElementById('qwSearch').focus(), 30);
+}
+function closeQuickWatch() { document.getElementById('qwModal').style.display='none'; }
+
+function _qwRenderDropdown(stocks) {
+    const dd = document.getElementById('qwDropdown');
+    if (!stocks || !stocks.length) {
+        dd.innerHTML = '<div style="padding:.5rem .7rem;color:#9ca3af;font-size:.82rem;">未找到匹配（仅支持已整理的市场数据）</div>';
+        dd.style.display='block'; return;
+    }
+    dd.innerHTML = stocks.slice(0, 30).map(s =>
+        `<div class="qw-item" data-code="${s.stock_code}" data-name="${(s.stock_name||'').replace(/"/g,'&quot;')}"
+              style="padding:.45rem .7rem;cursor:pointer;border-bottom:1px solid #f1f5f9;font-size:.85rem;">
+            <span style="color:#2563eb;font-weight:600;">${s.stock_code}</span> ${s.stock_name||''}
+            ${s.industry?`<span style="color:#94a3b8;font-size:.74rem;">· ${s.industry}</span>`:''}
+        </div>`).join('');
+    dd.querySelectorAll('.qw-item').forEach(it => {
+        it.onclick = () => {
+            _qwPick = { code: it.dataset.code, name: it.dataset.name };
+            document.getElementById('qwSearch').value = `${_qwPick.code} ${_qwPick.name}`;
+            const p = document.getElementById('qwPicked');
+            p.textContent = `已选：${_qwPick.code} ${_qwPick.name}`; p.style.display='block';
+            dd.style.display='none';
+        };
+    });
+    dd.style.display='block';
+}
+
+async function _qwSearch(kw) {
+    try {
+        const r = await fetch(`/api/trade/stocks/search?keyword=${encodeURIComponent(kw)}`).then(r=>r.json());
+        if (r.success) _qwRenderDropdown(r.stocks || []);
+    } catch (e) { /* 忽略搜索失败 */ }
+}
+
+async function submitQuickWatch(btn) {
+    const msg = document.getElementById('qwMsg');
+    msg.style.color = '#dc2626'; msg.textContent = '';
+    if (!_qwPick) { msg.textContent = '请先从下拉里选中一只股票'; return; }
+    const entry = parseFloat(document.getElementById('qwEntry').value);
+    if (!(entry > 0)) { msg.textContent = '请填写有效的目标买入价'; return; }
+    const qty = parseInt(document.getElementById('qwQty').value) || 100;
+    const sl = parseFloat(document.getElementById('qwSl').value);
+    const tp = parseFloat(document.getElementById('qwTp').value);
+    const body = {
+        stock_code: _qwPick.code, stock_name: _qwPick.name,
+        entry_price: entry, quantity: qty,
+        direction: 'long', trade_mode: document.getElementById('qwMode').value,
+    };
+    if (sl > 0) body.stop_loss_price = sl;
+    if (tp > 0) body.take_profit_price = tp;
+    btn.disabled = true; const old = btn.textContent; btn.textContent = '提交中…';
+    try {
+        const r = await fetch('/api/trade/plans', {
+            method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body),
+        }).then(r=>r.json());
+        if (r.success) { closeQuickWatch(); loadMonitor(); }
+        else { msg.textContent = r.message || '加入失败'; }
+    } catch (e) { msg.textContent = '加入失败：' + e; }
+    finally { btn.disabled = false; btn.textContent = old; }
+}
+
 document.addEventListener('DOMContentLoaded', function () {
     loadMonitor();
     startMonitorPolling();
     loadBottomVolume();
     startBottomVolumePolling();
+    // 快捷加入待买入：搜索框防抖 + 编辑后作废已选（强制重新点选，避免张冠李戴）
+    const qs = document.getElementById('qwSearch');
+    if (qs) qs.addEventListener('input', () => {
+        _qwPick = null;
+        const picked = document.getElementById('qwPicked'); picked.style.display='none';
+        const kw = qs.value.trim();
+        if (_qwSearchTimer) clearTimeout(_qwSearchTimer);
+        if (kw.length < 1) { document.getElementById('qwDropdown').style.display='none'; return; }
+        _qwSearchTimer = setTimeout(() => _qwSearch(kw), 200);
+    });
     try { if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission(); } catch (e) {}
 });
 </script>

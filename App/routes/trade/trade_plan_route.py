@@ -312,6 +312,38 @@ def _plan_dict_with_pnl(plan, close_map):
     return d
 
 
+def _watch_panel_plans(trade_mode=None):
+    """盯盘面板行来源：持仓(active) + 计划中(planning/pending, 做多)。
+
+    空仓时也能盯「等机会买入」的票——只要在交易计划里把它建成 planning/pending 的
+    做多计划，就会作为「待买入」行进盯盘面板。返回 [(plan, kind)]，holding 在前、
+    watching 其次；按 stock_code 去重（同代码若已持仓则不再作为待买入重复出现）。
+
+    与 App/services/realtime_data_service.get_watching_stocks 同口径（planning/pending +
+    direction=long），保证盯盘主表、底部放量提醒、watch_details 三处盯的是同一批票。
+    """
+    active = TradePlan.get_active_plans(trade_mode or None)
+    # 排除 MANUAL-<code>（止损止盈容器，非真实仓位）
+    active = [p for p in active if not (p.plan_id or '').startswith('MANUAL-')]
+
+    wq = TradePlan.query.filter(
+        TradePlan.status.in_([TradePlan.STATUS_PLANNING, TradePlan.STATUS_PENDING]),
+        TradePlan.direction == TradePlan.DIRECTION_LONG,
+    )
+    if trade_mode:
+        wq = wq.filter(TradePlan.trade_mode == trade_mode)
+
+    seen = {p.stock_code for p in active}
+    watching = []
+    for p in wq.order_by(TradePlan.updated_at.desc()).all():
+        if not p.stock_code or p.stock_code in seen:
+            continue
+        seen.add(p.stock_code)
+        watching.append(p)
+
+    return [(p, 'holding') for p in active] + [(p, 'watching') for p in watching]
+
+
 @trade_plan_bp.route('/api/trade/plans', methods=['GET'])
 def get_trade_plans():
     """获取交易计划列表（持仓中的附带现价/手续费/浮动盈亏）"""
@@ -654,9 +686,11 @@ def get_active_plans():
 
 @trade_plan_bp.route('/api/trade/monitor', methods=['GET'])
 def get_monitor_holdings():
-    """盯盘面板：持仓中(active)股票 + 实时现价/涨跌/浮动盈亏 + 盯盘状态。
+    """盯盘面板：持仓(active) + 计划中(待买入) 股票 + 实时现价/涨跌/浮动盈亏 + 盯盘状态。
 
-    - 行来源：active 交易计划（排除 MANUAL-<code> 幽灵持仓），可按 ?mode= 过滤。
+    - 行来源：active 计划(kind=holding) + planning/pending 做多计划(kind=watching)，
+      排除 MANUAL-<code> 幽灵持仓，同代码去重(持仓优先)，可按 ?mode= 过滤。
+      空仓时把「等机会买入」的票建成 planning/pending 做多计划即可进面板盯买点。
     - 现价：优先东财实时行情（push2），失败回退 data_stock_daily 收盘价。
     - 盯盘状态：来自持仓 1m 自动拉取后台线程（holdings_1m_autofetch）——
       线程运行 + 交易时段 + 该股在当前持仓(trade_records)里才算「盯盘中」。
@@ -668,9 +702,10 @@ def get_monitor_holdings():
         from App.services.stock_quote_service import fetch_stock_quote
 
         trade_mode = (request.args.get('mode') or '').strip()
-        plans = TradePlan.get_active_plans(trade_mode if trade_mode else None)
-        # 排除 MANUAL-<code>（止损止盈容器，非真实仓位）
-        plans = [p for p in plans if not (p.plan_id or '').startswith('MANUAL-')]
+        # 行来源：持仓(active) + 计划中(planning/pending 做多，即「等机会买入」)
+        panel = _watch_panel_plans(trade_mode if trade_mode else None)
+        plans = [p for p, _ in panel]
+        kind_of = {p.stock_code: k for p, k in panel}
 
         # 实时行情（持仓通常很少，逐只拉；失败的留空回退当日收盘）
         rt_price, rt_change, rt_extra = {}, {}, {}
@@ -706,7 +741,14 @@ def get_monitor_holdings():
         except Exception:
             holding_codes = None   # 交叉校验不可用时退化为全局状态
 
-        def _row_monitor(code):
+        def _row_monitor(code, kind):
+            # 待买入(watching)：盯的是买点信号，不需要成交/持仓数据
+            if kind == 'watching':
+                if not running:
+                    return False, '未启动'
+                if not in_session:
+                    return False, '休市待盘'
+                return True, '盯买点'
             in_hold = True if holding_codes is None else (code in holding_codes)
             monitoring = running and in_session and in_hold
             if monitoring:
@@ -731,17 +773,23 @@ def get_monitor_holdings():
 
         rows = []
         for p in plans:
+            kind = kind_of.get(p.stock_code, 'holding')
             d = _plan_dict_with_pnl(p, price_map)
+            d['kind'] = kind
             d['change_pct'] = rt_change.get(p.stock_code)
             d['price_source'] = ('realtime' if p.stock_code in rt_price
                                  else ('daily' if p.stock_code in close_map else None))
-            d['monitoring'], d['monitor_label'] = _row_monitor(p.stock_code)
+            d['monitoring'], d['monitor_label'] = _row_monitor(p.stock_code, kind)
             # 距止损 / 距止盈（相对现价的百分比；正=现价仍在止损上方 / 止盈下方）
             cur = d.get('current_price')
             sl = d.get('stop_loss_price')
             tp = d.get('take_profit_price')
             d['dist_to_sl_pct'] = round((cur - sl) / cur * 100, 2) if (cur and sl) else None
             d['dist_to_tp_pct'] = round((tp - cur) / cur * 100, 2) if (cur and tp) else None
+            # 待买入：距目标买入价（正=现价仍高于买入价，还没到；负=已跌破买入价，进入低吸区）
+            entry = d.get('entry_price')
+            d['dist_to_entry_pct'] = (round((cur - entry) / cur * 100, 2)
+                                      if (kind == 'watching' and cur and entry) else None)
             q_extra = rt_extra.get(p.stock_code) or {}
             d['turnover'] = q_extra.get('turnover')
             d['volume_ratio'] = q_extra.get('volume_ratio')
@@ -787,7 +835,7 @@ def get_monitor_holdings():
 def get_monitor_watch_details():
     """盯盘明细：为盯盘面板每只持仓股生成三条盯盘判断（5m三均线 / 板块15m同步 / 放量）。
 
-    行来源与 /api/trade/monitor 一致（active 计划，排除 MANUAL-<code>）。计算较重
+    行来源与 /api/trade/monitor 一致（持仓 active + 计划中 planning/pending 做多）。计算较重
     （逐只拉 5m + 板块 15m 打分，均带缓存），故前端在主表渲染后单独异步拉取本接口填充明细行。
     """
     try:
@@ -795,8 +843,8 @@ def get_monitor_watch_details():
         from App.services.watch_detail_signal import evaluate_all
 
         trade_mode = (request.args.get('mode') or '').strip()
-        plans = TradePlan.get_active_plans(trade_mode if trade_mode else None)
-        plans = [p for p in plans if not (p.plan_id or '').startswith('MANUAL-')]
+        # 与 /api/trade/monitor 同口径：持仓 + 计划中(待买入)，逐只算三均线/放量明细
+        plans = [p for p, _ in _watch_panel_plans(trade_mode if trade_mode else None)]
 
         details = {}
         for p in plans:
