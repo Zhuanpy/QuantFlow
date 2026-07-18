@@ -288,6 +288,14 @@ def api_repair_pause():
     return jsonify({'success': True, 'data': get_status()})
 
 
+@board_data_bp.route('/api/repair_stop', methods=['POST'])
+def api_repair_stop():
+    """停止当前修复任务（当前这只处理完即停，run 循环在两只之间检查 _stop）。"""
+    from App.services.minute_data_repair import stop_repair, get_status
+    stop_repair()
+    return jsonify({'success': True, 'data': get_status()})
+
+
 @board_data_bp.route('/api/build_synth', methods=['POST'])
 def api_build_synth():
     """用成分股(重新)合成「我的板块」指数（写到合成代码 BKxxxxS，不覆盖东财数据）。"""

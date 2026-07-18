@@ -242,7 +242,7 @@
                             <button class="btn-small" style="background:#6b7280;" onclick="resetAllFilters()" title="清空搜索/状态/排序/结束日期等全部筛选">重置</button>
                             <button class="btn-small repair-only" style="background:#7c3aed;" onclick="repairByPage()"
                                     title="一键修复：按当前筛选(结束≤)找出落后个股，从最落后开始每页(=每页条数)一批下载；边下边在列表实时显示 待下载→正在下载→success/failed，逐批推进直到全部补齐。可随时停止。">🛠 一键修复（按页下载）</button>
-                            <button id="byPageStop" class="btn-small repair-only" style="background:#dc2626;display:none;" onclick="_byPageRunning=false">停止</button>
+                            <button id="byPageStop" class="btn-small repair-only" style="background:#dc2626;display:none;" onclick="stopRepairByPage()">停止</button>
                         </div>
                         <div class="pending-pagination">
                             <span id="allInfo">加载中...</span>
@@ -1503,12 +1503,22 @@ async function repairByPage() {
         document.getElementById('byPageStop').style.display = 'none';
     }
 }
+// 停止按页修复：既停客户端循环，也叫停服务端后台任务（当前这只处理完即停）
+function stopRepairByPage() {
+    _byPageRunning = false;
+    const st = document.getElementById('staleRepairStatus');
+    if (st) st.textContent = '⏹ 正在停止…（当前这只处理完即停）';
+    fetch('/board_data/api/repair_stop', { method: 'POST' }).catch(() => {});
+}
+
 // 轮询单批修复直到后台任务结束。只更新进度/预估文字，不中途刷新列表
 //（列表在本批全部下完后由 repairByPage 统一刷新一次，避免每下一只就跳动）
 function _waitRepairDone(doneBefore, totalAll) {
     return new Promise(resolve => {
         const st = document.getElementById('staleRepairStatus');
         const t = setInterval(async () => {
+            // 已点停止：不再死等当前批，立即结束本次等待，让主循环按 _byPageRunning 退出
+            if (!_byPageRunning) { clearInterval(t); resolve(); return; }
             const j = await fetch('/board_data/api/repair_status').then(r => r.json()).catch(() => null);
             if (!j || !j.success) return;
             const s = j.data;
