@@ -200,14 +200,7 @@ def fetch_today_1m(code: str, save: bool = True) -> pd.DataFrame:
         pd.DataFrame  cols: date, open, close, high, low, volume, money
     """
     try:
-        import sys
-        downloads_dir = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-            'App', 'codes', 'downloads'
-        )
-        if downloads_dir not in sys.path:
-            sys.path.insert(0, downloads_dir)
-        from DlPytdx import download_stock_1m_pytdx
+        from App.codes.downloads.DlPytdx import download_stock_1m_pytdx
 
         df, _end = download_stock_1m_pytdx(code, days=1)
         if df is None or df.empty:

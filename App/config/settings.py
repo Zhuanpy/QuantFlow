@@ -84,6 +84,10 @@ class Config:
     # 其他配置
     DEBUG = os.getenv('DEBUG', 'False').lower() == 'true'
 
+    # Flask 服务器监听配置（默认仅本机，生产可通过环境变量放开）
+    HOST = os.getenv('FLASK_HOST', '127.0.0.1')
+    PORT = int(os.getenv('FLASK_PORT', '5000'))
+
     # 股票列名配置
     STOCK_COLUMNS = {
         'Basic': {

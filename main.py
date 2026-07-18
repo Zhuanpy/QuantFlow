@@ -8,16 +8,17 @@ import warnings
 warnings.filterwarnings('ignore', message='loaded more than 1 DLL from .libs')
 
 from App import create_app
+from App.config import Config
 
 # 创建应用实例
 app = create_app()
 
 if __name__ == '__main__':
-    # 运行应用
+    # 运行应用（host/port/debug 全部由环境变量控制，默认仅本机、关闭 debug）
     app.run(
-        host='0.0.0.0',
-        port=5000,
-        debug=True
+        host=Config.HOST,
+        port=Config.PORT,
+        debug=Config.DEBUG
     )
 
 

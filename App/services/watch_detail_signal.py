@@ -64,17 +64,9 @@ def _build_ma_series(df):
 # ============== 盯盘1：5m 三均线 ==============
 def _load_5m(code: str):
     """拉近 LOAD_DAYS 天 1m（pytdx）并重采样为 5m，返回按时间升序的 DataFrame（空则空表）。"""
-    import os
-    import sys
     import pandas as pd
 
-    downloads_dir = os.path.join(
-        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-        'App', 'codes', 'downloads',
-    )
-    if downloads_dir not in sys.path:
-        sys.path.insert(0, downloads_dir)
-    from DlPytdx import download_stock_1m_pytdx
+    from App.codes.downloads.DlPytdx import download_stock_1m_pytdx
     from App.codes.utils.data_processing import ResampleData
 
     df, _end = download_stock_1m_pytdx(code, days=LOAD_DAYS)

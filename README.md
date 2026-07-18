@@ -1,4 +1,4 @@
-# Stock RNN Trading System
+# QuantFlow
 
 一个基于 Flask 和 RNN 模型的股票量化交易系统。
 
@@ -21,19 +21,22 @@
 ## 项目结构
 
 ```
-Stock_RNN/
+QuantFlow/
 ├── App/                    # Flask 应用主目录
 │   ├── codes/             # 核心业务代码
 │   │   ├── downloads/     # 数据下载模块
 │   │   ├── RnnModel/      # RNN 模型相关
 │   │   ├── Evaluation/    # 评估模块
 │   │   └── ...
+│   ├── config/            # 统一配置（settings/secrets）
 │   ├── models/            # 数据模型
-│   ├── routes/           # 路由定义
-│   └── templates/        # HTML 模板
-├── config.example.py      # 配置文件模板
-├── run.py                # 应用启动文件
-└── README.md            # 项目说明
+│   ├── repositories/      # 数据访问层
+│   ├── routes/            # 路由定义
+│   ├── services/          # 业务服务层
+│   └── templates/         # HTML 模板
+├── .env.example           # 环境变量模板
+├── main.py                # 应用启动文件
+└── README.md              # 项目说明
 ```
 
 ## 安装与配置
@@ -41,8 +44,8 @@ Stock_RNN/
 ### 1. 克隆项目
 
 ```bash
-git clone https://github.com/your-username/Stock_RNN.git
-cd Stock_RNN
+git clone https://github.com/your-username/QuantFlow.git
+cd QuantFlow
 ```
 
 ### 2. 安装依赖
@@ -53,18 +56,18 @@ pip install -r requirements.txt
 
 ### 3. 配置数据库
 
-1. 复制配置文件模板：
+1. 复制环境变量模板：
 ```bash
-cp config.example.py config.py
+cp .env.example .env
 ```
 
-2. 编辑 `config.py`，填入你的数据库配置：
-```python
-DB_HOST = 'localhost'
-DB_PORT = '3306'
-DB_USER = 'your_username'
-DB_PASSWORD = 'your_password'
-DB_NAME = 'quanttradingsystem'
+2. 编辑 `.env`，填入你的数据库配置：
+```dotenv
+DB_HOST=localhost
+DB_PORT=3306
+DB_USER=your_username
+DB_PASSWORD=your_password
+DB_NAME=quanttradingsystem
 ```
 
 ### 4. 初始化数据库
@@ -77,10 +80,10 @@ python scripts/setup_auth_system.py
 ### 5. 启动应用
 
 ```bash
-python run.py
+python main.py
 ```
 
-应用将在 `http://localhost:5000` 启动。
+应用默认在 `http://127.0.0.1:5000` 启动。如需对外访问，在 `.env` 中设置 `FLASK_HOST=0.0.0.0`。
 
 ## 使用说明
 
@@ -107,9 +110,9 @@ python run.py
 ## 注意事项
 
 ⚠️ **重要**：
-- `config.py` 文件包含敏感信息，已添加到 `.gitignore`，不会提交到仓库
-- 请使用 `config.example.py` 作为配置模板
-- 生产环境请使用环境变量管理敏感配置
+- `.env` 文件包含敏感信息（数据库密码、SECRET_KEY 等），已加入 `.gitignore`，不会提交到仓库
+- 请使用 `.env.example` 作为配置模板
+- 生产环境请使用环境变量管理敏感配置，并将 `DEBUG=False`
 
 ## 开发
 
