@@ -2172,6 +2172,9 @@ def api_get_download_records():
         end_on = request.args.get('end_on', '', type=str)  # 结束日期正好等于某天
         # scope: 'pool'=只看股票池(盘后下载页) / 其余=全市场(数据修复页)
         scope = request.args.get('scope', '', type=str)
+        # stale_only: 只看「落后」记录(end_date < 最新交易日)，数据修复页默认口径，
+        # 与 /api/repair_stale_records（一键修复）完全一致，避免把已最新的股票也混进修复清单
+        stale_only = request.args.get('stale_only', '', type=str).lower() in ('1', 'true', 'yes')
 
         per_page = min(per_page, 100)
 
@@ -2216,6 +2219,14 @@ def api_get_download_records():
                         .filter(StockCodes.name.like('%退%')).all()]
         if delisted_ids:
             query = query.filter(~dlr.stock_code_id.in_(delisted_ids))
+
+        # 只看落后：end_date < 最新交易日（数据修复页默认）。口径同 api_repair_stale_records。
+        if stale_only:
+            latest_td, _is_td = get_latest_trading_date()
+            query = query.filter(
+                dlr.end_date.isnot(None),
+                dlr.end_date < latest_td,
+            )
 
         # 结束日期筛选：正好等于某天 / 范围
         if end_on:

@@ -49,7 +49,7 @@
             <div class="panel-card">
                 <h3>下载统计
                     <span style="font-size:.72rem;font-weight:400;color:#6b7280;">
-                        {% if mode == 'repair' %}范围：全市场{% else %}范围：股票池{% endif %}
+                        {% if mode == 'repair' %}范围：全市场·仅落后(end_date &lt; 最新交易日){% else %}范围：股票池{% endif %}
                     </span>
                 </h3>
                 <div class="stats-grid">
@@ -1169,6 +1169,8 @@
 // 页面口径：盘后下载(mode=download)只看股票池；数据修复(mode=repair)看全市场
 const PAGE_MODE = "{{ mode }}";
 const RECORD_SCOPE = PAGE_MODE === 'repair' ? 'all' : 'pool';
+// 数据修复页默认只加载「落后」记录(end_date < 最新交易日)，与一键修复口径一致
+const STALE_ONLY = PAGE_MODE === 'repair';
 
 // 手动批量刷新基本面（最新价/PE/PB/总市值等）
 async function refreshBasics() {
@@ -1296,7 +1298,8 @@ function resetAllFilters() {
     document.getElementById('allSearchInput').value = '';
     document.getElementById('allCodeTypeFilter').value = 'stock';
     document.getElementById('allStatusFilter').value = '';
-    document.getElementById('allSortSel').value = 'updated_at:desc';
+    // 修复页默认「最落后优先」，下载页默认「更新时间」
+    document.getElementById('allSortSel').value = STALE_ONLY ? 'end_date:asc' : 'updated_at:desc';
     document.getElementById('allEndBefore').value = '';
     document.getElementById('allEndAfter').value = '';
     loadAllRecords(1);
@@ -1316,6 +1319,7 @@ function loadAllRecords(page = 1) {
     const endBefore = document.getElementById('allEndBefore').value || '';
     const endAfter = document.getElementById('allEndAfter').value || '';
     const params = new URLSearchParams({ page: page, per_page: perPage, scope: RECORD_SCOPE });
+    if (STALE_ONLY) params.set('stale_only', '1');
     if (search) params.set('search', search);
     if (status) params.set('status', status);
     if (codeType) params.set('code_type', codeType);
@@ -2253,6 +2257,12 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // 页面加载时重置失败的股票
     resetFailedStocks();
+
+    // 修复页默认「最落后优先」排序（配合 stale_only，进页面即为待修复清单）
+    if (STALE_ONLY) {
+        const _sortSel = document.getElementById('allSortSel');
+        if (_sortSel) _sortSel.value = 'end_date:asc';
+    }
 
     // 立即执行一次更新
     updateStatistics();
