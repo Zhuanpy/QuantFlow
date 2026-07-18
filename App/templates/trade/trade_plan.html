@@ -344,24 +344,23 @@
     </div>
 </div>
 
-<!-- 操作理由编辑弹窗 -->
-<div class="modal" id="reasonModal">
-    <div class="modal-content modal-small">
-        <div class="modal-header">
-            <h3>操作理由</h3>
-            <button class="close-btn" onclick="closeReasonModal()">&times;</button>
-        </div>
-        <div style="padding:1.5rem;">
-            <input type="hidden" id="reasonRecordId">
-            <div id="reasonStockInfo" style="font-size:.85rem;color:#6b7280;margin-bottom:.6rem;"></div>
-            <textarea id="reasonText" rows="6" style="width:100%;font-size:.9rem;border:1px solid #d1d5db;border-radius:.4rem;padding:.6rem;box-sizing:border-box;resize:vertical;" placeholder="写下这笔买/卖的理由、想法…（Ctrl/Cmd+Enter 保存）"></textarea>
-            <div class="form-actions">
-                <button type="button" class="btn btn-secondary" onclick="closeReasonModal()">取消</button>
-                <button type="button" class="btn btn-primary" onclick="saveReasonModal()">保存</button>
-            </div>
-        </div>
-    </div>
-</div>
+<!-- 操作理由：列表只显示一句话摘要+标签，编辑在 /trade/records/<id>/reason/edit（富文本页） -->
+<style>
+    /* 单元格锁死单行：正文再长也不会把整行撑高 */
+    .reason-cell { max-width: 260px; font-size: .78rem; cursor: pointer; }
+    .reason-cell .reason-title {
+        display: block; color: #374151;
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .reason-cell:hover .reason-title { color: var(--primary-color, #2563eb); text-decoration: underline; }
+    .reason-cell .reason-empty { color: #cbd5e1; }
+    .reason-cell .reason-tags { display: flex; gap: .2rem; margin-top: .15rem; overflow: hidden; }
+    .reason-cell .rtag {
+        flex: none; padding: 0 .3rem; background: #eff6ff; color: #1d4ed8;
+        border-radius: .2rem; font-size: .68rem; line-height: 1.5; white-space: nowrap;
+    }
+    .reason-cell .rmore { color: #9ca3af; font-size: .68rem; line-height: 1.5; }
+</style>
 
 <style>
 .container {
@@ -1057,7 +1056,7 @@ async function loadRecords() {
                     : '<span style="color:#059669;font-weight:600;">卖出</span>';
                 const flowColor = (it.net_amount || 0) >= 0 ? '#059669' : '#dc2626';
                 return `<tr>
-                    <td style="font-family:monospace;font-size:.75rem;color:#6b7280;">${it.trade_id || ''}</td>
+                    <td style="font-family:monospace;font-size:.75rem;color:#6b7280;">${it.trade_id || ''}${it.merged_count > 1 ? ` <span title="券商拆单：${it.merged_count} 笔成交合并为一笔委托&#10;${(it.merged_trade_ids||[]).join('&#10;')}" style="font-family:inherit;display:inline-block;background:#eef2ff;color:#4f46e5;border-radius:3px;padding:0 4px;font-size:.68rem;font-weight:600;cursor:help;">合${it.merged_count}单</span>` : ''}</td>
                     <td><a class="stock-link" href="/stock/?code=${it.stock_code}&period=15m" target="_blank" title="打开 15m 趋势页">${it.stock_code}</a><br><span style="color:#6b7280;font-size:.78rem;">${it.stock_name || ''}</span></td>
                     <td>${dir}</td>
                     <td style="font-size:.78rem;">${it.execute_time || '-'}</td>
@@ -1070,7 +1069,7 @@ async function loadRecords() {
                     <td style="text-align:right;color:${flowColor};font-weight:600;">${_fmt(it.net_amount)}</td>
                     <td style="text-align:right;color:#6b7280;">${it.account_balance != null ? _fmt(it.account_balance) : '-'}</td>
                     <td>${it.market || '-'}</td>
-                    <td class="reason-cell" data-id="${it.id}" data-reason="${_escapeHtml(it.trade_reason || '')}" data-label="${_escapeHtml((it.stock_code||'') + ' ' + (it.stock_name||'') + ' · ' + (it.trade_type==='buy'?'买入':'卖出') + ' · ' + (it.execute_time||''))}" title="点击编辑操作理由" onclick="editReason(this)" style="cursor:pointer;max-width:220px;font-size:.78rem;">${_renderReason(it.trade_reason)}</td>
+                    <td class="reason-cell" title="${_escapeHtml(_reasonTip(it))}" onclick="openReasonEditor(${it.id})">${_renderReason(it)}</td>
                 </tr>`;
             }).join('');
         }
@@ -1090,70 +1089,48 @@ async function loadRecords() {
     }
 }
 
-// ===== 操作理由：表格内联编辑 =====
+// ===== 操作理由：列表只显示摘要+标签，点击进详情页编辑 =====
 function _escapeHtml(s) {
-    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
                     .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 
-function _renderReason(reason) {
-    if (reason && reason.trim()) {
-        return `<span style="color:#374151;white-space:pre-wrap;word-break:break-word;">${_escapeHtml(reason)}</span>`;
-    }
-    return `<span style="color:#cbd5e1;">＋ 添加理由</span>`;
+// 老数据没有 reason_title，正文是纯文本：退而取正文首行当摘要
+function _reasonSummary(it) {
+    if (it.reason_title) return it.reason_title;
+    const body = (it.trade_reason || '').replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').trim();
+    if (!body) return '';
+    return (body.split('\n').find(l => l.trim()) || '').trim().slice(0, 60);
 }
 
-let _reasonEditingCell = null;  // 当前正在编辑的单元格
-
-function editReason(cell) {
-    _reasonEditingCell = cell;
-    document.getElementById('reasonRecordId').value = cell.dataset.id;
-    document.getElementById('reasonStockInfo').textContent = cell.dataset.label || '';
-    const ta = document.getElementById('reasonText');
-    ta.value = cell.dataset.reason || '';
-    document.getElementById('reasonModal').classList.add('active');
-    setTimeout(() => { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }, 30);
+function _reasonTip(it) {
+    const s = _reasonSummary(it);
+    if (!s) return '点击写这笔交易的理由';
+    const tags = (it.reason_tag_list || []).join(' / ');
+    return s + (tags ? '\n标签：' + tags : '') + '\n（点击查看/编辑全文）';
 }
 
-function closeReasonModal() {
-    document.getElementById('reasonModal').classList.remove('active');
-    _reasonEditingCell = null;
+function _renderReason(it) {
+    const summary = _reasonSummary(it);
+    if (!summary) return `<span class="reason-empty">＋ 添加理由</span>`;
+
+    const tags = it.reason_tag_list || [];
+    let tagHtml = '';
+    if (tags.length) {
+        tagHtml = '<div class="reason-tags">'
+            + tags.slice(0, 3).map(t => `<span class="rtag">${_escapeHtml(t)}</span>`).join('')
+            + (tags.length > 3 ? `<span class="rmore">+${tags.length - 3}</span>` : '')
+            + '</div>';
+    }
+    // 有感悟/正文时加个 📝，一眼看出这条点进去还有东西
+    const more = it.has_reason_detail ? ' <span class="rmore">📝</span>' : '';
+    return `<span class="reason-title">${_escapeHtml(summary)}${more}</span>${tagHtml}`;
 }
 
-async function saveReasonModal() {
-    const cell = _reasonEditingCell;
-    if (!cell) { closeReasonModal(); return; }
-    const id = document.getElementById('reasonRecordId').value;
-    const value = document.getElementById('reasonText').value.trim();
-    try {
-        const r = await fetch(`/api/trade/records/${id}/reason`, {
-            method: 'PATCH',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({trade_reason: value})
-        }).then(r => r.json());
-        if (!r.success) { alert('保存失败：' + (r.message || '')); return; }
-        cell.dataset.reason = value;
-        cell.innerHTML = _renderReason(value);
-        closeReasonModal();
-    } catch (e) {
-        alert('请求失败：' + e);
-    }
+function openReasonEditor(id) {
+    const back = encodeURIComponent(location.pathname + location.search);
+    location.href = `/trade/records/${id}/reason/edit?back=${back}`;
 }
-
-// 弹窗内 Ctrl/Cmd+Enter 保存，Esc 取消；点遮罩关闭
-document.addEventListener('DOMContentLoaded', () => {
-    const ta = document.getElementById('reasonText');
-    if (ta) {
-        ta.addEventListener('keydown', (e) => {
-            if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); saveReasonModal(); }
-            if (e.key === 'Escape') { e.preventDefault(); closeReasonModal(); }
-        });
-    }
-    const modal = document.getElementById('reasonModal');
-    if (modal) {
-        modal.addEventListener('click', (e) => { if (e.target === modal) closeReasonModal(); });
-    }
-});
 
 function recordsGoPage(p) { recordsPage = p; loadRecords(); }
 

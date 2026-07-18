@@ -151,6 +151,71 @@ def infer_plans_from_records_route():
         return jsonify({'success': False, 'message': str(e)}), 500
 
 
+def _merge_split_fills(records):
+    """券商拆单合并（展示层，非破坏）。
+
+    一笔委托常被券商拆成多笔成交（同 合同编号 contract_no；缺失时按 代码+方向+成交日+均价
+    兜底判定），逐笔落库后在列表里显示成多行。这里把同组分单聚合成一条展示行：
+    数量/金额/各项费用求和，均价按金额加权，理由跟随代表行，库里原始分单不动。
+
+    Args:
+        records: 已按展示顺序排好的 TradeRecord 列表。
+    Returns:
+        list[dict]: 合并后的展示 dict（形状与 TradeRecord.to_dict 一致，另加
+                    merged_count / merged_trade_ids / merged_ids）。
+    """
+    from collections import OrderedDict
+    groups = OrderedDict()
+    for r in records:
+        d = r.execute_time.date().isoformat() if r.execute_time else ''
+        cn = (r.contract_no or '').strip()
+        if cn:
+            key = (r.trade_mode, r.stock_code, r.trade_type, d, 'C', cn)
+        else:
+            t = r.execute_time.strftime('%H:%M:%S') if r.execute_time else ''
+            key = (r.trade_mode, r.stock_code, r.trade_type, d, 'K', t, str(r.price))
+        groups.setdefault(key, []).append(r)
+
+    out = []
+    for grp in groups.values():
+        if len(grp) == 1:
+            out.append(grp[0].to_dict())
+            continue
+        # 代表行：优先已经写过理由的那条（理由/账户余额跟着它），否则取 id 最小的稳定
+        rep = next((r for r in grp
+                    if (r.trade_reason or '').strip() or (r.reason_insight or '').strip()
+                    or (r.reason_title or '').strip()), None) or min(grp, key=lambda r: r.id)
+
+        def _sum(attr):
+            return sum(float(getattr(r, attr) or 0) for r in grp)
+
+        qty = sum(int(r.quantity or 0) for r in grp)
+        amt = _sum('total_amount')
+        m = rep.to_dict()
+        m['quantity'] = qty
+        m['total_amount'] = round(amt, 2)
+        m['price'] = round(amt / qty, 2) if qty else m.get('price')
+        m['commission'] = round(_sum('commission'), 2)
+        m['tax'] = round(_sum('tax'), 2)
+        m['other_fee'] = round(_sum('other_fee'), 2)
+        m['transfer_fee'] = round(_sum('transfer_fee'), 2)
+        m['net_amount'] = round(_sum('net_amount'), 2)
+        # 账户余额取组内最后一笔（trade_id 最大）的余额=这笔委托全部成交后的最终余额
+        last = max(grp, key=lambda r: (r.trade_id or ''))
+        m['account_balance'] = float(last.account_balance) if last.account_balance is not None else None
+        ets = [r.execute_time for r in grp if r.execute_time]
+        ots = [r.order_time for r in grp if r.order_time]
+        if ets:
+            m['execute_time'] = min(ets).strftime('%Y-%m-%d %H:%M:%S')
+        if ots:
+            m['order_time'] = min(ots).strftime('%Y-%m-%d %H:%M:%S')
+        m['merged_count'] = len(grp)
+        m['merged_trade_ids'] = [r.trade_id for r in grp]
+        m['merged_ids'] = sorted(r.id for r in grp)
+        out.append(m)
+    return out
+
+
 @trade_plan_bp.route('/api/trade/records', methods=['GET'])
 def list_trade_records():
     """查询 trade_records，供前端展示导入结果。
@@ -210,6 +275,46 @@ def list_trade_records():
         }
         q = q.order_by(sort_map.get(sort_by, TradeRecord.execute_time.desc()))
 
+        # 券商拆单合并（展示层，默认开）：同一委托被拆成多笔成交时合并成一行展示，
+        # 原始分单仍留在库里；传 merge=0 可看未合并的原始分单。合并后在内存里分页/统计。
+        merge_on = (request.args.get('merge', '1').strip().lower()
+                    not in ('0', 'false', 'off', 'no'))
+
+        if merge_on:
+            merged = _merge_split_fills(q.all())   # q 已按 sort_by 排序，组内顺序稳定
+            reverse = sort_by not in ('time_asc', 'amount_asc')
+            if sort_by in ('amount_desc', 'amount_asc'):
+                merged.sort(key=lambda it: it.get('total_amount') or 0, reverse=reverse)
+            else:
+                merged.sort(key=lambda it: it.get('execute_time') or '', reverse=reverse)
+
+            buys = [it for it in merged if it['trade_type'] == TradeRecord.TRADE_TYPE_BUY]
+            sells = [it for it in merged if it['trade_type'] == TradeRecord.TRADE_TYPE_SELL]
+            summary = {
+                'total_count': len(merged),
+                'buy_count': len(buys), 'sell_count': len(sells),
+                'buy_amount': round(sum(it.get('total_amount') or 0 for it in buys), 2),
+                'sell_amount': round(sum(it.get('total_amount') or 0 for it in sells), 2),
+                'net_cash_flow': round(sum(it.get('net_amount') or 0 for it in merged), 2),
+            }
+            total = len(merged)
+            pages = max(1, (total + page_size - 1) // page_size)
+            page = min(max(page, 1), pages)
+            start = (page - 1) * page_size
+            items = merged[start:start + page_size]
+            return jsonify({
+                'success': True,
+                'data': {
+                    'items': items,
+                    'summary': summary,
+                    'pagination': {
+                        'page': page, 'pages': pages, 'per_page': page_size,
+                        'total': total, 'has_prev': page > 1, 'has_next': page < pages,
+                    }
+                }
+            })
+
+        # merge=0：不合并，逐条原始分单（DB 分页）。
         # 聚合统计（在分页前算）：总买金额 / 总卖金额 / 净流
         agg_rows = q.with_entities(
             TradeRecord.trade_type,
@@ -250,9 +355,14 @@ def list_trade_records():
 
 @trade_plan_bp.route('/api/trade/records/<int:record_id>/reason', methods=['PATCH'])
 def update_trade_record_reason(record_id):
-    """更新单条成交记录的操作理由（trade_reason）。
+    """更新单条成交记录的操作理由（部分更新，只改传了的字段）。
 
-    Body (JSON): {"trade_reason": "..."}  空字符串视为清空（存 NULL）。
+    Body (JSON) 任意子集：
+      reason_title   一句话摘要（列表单行显示）
+      reason_tags    标签，字符串或数组，落库前规范成 '低吸,板块轮动'
+      reason_insight 感悟
+      trade_reason   详细正文（Quill 富文本 HTML）
+    空字符串 = 清空（存 NULL）。
     """
     try:
         from App.models.trade.trade_records import TradeRecord
@@ -261,15 +371,173 @@ def update_trade_record_reason(record_id):
             return jsonify({'success': False, 'message': '成交记录不存在'}), 404
 
         data = request.get_json(silent=True) or {}
-        reason = (data.get('trade_reason') or '').strip()
-        rec.trade_reason = reason or None
+
+        if 'reason_title' in data:
+            rec.reason_title = (data.get('reason_title') or '').strip()[:200] or None
+        if 'reason_tags' in data:
+            rec.reason_tags = TradeRecord.normalize_tags(data.get('reason_tags'))[:200] or None
+        if 'reason_insight' in data:
+            rec.reason_insight = (data.get('reason_insight') or '').strip() or None
+        if 'trade_reason' in data:
+            body = (data.get('trade_reason') or '').strip()
+            # Quill 的空文档是 '<p><br></p>'，别把它当内容存下来
+            rec.trade_reason = None if body in ('', '<p><br></p>') else body
+
         rec.updated_at = datetime.utcnow()
         db.session.commit()
-        return jsonify({'success': True, 'data': {'id': rec.id, 'trade_reason': rec.trade_reason}})
+        return jsonify({'success': True, 'data': rec.to_dict()})
     except Exception as e:
         db.session.rollback()
         logger.exception('更新操作理由失败')
         return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@trade_plan_bp.route('/api/trade/reason_tags', methods=['GET'])
+def get_trade_reason_tags():
+    """已用过的操作理由标签 + 出现次数（编辑页点选用，防同义标签泛滥）。"""
+    try:
+        from App.models.trade.trade_records import TradeRecord
+        mode = request.args.get('mode', '') or None
+        return jsonify({'success': True, 'data': TradeRecord.all_reason_tags(mode)})
+    except Exception as e:
+        logger.exception('获取标签失败')
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+def _has_reason_cond():
+    """SQL 条件：三段理由（标题/感悟/正文）任一非空即算「已写理由」。"""
+    from App.models.trade.trade_records import TradeRecord
+    return db.or_(
+        db.and_(TradeRecord.reason_title.isnot(None), TradeRecord.reason_title != ''),
+        db.and_(TradeRecord.reason_insight.isnot(None), TradeRecord.reason_insight != ''),
+        db.and_(TradeRecord.trade_reason.isnot(None), TradeRecord.trade_reason != ''),
+    )
+
+
+def _html_to_snippet(html: str, limit: int = 140) -> str:
+    """把富文本正文压成纯文本摘要（去标签/解实体/压空白），供卡片预览。"""
+    if not html:
+        return ''
+    import re
+    from html import unescape
+    text = re.sub(r'<[^>]+>', ' ', html)
+    text = unescape(text)
+    text = re.sub(r'\s+', ' ', text).strip()
+    return text[:limit] + ('…' if len(text) > limit else '')
+
+
+@trade_plan_bp.route('/api/trade/reasons', methods=['GET'])
+def list_trade_reasons():
+    """交易理由 / 复盘清单。默认只列「已写理由」的成交，可切到未写/全部。
+
+    Query（都可选）:
+        page, page_size
+        mode:    simulate | real
+        filled:  filled(默认) | empty | all
+        tag:     精确标签（命中 reason_tags 里某一项）
+        stock:   代码或名称模糊
+        q:        关键词，命中 摘要/感悟/正文 任一
+        sort_by: time_desc(默认) / time_asc / updated_desc
+    另返回 facets.tags（当前范围内的标签及次数）供前端做筛选面板。
+    """
+    try:
+        from App.models.trade.trade_records import TradeRecord
+        page = request.args.get('page', 1, type=int)
+        page_size = min(max(request.args.get('page_size', 20, type=int), 1), 100)
+        mode = (request.args.get('mode') or '').strip()
+        filled = (request.args.get('filled') or 'filled').strip().lower()
+        tag = (request.args.get('tag') or '').strip()
+        stock = (request.args.get('stock') or '').strip()
+        q_kw = (request.args.get('q') or '').strip()
+        sort_by = (request.args.get('sort_by') or 'time_desc').strip()
+
+        q = TradeRecord.query
+        if mode:
+            q = q.filter(TradeRecord.trade_mode == mode)
+        if filled == 'filled':
+            q = q.filter(_has_reason_cond())
+        elif filled == 'empty':
+            q = q.filter(db.not_(_has_reason_cond()))
+        # filled == 'all'：不加理由条件
+
+        if stock:
+            q = q.filter(db.or_(TradeRecord.stock_code.like(f'%{stock}%'),
+                                TradeRecord.stock_name.like(f'%{stock}%')))
+        if tag:
+            # 用逗号包裹精确匹配某一项，避免「低吸」误命中「低吸买入」
+            like = f'%,{tag},%'
+            q = q.filter(db.func.concat(',', db.func.coalesce(TradeRecord.reason_tags, ''), ',').like(like))
+        if q_kw:
+            kw = f'%{q_kw}%'
+            q = q.filter(db.or_(
+                TradeRecord.reason_title.like(kw),
+                TradeRecord.reason_insight.like(kw),
+                TradeRecord.trade_reason.like(kw),
+            ))
+
+        sort_map = {
+            'time_desc':    TradeRecord.execute_time.desc(),
+            'time_asc':     TradeRecord.execute_time.asc(),
+            'updated_desc': TradeRecord.updated_at.desc(),
+        }
+        q = q.order_by(sort_map.get(sort_by, TradeRecord.execute_time.desc()))
+
+        # 标签 facet：在「已写理由 + 当前 mode」范围内统计（不受 tag/stock/q 影响，方便来回切）
+        facet_q = TradeRecord.query.filter(_has_reason_cond())
+        if mode:
+            facet_q = facet_q.filter(TradeRecord.trade_mode == mode)
+        counter = {}
+        for (tags,) in facet_q.with_entities(TradeRecord.reason_tags).all():
+            for t in (tags or '').split(','):
+                t = t.strip()
+                if t:
+                    counter[t] = counter.get(t, 0) + 1
+        facet_tags = [{'tag': t, 'count': c}
+                      for t, c in sorted(counter.items(), key=lambda kv: (-kv[1], kv[0]))]
+
+        pagination = q.paginate(page=page, per_page=page_size, error_out=False)
+        items = []
+        for r in pagination.items:
+            d = r.to_dict()
+            d['body_snippet'] = _html_to_snippet(r.trade_reason)
+            items.append(d)
+
+        return jsonify({
+            'success': True,
+            'data': {
+                'items': items,
+                'facets': {'tags': facet_tags},
+                'pagination': {
+                    'page': pagination.page, 'pages': pagination.pages,
+                    'per_page': pagination.per_page, 'total': pagination.total,
+                    'has_prev': pagination.has_prev, 'has_next': pagination.has_next,
+                },
+            },
+        })
+    except Exception as e:
+        logger.exception('查询交易理由清单失败')
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@trade_plan_bp.route('/trade/reasons')
+def trade_reasons_page():
+    """交易理由 / 复盘清单页（卡片流）。数据走 /api/trade/reasons。"""
+    trade_mode = (request.args.get('mode') or '').strip()
+    return render_template('trade/trade_reasons.html', trade_mode=trade_mode)
+
+
+@trade_plan_bp.route('/trade/records/<int:record_id>/reason/edit')
+def trade_reason_edit_page(record_id):
+    """操作理由详情/编辑页（富文本），与 /issues/<id>/edit 同一套路。"""
+    from App.models.trade.trade_records import TradeRecord
+    rec = TradeRecord.query.get(record_id)
+    if not rec:
+        return render_template('trade/trade_reason_edit.html', record=None,
+                               back_url=request.args.get('back') or '/trade'), 404
+    return render_template('trade/trade_reason_edit.html',
+                           record=rec.to_dict(),
+                           reason_html=rec.trade_reason or '',
+                           back_url=request.args.get('back') or f'/trade/{rec.trade_mode}')
 
 
 # ============ API 接口 ============

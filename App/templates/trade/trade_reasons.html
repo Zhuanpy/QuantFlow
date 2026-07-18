@@ -1,0 +1,251 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="rs-wrap">
+
+  <div class="rs-head">
+    <div>
+      <h1 class="rs-title">交易理由 · 复盘清单</h1>
+      <div class="rs-sub">每笔成交当时的判断与事后感悟，点卡片进编辑页续写。</div>
+    </div>
+    <a class="rs-back" href="/trade">← 交易管理</a>
+  </div>
+
+  <!-- 筛选栏 -->
+  <div class="rs-bar">
+    <div class="rs-seg" id="modeSeg">
+      <button data-v="" class="active">全部</button>
+      <button data-v="real">实盘</button>
+      <button data-v="simulate">模拟</button>
+    </div>
+    <div class="rs-seg" id="filledSeg">
+      <button data-v="filled" class="active">已写理由</button>
+      <button data-v="empty">待填写</button>
+      <button data-v="all">全部成交</button>
+    </div>
+    <div class="rs-seg" id="sortSeg">
+      <button data-v="time_desc" class="active">成交时间↓</button>
+      <button data-v="time_asc">成交时间↑</button>
+      <button data-v="updated_desc">最近更新</button>
+    </div>
+    <input id="stockInput" class="rs-input" type="text" placeholder="股票代码/名称" />
+    <input id="qInput" class="rs-input" type="text" placeholder="搜理由/感悟关键词" />
+  </div>
+
+  <!-- 标签 facet -->
+  <div class="rs-tags" id="tagFacet"></div>
+
+  <div class="rs-count" id="countLine"></div>
+
+  <!-- 卡片流 -->
+  <div class="rs-grid" id="grid"></div>
+
+  <div class="rs-empty" id="emptyBox" style="display:none;"></div>
+
+  <!-- 分页 -->
+  <div class="rs-page" id="pager" style="display:none;">
+    <button id="prevBtn">← 上一页</button>
+    <span id="pageInfo"></span>
+    <button id="nextBtn">下一页 →</button>
+  </div>
+</div>
+
+<style>
+  .rs-wrap { max-width: 1180px; margin: 18px auto; padding: 0 16px; }
+  .rs-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:14px; }
+  .rs-title { font-size: 22px; font-weight: 700; margin:0; }
+  .rs-sub { color: var(--text-secondary); font-size: 13px; margin-top:2px; }
+  .rs-back { color: var(--primary-color); text-decoration:none; font-size:13px; padding:6px 12px;
+    border:1px solid var(--primary-color); border-radius:8px; white-space:nowrap; }
+  .rs-back:hover { background:#eff6ff; }
+
+  .rs-bar { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-bottom:12px; }
+  .rs-seg { display:inline-flex; border:1px solid #cbd5e1; border-radius:8px; overflow:hidden; }
+  .rs-seg button { border:none; background:#fff; padding:7px 12px; font-size:13px; cursor:pointer;
+    color: var(--text-secondary); border-right:1px solid #e2e8f0; }
+  .rs-seg button:last-child { border-right:none; }
+  .rs-seg button.active { background: var(--primary-color); color:#fff; }
+  .rs-input { padding:7px 10px; border:1px solid #cbd5e1; border-radius:8px; font-size:13px; font-family:inherit; width:150px; }
+  .rs-input:focus { outline:none; border-color: var(--primary-color); }
+
+  .rs-tags { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px; }
+  .rs-tags .ftag { padding:3px 10px; border:1px dashed #cbd5e1; border-radius:20px; font-size:12px;
+    color: var(--text-secondary); cursor:pointer; background:#fff; }
+  .rs-tags .ftag:hover { border-color: var(--primary-color); color: var(--primary-color); }
+  .rs-tags .ftag.active { background: var(--primary-color); color:#fff; border-style:solid; border-color:var(--primary-color); }
+  .rs-tags .ftag em { font-style:normal; opacity:.7; margin-left:3px; }
+
+  .rs-count { font-size:12px; color: var(--text-secondary); margin-bottom:10px; }
+
+  .rs-grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap:14px; }
+  .rs-card { background: var(--card-background); border:1px solid #e5e7eb; border-radius:12px;
+    padding:14px 16px; box-shadow: var(--shadow-sm); text-decoration:none; color:inherit;
+    display:flex; flex-direction:column; gap:8px; transition: box-shadow .15s, transform .15s; }
+  .rs-card:hover { box-shadow: var(--shadow-md); transform: translateY(-2px); }
+
+  .rs-c-head { display:flex; align-items:center; gap:7px; flex-wrap:wrap; font-size:13px; }
+  .rs-side { padding:1px 7px; border-radius:4px; font-size:12px; font-weight:600; color:#fff; }
+  .rs-side.buy { background:#dc2626; }
+  .rs-side.sell { background:#16a34a; }
+  .rs-name { font-weight:600; }
+  .rs-code { color: var(--text-secondary); font-family: ui-monospace, monospace; font-size:12px; }
+  .rs-mode { margin-left:auto; font-size:11px; color:#fff; padding:1px 7px; border-radius:4px; }
+  .rs-mode.real { background:#0891b2; } .rs-mode.simulate { background:#94a3b8; }
+  .rs-meta { font-size:12px; color: var(--text-secondary); }
+
+  .rs-c-title { font-size:15px; font-weight:600; line-height:1.4; }
+  .rs-c-title.empty { color:#cbd5e1; font-weight:500; font-style:italic; }
+  .rs-c-tags { display:flex; flex-wrap:wrap; gap:5px; }
+  .rs-c-tags .t { background:#eff6ff; color:#1d4ed8; border-radius:4px; padding:1px 7px; font-size:11px; }
+  .rs-insight { font-size:12.5px; color:#475569; background:#f8fafc; border-left:3px solid #cbd5e1;
+    padding:6px 10px; border-radius:0 6px 6px 0; }
+  .rs-insight b { color:#334155; }
+  .rs-snippet { font-size:12px; color: var(--text-secondary); line-height:1.5; }
+  .rs-badge { display:inline-block; font-size:11px; color:#059669; }
+
+  .rs-empty { text-align:center; color: var(--text-secondary); padding:48px 0; }
+  .rs-page { display:flex; align-items:center; justify-content:center; gap:14px; margin:20px 0; }
+  .rs-page button { padding:7px 14px; border:1px solid #cbd5e1; background:#fff; border-radius:8px;
+    font-size:13px; cursor:pointer; }
+  .rs-page button:disabled { opacity:.5; cursor:not-allowed; }
+  .rs-page #pageInfo { font-size:13px; color: var(--text-secondary); }
+
+  @media (max-width: 640px) { .rs-grid { grid-template-columns: 1fr; } .rs-input { width:120px; } }
+</style>
+
+<script>
+(function () {
+  const $ = id => document.getElementById(id);
+  const INIT_MODE = "{{ trade_mode or '' }}";
+  const state = { mode: INIT_MODE, filled: 'filled', sort_by: 'time_desc', tag: '', stock: '', q: '', page: 1 };
+
+  // 初始化 mode 段选中态
+  if (INIT_MODE) {
+    Array.from($('modeSeg').children).forEach(b => b.classList.toggle('active', b.dataset.v === INIT_MODE));
+  }
+
+  function esc(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  // ---- 段选择器通用绑定 ----
+  function bindSeg(segId, key) {
+    $(segId).addEventListener('click', e => {
+      if (e.target.tagName !== 'BUTTON') return;
+      Array.from($(segId).children).forEach(b => b.classList.remove('active'));
+      e.target.classList.add('active');
+      state[key] = e.target.dataset.v;
+      state.page = 1;
+      load();
+    });
+  }
+  bindSeg('modeSeg', 'mode');
+  bindSeg('filledSeg', 'filled');
+  bindSeg('sortSeg', 'sort_by');
+
+  // ---- 搜索框（防抖） ----
+  let t1 = null, t2 = null;
+  $('stockInput').addEventListener('input', e => {
+    clearTimeout(t1); const v = e.target.value.trim();
+    t1 = setTimeout(() => { state.stock = v; state.page = 1; load(); }, 300);
+  });
+  $('qInput').addEventListener('input', e => {
+    clearTimeout(t2); const v = e.target.value.trim();
+    t2 = setTimeout(() => { state.q = v; state.page = 1; load(); }, 300);
+  });
+
+  // ---- 分页 ----
+  $('prevBtn').addEventListener('click', () => { if (state.page > 1) { state.page--; load(); } });
+  $('nextBtn').addEventListener('click', () => { state.page++; load(); });
+
+  // ---- 拉数据 ----
+  function load() {
+    const p = new URLSearchParams({
+      page: state.page, page_size: 20, filled: state.filled, sort_by: state.sort_by,
+    });
+    if (state.mode) p.set('mode', state.mode);
+    if (state.tag) p.set('tag', state.tag);
+    if (state.stock) p.set('stock', state.stock);
+    if (state.q) p.set('q', state.q);
+
+    $('grid').style.opacity = '.5';
+    fetch('/api/trade/reasons?' + p.toString())
+      .then(r => r.json())
+      .then(res => {
+        $('grid').style.opacity = '1';
+        if (!res.success) { showEmpty('加载失败：' + (res.message || '')); return; }
+        renderFacet(res.data.facets.tags);
+        renderCards(res.data.items);
+        renderPager(res.data.pagination);
+      })
+      .catch(err => { $('grid').style.opacity = '1'; showEmpty('请求失败：' + err); });
+  }
+
+  function renderFacet(tags) {
+    const box = $('tagFacet');
+    if (!tags || !tags.length) { box.innerHTML = ''; return; }
+    let html = `<span class="ftag ${state.tag ? '' : 'active'}" data-tag="">全部标签</span>`;
+    html += tags.map(x =>
+      `<span class="ftag ${state.tag === x.tag ? 'active' : ''}" data-tag="${esc(x.tag)}">${esc(x.tag)}<em>${x.count}</em></span>`
+    ).join('');
+    box.innerHTML = html;
+    Array.from(box.querySelectorAll('.ftag')).forEach(el => {
+      el.onclick = () => { state.tag = el.dataset.tag; state.page = 1; load(); };
+    });
+  }
+
+  function renderCards(items) {
+    const grid = $('grid');
+    if (!items.length) {
+      grid.innerHTML = '';
+      showEmpty(state.filled === 'empty' ? '这个范围内没有待填写的成交 🎉' : '没有匹配的记录。');
+      return;
+    }
+    $('emptyBox').style.display = 'none';
+    grid.innerHTML = items.map(cardHtml).join('');
+  }
+
+  function cardHtml(it) {
+    const isBuy = ['buy', 'buy_back'].includes(it.trade_type);
+    const back = encodeURIComponent('/trade/reasons');
+    const tags = (it.reason_tag_list || []).map(t => `<span class="t">${esc(t)}</span>`).join('');
+    const title = it.reason_title
+      ? `<div class="rs-c-title">${esc(it.reason_title)}</div>`
+      : `<div class="rs-c-title empty">— 尚未写一句话摘要，点此补充 —</div>`;
+    const insight = it.reason_insight
+      ? `<div class="rs-insight"><b>感悟</b> ${esc(it.reason_insight)}</div>` : '';
+    const snippet = it.body_snippet
+      ? `<div class="rs-snippet">${esc(it.body_snippet)}</div>` : '';
+    const detailBadge = it.has_reason_detail ? '<span class="rs-badge">✎ 有正文/感悟</span>' : '';
+    return `<a class="rs-card" href="/trade/records/${it.id}/reason/edit?back=${back}">
+      <div class="rs-c-head">
+        <span class="rs-side ${isBuy ? 'buy' : 'sell'}">${isBuy ? '买入' : '卖出'}</span>
+        <span class="rs-name">${esc(it.stock_name)}</span>
+        <span class="rs-code">${esc(it.stock_code)}</span>
+        <span class="rs-mode ${it.trade_mode}">${it.trade_mode === 'real' ? '实盘' : '模拟'}</span>
+      </div>
+      <div class="rs-meta">${it.quantity} 股 @ ${it.price} · ${it.execute_time || it.order_time || '—'}</div>
+      ${title}
+      ${tags ? `<div class="rs-c-tags">${tags}</div>` : ''}
+      ${insight}
+      ${snippet}
+      ${detailBadge}
+    </a>`;
+  }
+
+  function renderPager(pg) {
+    if (!pg || pg.total === 0) { $('pager').style.display = 'none'; $('countLine').textContent = ''; return; }
+    $('countLine').textContent = `共 ${pg.total} 条 · 第 ${pg.page}/${pg.pages} 页`;
+    $('pager').style.display = pg.pages > 1 ? 'flex' : 'none';
+    $('pageInfo').textContent = `${pg.page} / ${pg.pages}`;
+    $('prevBtn').disabled = !pg.has_prev;
+    $('nextBtn').disabled = !pg.has_next;
+  }
+
+  function showEmpty(msg) { const e = $('emptyBox'); e.textContent = msg; e.style.display = 'block'; }
+
+  load();
+})();
+</script>
+{% endblock %}

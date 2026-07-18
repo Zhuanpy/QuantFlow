@@ -1,0 +1,248 @@
+{% extends "base.html" %}
+
+{% block content %}
+{% if not record %}
+<div class="edit-wrap">
+  <p style="padding:2rem;text-align:center;color:#6b7280;">成交记录不存在。<a href="{{ back_url }}">← 返回</a></p>
+</div>
+{% else %}
+<div class="edit-wrap">
+
+  <!-- 这笔成交是什么：只读，帮你写理由时对得上号 -->
+  <div class="trade-head">
+    <span class="side {{ 'buy' if record.trade_type in ['buy', 'buy_back'] else 'sell' }}">
+      {{ '买入' if record.trade_type in ['buy', 'buy_back'] else '卖出' }}
+    </span>
+    <strong>{{ record.stock_name }}</strong>
+    <span class="code">{{ record.stock_code }}</span>
+    <span class="sep">·</span>
+    <span>{{ record.quantity }} 股 @ {{ record.price }}</span>
+    <span class="sep">·</span>
+    <span>{{ record.order_time or '—' }}</span>
+    <span class="mode">{{ '实盘' if record.trade_mode == 'real' else '模拟' }}</span>
+  </div>
+
+  <!-- 一句话摘要：列表里只显示这一行 -->
+  <div class="edit-top">
+    <input id="titleInput" type="text" maxlength="200"
+           value="{{ record.reason_title or '' }}"
+           placeholder="一句话摘要（列表里只显示这一行，如：板块启动初期低吸，赌算力订单落地）" />
+  </div>
+
+  <!-- 标签：点历史标签复用，避免同义标签泛滥 -->
+  <div class="field">
+    <label>标签</label>
+    <div class="tag-box">
+      <div id="tagChips" class="tag-chips"></div>
+      <input id="tagInput" type="text" placeholder="输入后回车添加，如：低吸 / 追高 / 板块轮动" />
+    </div>
+    <div id="tagSuggest" class="tag-suggest"></div>
+  </div>
+
+  <!-- 感悟：这笔交易给我的灵感/教训 -->
+  <div class="field">
+    <label>感悟 <span class="hint">这笔交易给了你什么灵感或教训（复盘时最值钱的一段）</span></label>
+    <textarea id="insightInput" rows="3"
+              placeholder="例：追在板块加速段，情绪一退就套。以后只在第一次回踩均线时进。">{{ record.reason_insight or '' }}</textarea>
+  </div>
+
+  <!-- 详细正文（富文本） -->
+  <div class="field">
+    <label>详细正文 <span class="hint">可贴截图、贴表格；Ctrl/⌘+S 保存</span></label>
+    <div id="editor"></div>
+  </div>
+
+  <div class="edit-bottom">
+    <span id="saveMeta" class="save-meta"></span>
+    <a href="/trade/reasons" class="back-link">☰ 复盘清单</a>
+    <a href="{{ back_url }}" class="back-link">← 返回交易页</a>
+    <button id="saveBtn" class="btn-primary" onclick="saveAll()">保存</button>
+  </div>
+
+  <!-- 原始正文用 JSON 传，避开 Jinja autoescape 把 HTML 转成实体 -->
+  <script id="originalReason" type="application/json">{{ reason_html|tojson }}</script>
+  <script id="originalTags" type="application/json">{{ (record.reason_tag_list or [])|tojson }}</script>
+</div>
+
+<link href="https://cdn.jsdelivr.net/npm/quill@2.0.3/dist/quill.snow.css" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/quill@2.0.3/dist/quill.js"></script>
+
+<style>
+  .edit-wrap { max-width: 1100px; margin: 0 auto; }
+
+  .trade-head { display:flex; align-items:center; gap:.45rem; flex-wrap:wrap; font-size:.9rem;
+    padding:.6rem .9rem; background:#f9fafb; border:1px solid #e5e7eb; border-radius:.5rem; margin-bottom:.7rem; }
+  .trade-head .side { padding:.1rem .45rem; border-radius:.25rem; font-size:.78rem; font-weight:600; color:#fff; }
+  .trade-head .side.buy { background:#dc2626; }
+  .trade-head .side.sell { background:#16a34a; }
+  .trade-head .code { color: var(--text-secondary); font-family: ui-monospace, monospace; }
+  .trade-head .sep { color:#d1d5db; }
+  .trade-head .mode { margin-left:auto; font-size:.75rem; color: var(--text-secondary); }
+
+  .edit-top { margin-bottom:.7rem; }
+  #titleInput { width:100%; padding:.55rem .75rem; border:1px solid #d1d5db; border-radius:.4rem;
+    font-size:1.05rem; font-weight:600; }
+
+  .field { margin-bottom:.8rem; }
+  .field > label { display:block; font-size:.82rem; font-weight:600; color: var(--text-primary); margin-bottom:.3rem; }
+  .field .hint { font-weight:400; font-size:.75rem; color: var(--text-secondary); }
+  #insightInput { width:100%; padding:.55rem .75rem; border:1px solid #d1d5db; border-radius:.4rem;
+    font-size:.9rem; font-family:inherit; resize:vertical; }
+
+  /* 标签输入 */
+  .tag-box { display:flex; align-items:center; gap:.35rem; flex-wrap:wrap;
+    padding:.4rem .5rem; border:1px solid #d1d5db; border-radius:.4rem; background:#fff; }
+  .tag-chips { display:flex; gap:.3rem; flex-wrap:wrap; }
+  .tag-chip { display:inline-flex; align-items:center; gap:.25rem; padding:.15rem .45rem;
+    background:#eff6ff; color:#1d4ed8; border-radius:.25rem; font-size:.78rem; }
+  .tag-chip button { border:none; background:none; color:#1d4ed8; cursor:pointer; font-size:.9rem; line-height:1; padding:0; }
+  #tagInput { flex:1; min-width:180px; border:none; outline:none; font-size:.85rem; padding:.15rem; }
+  .tag-suggest { margin-top:.3rem; display:flex; gap:.3rem; flex-wrap:wrap; }
+  .tag-suggest .sug { padding:.12rem .45rem; border:1px dashed #d1d5db; border-radius:.25rem;
+    font-size:.75rem; color: var(--text-secondary); cursor:pointer; background:#fff; }
+  .tag-suggest .sug:hover { border-color: var(--primary-color); color: var(--primary-color); }
+
+  .edit-bottom { position:sticky; bottom:0; z-index:5; display:flex; align-items:center; gap:.5rem;
+    margin-top:.6rem; padding:.7rem 1rem; background:#fff; border:1px solid #e5e7eb; border-radius:.5rem;
+    box-shadow:0 -2px 10px rgba(0,0,0,.05); }
+  .edit-bottom .save-meta { margin-right:auto; }
+  .back-link { color: var(--primary-color); text-decoration:none; font-size:.88rem; line-height:1;
+    padding:.5rem .9rem; border:1px solid var(--primary-color); border-radius:.4rem; background:#fff; white-space:nowrap; }
+  .back-link:hover { background:#eff6ff; }
+  .btn-primary { padding:.5rem 1.1rem; background:var(--primary-color); color:#fff; border:none;
+    border-radius:.4rem; font-size:.9rem; cursor:pointer; font-weight:500; }
+  .btn-primary:hover { background:var(--secondary-color); }
+  .save-meta { font-size:.78rem; color: var(--text-secondary); }
+  .save-meta.ok { color: var(--success-color); }
+  .save-meta.err { color:#dc2626; }
+
+  #editor { background:#fff; min-height: 45vh; border-radius: 0 0 .5rem .5rem; }
+  .ql-toolbar.ql-snow { border-radius:.5rem .5rem 0 0; border-color:#e5e7eb; background:#f9fafb; }
+  .ql-container.ql-snow { border-color:#e5e7eb; font-family:inherit; font-size:.95rem; }
+  .ql-editor { min-height: calc(45vh - 2rem); padding:1rem 1.25rem; }
+  .ql-editor img { max-width:100%; height:auto; }
+  .ql-editor table { border-collapse: collapse; table-layout: fixed; }
+  .ql-editor td { border:1px solid #cbd5e1; padding:.35rem .55rem; min-width:2.5rem; }
+</style>
+
+<script>
+const RECORD_ID = {{ record.id }};
+const TRADE_MODE = "{{ record.trade_mode }}";
+
+// ---------- Quill ----------
+const Size = Quill.import('attributors/style/size');
+Size.whitelist = ['12px', '14px', '16px', '18px', '20px', '24px', '32px'];
+Quill.register(Size, true);
+
+const quill = new Quill('#editor', {
+  theme: 'snow',
+  placeholder: '写下当时的判断依据、买卖点、仓位安排…（Ctrl+V 可直接粘贴截图）',
+  modules: {
+    table: true,
+    toolbar: [
+      [{ header: [1, 2, 3, false] }],
+      [{ size: Size.whitelist }],
+      ['bold', 'italic', 'underline', 'strike'],
+      [{ color: [] }, { background: [] }],
+      [{ list: 'ordered' }, { list: 'bullet' }],
+      ['blockquote', 'code-block'],
+      ['link', 'image'],
+      ['clean'],
+    ],
+  },
+});
+
+(function loadInitial() {
+  let raw = '';
+  try { raw = JSON.parse(document.getElementById('originalReason').textContent || '""') || ''; } catch (e) {}
+  if (!raw) return;
+  // 老数据是纯文本，新数据是 HTML：含 < 才当 HTML
+  if (raw.indexOf('<') >= 0) quill.clipboard.dangerouslyPasteHTML(0, raw);
+  else quill.setText(raw);
+})();
+
+// ---------- 标签 ----------
+let tags = [];
+try { tags = JSON.parse(document.getElementById('originalTags').textContent || '[]') || []; } catch (e) {}
+
+function renderTags() {
+  document.getElementById('tagChips').innerHTML = tags.map((t, i) =>
+    `<span class="tag-chip">${escapeHtml(t)}<button onclick="removeTag(${i})" title="移除">×</button></span>`
+  ).join('');
+}
+function addTag(t) {
+  t = (t || '').trim();
+  if (!t || tags.includes(t)) return;
+  tags.push(t);
+  renderTags();
+}
+function removeTag(i) { tags.splice(i, 1); renderTags(); }
+function escapeHtml(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+document.getElementById('tagInput').addEventListener('keydown', e => {
+  if (e.key === 'Enter' || e.key === ',' || e.key === '，') {
+    e.preventDefault();
+    addTag(e.target.value);
+    e.target.value = '';
+  } else if (e.key === 'Backspace' && !e.target.value && tags.length) {
+    removeTag(tags.length - 1);
+  }
+});
+
+// 历史标签供点选：同义标签泛滥会让标签事后没法统计
+fetch(`/api/trade/reason_tags?mode=${TRADE_MODE}`)
+  .then(r => r.json())
+  .then(j => {
+    const list = (j.data || []).slice(0, 20);
+    document.getElementById('tagSuggest').innerHTML = list.map(x =>
+      `<span class="sug" onclick="addTag('${escapeHtml(x.tag).replace(/'/g, "\\'")}')">${escapeHtml(x.tag)} <em>${x.count}</em></span>`
+    ).join('');
+  })
+  .catch(() => {});
+
+renderTags();
+
+// ---------- 保存 ----------
+let saving = false;
+async function saveAll() {
+  if (saving) return;
+  saving = true;
+  setMeta('保存中…');
+
+  let html = quill.root.innerHTML;
+  if (html.replace(/<(p|br)[^>]*>/g, '').replace(/<\/p>/g, '').trim() === '') html = '';
+
+  try {
+    const r = await fetch(`/api/trade/records/${RECORD_ID}/reason`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        reason_title: document.getElementById('titleInput').value.trim(),
+        reason_tags: tags,
+        reason_insight: document.getElementById('insightInput').value.trim(),
+        trade_reason: html,
+      }),
+    });
+    const j = await r.json();
+    setMeta(j.success ? '已保存 ' + new Date().toLocaleTimeString() : '保存失败：' + (j.message || '未知错误'),
+            j.success ? 'ok' : 'err');
+  } catch (e) {
+    setMeta('网络错误：' + e.message, 'err');
+  } finally {
+    saving = false;
+  }
+}
+function setMeta(text, cls) {
+  const el = document.getElementById('saveMeta');
+  el.className = 'save-meta' + (cls ? ' ' + cls : '');
+  el.textContent = text;
+}
+
+document.addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); saveAll(); }
+});
+</script>
+{% endif %}
+{% endblock %}

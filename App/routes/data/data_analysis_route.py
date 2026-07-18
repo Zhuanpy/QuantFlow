@@ -157,7 +157,7 @@ def analyze_single_file(file_path):
 
 def get_all_data_files():
     """获取所有1分钟数据文件"""
-    data_root = os.path.join(Config.get_project_root(), 'data', 'data', 'quarters')
+    data_root = os.path.join(Config.get_project_root(), 'data', 'quarters')
     files = []
 
     # 遍历所有年份和季度

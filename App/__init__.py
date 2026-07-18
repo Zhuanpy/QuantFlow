@@ -163,6 +163,12 @@ def register_blueprints(app):
         print(f"警告: 无法导入 stock_detail_route 蓝图: {e}")
 
     try:
+        from App.routes.data.compare_route import compare_bp
+        app.register_blueprint(compare_bp)
+    except ImportError as e:
+        print(f"警告: 无法导入 compare_route 蓝图: {e}")
+
+    try:
         from App.routes.data.tdx_download_route import tdx_bp
         app.register_blueprint(tdx_bp)
     except ImportError as e:

@@ -26,13 +26,8 @@ def get_data_base_path():
 
 
 def get_data_base_path_legacy():
-    """获取旧版数据基础路径（data/data/quarters/）"""
-    try:
-        from config import Config
-        project_root = Path(Config.get_project_root())
-    except:
-        project_root = Path(__file__).parent.parent.parent.parent
-    return project_root / 'data' / 'data' / 'quarters'
+    """路径统一后旧路径已并入新路径；保留此函数兼容调用方，返回同一 data/quarters/"""
+    return get_data_base_path()
 
 
 def get_1m_stock_data_from_csv(stock_code: str, year: int = None, start_date: str = None, end_date: str = None) -> pd.DataFrame:

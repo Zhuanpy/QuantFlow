@@ -1539,10 +1539,9 @@ def api_15m_daily_summary(code):
 
 
 def _list_1m_dates(code: str):
-    """扫描 data/data/quarters 和 data/quarters，返回该股票所有可用 1m 日期"""
+    """扫描 data/quarters，返回该股票所有可用 1m 日期"""
     root = _project_root()
     candidates = [
-        root / 'data' / 'data' / 'quarters',
         root / 'data' / 'quarters',
     ]
     dates = set()
@@ -1598,9 +1597,8 @@ def api_1m(code):
     year = target.year
     root = _project_root()
     candidates = [
-        root / 'data' / 'data' / 'quarters' / str(year) / f'Q{quarter}' / f'{code}.parquet',
         root / 'data' / 'quarters' / str(year) / f'Q{quarter}' / f'{code}.parquet',
-        root / 'data' / 'data' / 'quarters' / str(year) / f'Q{quarter}' / f'{code}.csv',
+        root / 'data' / 'quarters' / str(year) / f'Q{quarter}' / f'{code}.csv',
     ]
     df = None
     for path in candidates:
@@ -1644,7 +1642,7 @@ _ONEMIN_FULL_MIN = 238       # ≥ 此值视为"完整"（容忍个别缺分钟�
 
 def _onemin_quarter_bases():
     root = _project_root()
-    return [root / 'data' / 'data' / 'quarters', root / 'data' / 'quarters']
+    return [root / 'data' / 'quarters']
 
 
 def _onemin_years(code: str):

@@ -35,6 +35,117 @@ def page():
                            classifications=CLASSIFICATIONS)
 
 
+@board_data_bp.route('/hot')
+def board_hot_page():
+    """近期热点页：tab=trend 近期热点板块(评分动量) / tab=concept 概念热点(东财快照)，路由参数区分。"""
+    tab = request.args.get('tab', 'trend')
+    if tab not in ('trend', 'concept'):
+        tab = 'trend'
+    return render_template('strategy/board_hot.html', tab=tab)
+
+
+@board_data_bp.route('/api/hot_boards')
+def api_hot_boards():
+    """近期热点板块聚合：用板块趋势分(v1-mtf)最新值 + 近 ~5 交易日的评分动量/涨幅，
+    分档：退潮(分数下滑) / 新兴(分数快速抬升且未到高位) / 持续(高分且仍在上行)。"""
+    try:
+        eng = db.engines['quanttradingsystem']
+        with eng.connect() as conn:
+            dates = [r[0] for r in conn.execute(text(
+                "SELECT DISTINCT record_date FROM eval_board_trend_score "
+                "ORDER BY record_date DESC LIMIT 8")).fetchall()]
+            if not dates:
+                return jsonify({'success': True, 'as_of': None, 'ref_date': None,
+                                'emerging': [], 'sustained': [], 'fading': []})
+            latest = dates[0]
+            ref = dates[min(5, len(dates) - 1)]   # 约 5 个交易日前
+            cur = {r[0]: r for r in conn.execute(text(
+                "SELECT board_code, board_name, total_score, trend_stage, trend_strength, "
+                "`signal`, volume_score, change_pct, close "
+                "FROM eval_board_trend_score WHERE record_date=:d"), {'d': latest}).fetchall()}
+            prev = {r[0]: (r[1], r[2]) for r in conn.execute(text(
+                "SELECT board_code, total_score, close FROM eval_board_trend_score "
+                "WHERE record_date=:d"), {'d': ref}).fetchall()}
+
+        emerging, sustained, fading = [], [], []
+        for code, r in cur.items():
+            name, score, stage, strength, signal, volscore, chg, close = (
+                r[1], r[2] or 0.0, r[3], r[4], r[5], r[6] or 0.0, r[7], r[8])
+            p = prev.get(code)
+            delta = (score - (p[0] or 0.0)) if p else 0.0
+            ret = ((close / p[1] - 1) * 100) if (p and p[1]) else None
+            up = stage in ('up_early', 'up_late')
+            item = {
+                'board_code': code, 'board_name': name,
+                'total_score': round(score, 1), 'score_delta': round(delta, 1),
+                'ret_pct': (round(ret, 2) if ret is not None else None),
+                'trend_stage': stage, 'trend_strength': strength, 'signal': signal,
+                'volume_score': round(volscore, 0), 'change_pct': chg,
+            }
+            if p and delta <= -5 and (p[0] or 0) >= 55:
+                fading.append(item)
+            elif delta >= 5 and score < 78 and up:
+                emerging.append(item)
+            elif score >= 70 and up and delta > -3:
+                sustained.append(item)
+
+        emerging.sort(key=lambda x: -x['score_delta'])
+        sustained.sort(key=lambda x: -x['total_score'])
+        fading.sort(key=lambda x: x['score_delta'])
+        return jsonify({'success': True, 'as_of': str(latest), 'ref_date': str(ref),
+                        'emerging': emerging[:20], 'sustained': sustained[:20],
+                        'fading': fading[:20]})
+    except Exception as e:
+        logger.exception('近期热点板块聚合失败')
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@board_data_bp.route('/api/sync_sector_flow', methods=['POST'])
+def api_sync_sector_flow():
+    """抓取东财 行业+概念 板块的资金流/热度快照，写入 mkt_sector_flow_daily。"""
+    from App.services.sector_flow_service import sync_sector_flow
+    app = current_app._get_current_object()
+    try:
+        res = sync_sector_flow(app)
+        ok = not res.get('errors')
+        return jsonify({'success': ok, 'data': res}), (200 if ok else 207)
+    except Exception as e:
+        logger.exception('板块资金流同步失败')
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@board_data_bp.route('/api/hot_concepts')
+def api_hot_concepts():
+    """近期热点主题：从 mkt_sector_flow_daily 最新快照，给概念涨幅榜/概念资金榜/行业涨幅榜。"""
+    from App.models.strategy.SectorFlowDaily import SectorFlowDaily
+    try:
+        SectorFlowDaily.ensure_table()
+        latest = db.session.query(db.func.max(SectorFlowDaily.date)).scalar()
+        if latest is None:
+            return jsonify({'success': True, 'as_of': None,
+                            'concept_up': [], 'concept_flow': [], 'industry_up': []})
+
+        def top(board_type, order_col, limit=15):
+            rows = (SectorFlowDaily.query
+                    .filter(SectorFlowDaily.date == latest,
+                            SectorFlowDaily.board_type == board_type)
+                    .order_by(order_col.desc()).limit(limit).all())
+            return [{
+                'board_code': r.board_code, 'board_name': r.board_name,
+                'change_pct': r.change_pct, 'main_net': r.main_net, 'main_pct': r.main_pct,
+                'turnover_rate': r.turnover_rate, 'up_count': r.up_count,
+                'down_count': r.down_count, 'lead_stock': r.lead_stock, 'lead_pct': r.lead_pct,
+            } for r in rows]
+
+        return jsonify({'success': True, 'as_of': str(latest),
+                        'concept_up': top('concept', SectorFlowDaily.change_pct),
+                        'concept_flow': top('concept', SectorFlowDaily.main_net),
+                        'industry_up': top('industry', SectorFlowDaily.change_pct)})
+    except Exception as e:
+        logger.exception('热点概念读取失败')
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
 @board_data_bp.route('/board')
 def board_detail_page():
     """单板块详情：日 K / 15m 图 + 成分股 + 历次打分时间线。
@@ -59,19 +170,32 @@ def board_members_page():
     return render_template('strategy/board_members.html', board_code=code, init_qdate=init_qdate)
 
 
+def _parse_tdx_days(val, default=90):
+    """解析『全量回溯天数』——仅对本地完全无 1m 数据的股票生效。缺省/非法→default；夹取 [1, 365]。
+    注意：已有数据的股票一律按各自「本地最后日期→市场最新日」的缺口增量补齐，不受此值影响。"""
+    try:
+        n = int(val)
+    except (TypeError, ValueError):
+        return default
+    return max(1, min(365, n))
+
+
 @board_data_bp.route('/api/repair_members', methods=['POST'])
 def api_repair_members():
-    """后台修复某板块全部成分股的 1m 数据（本地 zip + TDX 近期 + 重生成 15m）。"""
+    """后台修复某板块全部成分股的 1m 数据（本地 zip + TDX 增量 + 重生成 15m）。
+    增量策略：逐股读本地 1m 最后日期，只下「该日→市场最新交易日」的缺口，已最新则跳过。
+    body{tdx_days:int} 仅作『本地无数据股票』的全量回溯上限（默认90），不影响已有数据的增量补齐。"""
     from App.services.minute_data_repair import start_repair, DEFAULT_ZIP_DIR
     data = request.get_json(silent=True) or {}
     code = (data.get('board_code') or '').strip()
     if not code:
         return jsonify({'success': False, 'message': '缺少 board_code'}), 400
     codes = _board_member_codes(code)
+    tdx_days = _parse_tdx_days(data.get('tdx_days'))
     app = current_app._get_current_object()
     ok, msg = start_repair(app, code, codes, zip_dir=(data.get('zip_dir') or DEFAULT_ZIP_DIR),
-                           then_trend=bool(data.get('with_trend')))
-    return jsonify({'success': ok, 'message': msg, 'count': len(codes)}), (200 if ok else 409)
+                           tdx_days=tdx_days, then_trend=bool(data.get('with_trend')))
+    return jsonify({'success': ok, 'message': msg, 'count': len(codes), 'tdx_days': tdx_days}), (200 if ok else 409)
 
 
 @board_data_bp.route('/api/repair_status')
@@ -139,13 +263,15 @@ def api_repair_all():
                         'total_members': len(codes), 'skipped_current': skipped_current,
                         'new_available': new_available, 'board_total': board_total})
 
+    tdx_days = _parse_tdx_days(data.get('tdx_days'))
     app = current_app._get_current_object()
-    ok, msg = start_repair(app, '全部板块', ordered, then_trend=bool(data.get('with_trend')),
+    ok, msg = start_repair(app, '全部板块', ordered, tdx_days=tdx_days,
+                           then_trend=bool(data.get('with_trend')),
                            board_map=code2board, board_total=board_total)
     return jsonify({
         'success': ok, 'message': msg, 'count': len(ordered), 'board_total': board_total,
         'total_members': len(codes), 'skipped_current': skipped_current,
-        'skipped_new': (0 if include_new else new_available),
+        'skipped_new': (0 if include_new else new_available), 'tdx_days': tdx_days,
     }), (200 if ok else 409)
 
 
@@ -1188,6 +1314,28 @@ def api_board_stocks(code):
             ), {'c': code}).fetchall()
 
         if not rows:
+            # 概念板块等不在 industry_eastmoney → 实时从东财拉成分（clist fs=b:BKxxxx，对任意板块码有效）
+            try:
+                from App.services.board_data_service import em_industry_cons_via_http
+                live = em_industry_cons_via_http(code, retries=3)
+            except Exception:
+                logger.exception(f'板块 {code} 实时拉成分失败')
+                live = []
+            if live:
+                bname = code
+                try:
+                    from App.models.strategy.SectorFlowDaily import SectorFlowDaily
+                    sf = (SectorFlowDaily.query.filter(SectorFlowDaily.board_code == code)
+                          .order_by(SectorFlowDaily.date.desc()).first())
+                    if sf and sf.board_name:
+                        bname = sf.board_name
+                except Exception:
+                    pass
+                # 拼成与 SQL 行同结构: (stock_code, stock_name, board_name, member_date, total_cap, circ_cap)
+                rows = [(m['stock_code'], m['stock_name'], bname, None,
+                         m.get('total_cap'), m.get('circ_cap')) for m in live]
+
+        if not rows:
             return jsonify({'success': True, 'data': {
                 'board_code': code, 'board_name': None, 'member_date': None,
                 'count': 0, 'rows': [], 'cap_source': None,
@@ -1339,29 +1487,66 @@ def api_board_stocks(code):
             for o in out:
                 o.setdefault('in_download', False)
 
-        # 附加：1m 数据更新到哪天（看完整性）——读各 code 最新季度 parquet 的 date 列最大值
+        # 附加：1m 数据开始/更新到哪天——优先读 data_download_records 账本(start_date/end_date)，
+        # 快且是全局唯一口径；账本无记录的极少数股票，再回退扫 quarters parquet 兜底。
         try:
-            from pathlib import Path
-            from config import Config
-            dq = Path(Config.get_project_root()) / 'data' / 'quarters'
-            # 所有 year/Q 目录，按时间倒序（最新在前），只扫一次
-            qdirs = sorted([d for y in dq.iterdir() if y.is_dir()
-                            for d in y.iterdir() if d.is_dir()],
-                           key=lambda d: (d.parent.name, d.name), reverse=True) if dq.exists() else []
+            from App.models.data.basic_info import StockInfo
+            from App.models.data.Stock1m import DownloadRecord
+            id2code = {}
+            for r in (StockInfo.query.filter(StockInfo.code.in_(stock_codes))
+                      .with_entities(StockInfo.id, StockInfo.code).all()):
+                id2code[r.id] = r.code
+            rec_start, rec_end = {}, {}
+            if id2code:
+                for rec in (DownloadRecord.query
+                            .filter(DownloadRecord.stock_code_id.in_(list(id2code.keys())))
+                            .with_entities(DownloadRecord.stock_code_id,
+                                           DownloadRecord.start_date, DownloadRecord.end_date).all()):
+                    c = id2code.get(rec[0])
+                    if not c:
+                        continue
+                    if rec[1] is not None:
+                        rec_start[c] = rec[1].strftime('%Y-%m-%d')
+                    if rec[2] is not None:
+                        rec_end[c] = rec[2].strftime('%Y-%m-%d')
             for o in out:
-                o['m1_last'] = None
-                for qd in qdirs:
-                    p = qd / f"{o['stock_code']}.parquet"
-                    if p.exists():
-                        try:
-                            dd = pd.read_parquet(p, columns=['date'])
-                            o['m1_last'] = pd.to_datetime(dd['date']).max().strftime('%Y-%m-%d')
-                        except Exception:
-                            pass
-                        break  # 最新季度即最新数据
+                o['m1_first'] = rec_start.get(o['stock_code'])
+                o['m1_last'] = rec_end.get(o['stock_code'])
+
+            # 兜底：账本里没有的，扫 parquet 补 开始(最旧季度min)+更新到(最新季度max)
+            miss = {o['stock_code'] for o in out if o['m1_last'] is None}
+            if miss:
+                from pathlib import Path
+                from config import Config
+                dq = Path(Config.get_project_root()) / 'data' / 'quarters'
+                qdirs = sorted([d for y in dq.iterdir() if y.is_dir()
+                                for d in y.iterdir() if d.is_dir()],
+                               key=lambda d: (d.parent.name, d.name), reverse=True) if dq.exists() else []
+                for o in out:
+                    if o['stock_code'] not in miss:
+                        continue
+                    for qd in qdirs:  # 新→旧：第一个含该股的季度即最新
+                        p = qd / f"{o['stock_code']}.parquet"
+                        if p.exists():
+                            try:
+                                dd = pd.read_parquet(p, columns=['date'])
+                                o['m1_last'] = pd.to_datetime(dd['date']).max().strftime('%Y-%m-%d')
+                            except Exception:
+                                pass
+                            break
+                    for qd in reversed(qdirs):  # 旧→新：第一个含该股的季度即最早
+                        p = qd / f"{o['stock_code']}.parquet"
+                        if p.exists():
+                            try:
+                                dd = pd.read_parquet(p, columns=['date'])
+                                o['m1_first'] = pd.to_datetime(dd['date']).min().strftime('%Y-%m-%d')
+                            except Exception:
+                                pass
+                            break
         except Exception:
-            logger.exception('板块成分股取 1m 最新日期失败')
+            logger.exception('板块成分股取 1m 开始/最新日期失败')
             for o in out:
+                o.setdefault('m1_first', None)
                 o.setdefault('m1_last', None)
 
         # 板块权重：按流通市值占比（东财行业板块指数=流通市值加权，此即真实口径）

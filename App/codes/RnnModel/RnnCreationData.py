@@ -460,7 +460,7 @@ class TrainingDataCalculate(ModelData):
         if self.data_1m is None or self.data_1m.empty:
             raise ValueError(
                 f"无法加载 1 分钟数据: {self.stock_code} (范围 {self.start_date} → {today})。"
-                f"请检查 data/data/quarters/ 里是否有该股票的 parquet 文件。"
+                f"请检查 data/quarters/ 里是否有该股票的 parquet 文件。"
             )
 
         # 标准化 date 列 + 去重排序

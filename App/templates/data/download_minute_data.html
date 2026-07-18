@@ -1,12 +1,17 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="download-container">
+<div class="download-container" data-mode="{{ mode }}">
+    <!-- 模式切换：盘后数据下载 / 数据修复（路由参数 ?mode= 区分，共用本页）-->
+    <div class="mode-tabs">
+        <a href="?mode=download" class="mode-tab {% if mode != 'repair' %}active{% endif %}">📥 盘后数据下载</a>
+        <a href="?mode=repair" class="mode-tab {% if mode == 'repair' %}active{% endif %}">🛠 数据修复</a>
+    </div>
     <!-- 顶部标题和按钮 -->
     <div class="download-header-bar">
         <div class="header-left">
-            <h2>盘后数据下载(日K + 1分钟 + 15分钟)</h2>
+            <h2>{% if mode == 'repair' %}数据修复（补落后的 1 分钟数据）{% else %}盘后数据下载(日K + 1分钟 + 15分钟){% endif %}</h2>
             <span id="tradingDayBadge" class="trading-day-badge" title="点击刷新" onclick="checkTradingDay()" style="cursor:pointer;"></span>
-            <div class="days-selector">
+            <div class="days-selector download-only">
                 <label for="downloadDays">下载天数：</label>
                 <select id="downloadDays" class="days-select">
                     <option value="1">最近1天</option>
@@ -16,17 +21,17 @@
                     <option value="5" selected>最近5天</option>
                 </select>
             </div>
-            <label class="force-check" title="勾选后会重置当天已下载成功的记录，重新下载全部股票">
+            <label class="force-check download-only" title="勾选后会重置当天已下载成功的记录，重新下载全部股票">
                 <input type="checkbox" id="forceDownload"> 强制重下
             </label>
         </div>
         <div class="button-group">
-            <button id="startBtn" class="btn btn-primary">开始下载</button>
-            <button id="stopBtn" class="btn btn-danger" disabled>暂停下载</button>
-            <button id="setDateBtn" class="btn btn-warning">设置下载日期</button>
-            <button id="resampleBtn" class="btn btn-success">重新采样</button>
+            <button id="startBtn" class="btn btn-primary download-only">开始下载</button>
+            <button id="stopBtn" class="btn btn-danger download-only" disabled>暂停下载</button>
+            <button id="setDateBtn" class="btn btn-warning download-only">设置下载日期</button>
+            <button id="resampleBtn" class="btn btn-success download-only">重新采样</button>
             <button id="openFolderBtn" class="btn btn-info">打开文件夹</button>
-            <button id="refreshBasicsBtn" class="btn btn-success" onclick="refreshBasics()"
+            <button id="refreshBasicsBtn" class="btn btn-success download-only" onclick="refreshBasics()"
                     title="批量刷新所有 A 股的最新价/PE/PB/总市值/流通市值（盘后跑一次即可，下载完成时也会自动跑）">
                 刷新基本面
             </button>
@@ -42,7 +47,11 @@
         <div class="left-panel">
             <!-- 统计数据 -->
             <div class="panel-card">
-                <h3>下载统计</h3>
+                <h3>下载统计
+                    <span style="font-size:.72rem;font-weight:400;color:#6b7280;">
+                        {% if mode == 'repair' %}范围：全市场{% else %}范围：股票池{% endif %}
+                    </span>
+                </h3>
                 <div class="stats-grid">
                     <div class="stat-item">
                         <div class="stat-number stat-total" id="totalCount">-</div>
@@ -51,6 +60,7 @@
                     <div class="stat-item">
                         <div class="stat-number stat-pending" id="pendingCount">-</div>
                         <div class="stat-label">等待下载</div>
+                        <div class="stat-sub" id="pendingBreakdown" title="日常「开始下载」只处理股票池；非池板块成分股靠「数据修复」里的「一键修复（按页下载）」补"></div>
                     </div>
                     <div class="stat-item">
                         <div class="stat-number stat-success" id="successCount">-</div>
@@ -110,8 +120,8 @@
                 </div>
             </div>
 
-            <!-- 今日数据状态 -->
-            <div class="panel-card task-status-card">
+            <!-- 今日数据状态（日常下载流水线专属） -->
+            <div class="panel-card task-status-card download-only">
                 <h3>今日数据状态 <span id="taskDate" class="task-date"></span></h3>
                 <div class="task-grid" id="taskGrid">
                     <div class="task-row">
@@ -187,13 +197,29 @@
                                 <option value="success">success</option>
                                 <option value="failed">failed</option>
                             </select>
+                            <select id="allSortSel" class="all-status-select" onchange="loadAllRecords(1)" title="排序方式">
+                                <option value="updated_at:desc" selected>排序:更新时间</option>
+                                <option value="end_date:asc">结束日期 ↑(旧→新/找落后)</option>
+                                <option value="end_date:desc">结束日期 ↓(新→旧)</option>
+                            </select>
+                            <label style="font-size:.75rem;color:#6b7280;display:inline-flex;align-items:center;gap:2px;" title="只看结束日期早于/等于此日的记录(找落后股票)">结束≤
+                                <input type="date" id="allEndBefore" class="all-status-select" onchange="loadAllRecords(1)">
+                            </label>
+                            <label style="font-size:.75rem;color:#6b7280;display:inline-flex;align-items:center;gap:2px;" title="只看结束日期 ≥ 此日的记录（例：≥2026-05-22，挑出落后但没落后太多、可修复的；配合「结束≤」可框出区间）">结束≥
+                                <input type="date" id="allEndAfter" class="all-status-select" onchange="loadAllRecords(1)">
+                            </label>
                             <button class="btn-small" onclick="loadAllRecords(1)">查询</button>
+                            <button class="btn-small" style="background:#6b7280;" onclick="resetAllFilters()" title="清空搜索/状态/排序/结束日期等全部筛选">重置</button>
+                            <button class="btn-small repair-only" style="background:#7c3aed;" onclick="repairByPage()"
+                                    title="一键修复：按当前筛选(结束≤)找出落后个股，从最落后开始每页(=每页条数)一批下载；边下边在列表实时显示 待下载→正在下载→success/failed，逐批推进直到全部补齐。可随时停止。">🛠 一键修复（按页下载）</button>
+                            <button id="byPageStop" class="btn-small repair-only" style="background:#dc2626;display:none;" onclick="_byPageRunning=false">停止</button>
+                            <span id="staleRepairStatus" class="repair-only" style="font-size:.72rem;color:#6b7280;"></span>
                         </div>
                         <div class="pending-pagination">
                             <span id="allInfo">加载中...</span>
                             <select id="allPerPage" class="all-status-select" onchange="loadAllRecords(1)">
-                                <option value="20" selected>20/页</option>
-                                <option value="50">50/页</option>
+                                <option value="20">20/页</option>
+                                <option value="50" selected>50/页</option>
                                 <option value="100">100/页</option>
                             </select>
                             <button id="allPrevBtn" class="btn-small" onclick="loadAllRecords(currentAllPage - 1)" disabled>上一页</button>
@@ -253,6 +279,35 @@
     margin: 0 auto;
     padding: 1rem;
 }
+
+/* 模式切换标签（盘后数据下载 / 数据修复） */
+.mode-tabs {
+    display: flex;
+    gap: 0.4rem;
+    margin-bottom: 0.75rem;
+}
+.mode-tabs .mode-tab {
+    padding: 0.45rem 1.1rem;
+    border-radius: 0.5rem 0.5rem 0 0;
+    font-size: 0.92rem;
+    font-weight: 600;
+    text-decoration: none;
+    color: var(--text-secondary);
+    background: var(--background-color, #f3f4f6);
+    border: 1px solid transparent;
+}
+.mode-tabs .mode-tab.active {
+    color: var(--primary-color);
+    background: var(--card-background, #fff);
+    border-color: #e5e7eb;
+    border-bottom-color: var(--card-background, #fff);
+    box-shadow: var(--shadow-sm, 0 1px 2px rgba(0,0,0,.05));
+}
+.mode-tabs .mode-tab:hover { color: var(--primary-color); }
+
+/* 按模式显隐：数据修复模式隐藏下载专属控件；盘后下载模式隐藏修复专属控件 */
+.download-container[data-mode="repair"] .download-only { display: none !important; }
+.download-container[data-mode="download"] .repair-only { display: none !important; }
 
 /* 顶部标题栏 */
 .download-header-bar {
@@ -330,7 +385,8 @@
     display: grid;
     grid-template-columns: 420px 1fr;
     gap: 1rem;
-    align-items: start;
+    /* stretch：右侧详情卡片跟左侧面板等高，表格区域吃掉多出来的高度 */
+    align-items: stretch;
 }
 
 /* 左侧面板 */
@@ -343,6 +399,8 @@
 /* 右侧面板 */
 .right-panel {
     min-height: 500px;
+    display: flex;
+    flex-direction: column;
 }
 
 /* 通用卡片样式 */
@@ -486,6 +544,14 @@
     font-size: 0.7rem;
     color: var(--text-secondary);
     font-weight: 500;
+}
+
+.stat-sub {
+    font-size: 0.62rem;
+    color: var(--text-secondary);
+    margin-top: 0.15rem;
+    line-height: 1.2;
+    white-space: nowrap;
 }
 
 .stat-total { color: var(--primary-color); }
@@ -655,12 +721,13 @@
     display: none;
     flex: 1;
     min-height: 350px;
-    max-height: calc(100vh - 300px);
     overflow-y: auto;
 }
 
 .tab-content.active {
-    display: block;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;   /* 允许内部表格区自己滚动，而不是把卡片撑高 */
 }
 
 .stock-list {
@@ -786,7 +853,9 @@
 }
 
 .records-table-wrap {
-    overflow-x: auto;
+    flex: 1;
+    min-height: 0;
+    overflow: auto;   /* 表格自己滚，高度跟着卡片（=左侧面板）撑满 */
     padding: 0.25rem 0;
 }
 
@@ -1097,6 +1166,10 @@
 .trading-day-badge.loading { background: #f3f4f6; color: #6b7280; }
 </style>
 <script>
+// 页面口径：盘后下载(mode=download)只看股票池；数据修复(mode=repair)看全市场
+const PAGE_MODE = "{{ mode }}";
+const RECORD_SCOPE = PAGE_MODE === 'repair' ? 'all' : 'pool';
+
 // 手动批量刷新基本面（最新价/PE/PB/总市值等）
 async function refreshBasics() {
     const btn = document.getElementById('refreshBasicsBtn');
@@ -1218,6 +1291,17 @@ function showTab(tabName) {
     }
 }
 
+// 重置「全部记录」的所有筛选条件（恢复默认），并重新查询
+function resetAllFilters() {
+    document.getElementById('allSearchInput').value = '';
+    document.getElementById('allCodeTypeFilter').value = 'stock';
+    document.getElementById('allStatusFilter').value = '';
+    document.getElementById('allSortSel').value = 'updated_at:desc';
+    document.getElementById('allEndBefore').value = '';
+    document.getElementById('allEndAfter').value = '';
+    loadAllRecords(1);
+}
+
 // 加载全部 RecordStockMinute 记录（完整字段，支持搜索/状态筛选/分页）
 function loadAllRecords(page = 1) {
     if (page < 1) page = 1;
@@ -1228,15 +1312,22 @@ function loadAllRecords(page = 1) {
     const status = document.getElementById('allStatusFilter').value || '';
     const codeType = document.getElementById('allCodeTypeFilter').value || '';
     const perPage = document.getElementById('allPerPage').value || '20';
-    const params = new URLSearchParams({ page: page, per_page: perPage });
+    const [sortBy, sortOrder] = (document.getElementById('allSortSel').value || 'updated_at:desc').split(':');
+    const endBefore = document.getElementById('allEndBefore').value || '';
+    const endAfter = document.getElementById('allEndAfter').value || '';
+    const params = new URLSearchParams({ page: page, per_page: perPage, scope: RECORD_SCOPE });
     if (search) params.set('search', search);
     if (status) params.set('status', status);
     if (codeType) params.set('code_type', codeType);
+    if (sortBy) params.set('sort', sortBy);
+    if (sortOrder) params.set('order', sortOrder);
+    if (endBefore) params.set('end_before', endBefore);
+    if (endAfter) params.set('end_after', endAfter);
 
     const body = document.getElementById('allRecordsBody');
     body.innerHTML = '<tr><td colspan="13" class="empty-message">加载中...</td></tr>';
 
-    fetch(`{{ url_for("download_data_bp.api_get_download_records") }}?${params.toString()}`)
+    return fetch(`{{ url_for("download_data_bp.api_get_download_records") }}?${params.toString()}`)
         .then(res => res.json())
         .then(data => {
             if (data.error) {
@@ -1299,6 +1390,107 @@ function updateAllPagination() {
     document.getElementById('allPrevBtn').disabled = currentAllPage <= 1;
     document.getElementById('allNextBtn').disabled = currentAllPage >= totalAllPages;
 }
+
+// 页面载入时若已有修复在后台跑（如别处触发）：只显示进度文字，不每秒重载列表（避免页面跳动）
+let _staleTimer = null;
+function pollStaleRepair() {
+    const st = document.getElementById('staleRepairStatus');
+    clearInterval(_staleTimer);
+    _staleTimer = setInterval(async () => {
+        const j = await fetch('/board_data/api/repair_status').then(r => r.json()).catch(() => null);
+        if (!j || !j.success) return;
+        const s = j.data;
+        if (s.running) {
+            if (st) st.textContent = (s.paused ? '⏸ 后台修复已暂停 ' : '后台修复中… ')
+                + `${s.done}/${s.total} 成功${s.ok}/失败${s.fail} 当前${s.cur || '—'}`;
+        } else {
+            clearInterval(_staleTimer);
+            if (st) st.textContent = s.error ? `失败：${s.error}`
+                : (s.total ? `修复${s.stopped ? '已停止' : '完成'}：成功${s.ok}/失败${s.fail}` : '');
+            loadAllRecords(currentAllPage);   // 结束时刷新一次
+        }
+    }, 2000);
+}
+
+// ===== 一键修复（按页下载）：从最落后开始，每页(=每页条数)一批下载，每批实时刷新列表，直到全部补齐 =====
+let _byPageRunning = false;
+let _byPageStart = 0;
+async function repairByPage() {
+    if (_byPageRunning) { alert('按页修复已在进行中'); return; }
+    const endBefore = document.getElementById('allEndBefore').value || '';
+    const endAfter = document.getElementById('allEndAfter').value || '';
+    // 1) 取"最落后优先"的有序落后代码列表
+    let lst;
+    try {
+        lst = await fetch('/api/repair_stale_records', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ list_only: true, end_before: endBefore, end_after: endAfter })
+        }).then(r => r.json());
+    } catch (e) { alert('获取落后列表失败：' + e.message); return; }
+    if (!lst.success) { alert(lst.message || '获取失败'); return; }
+    const codes = lst.codes || [];
+    if (!codes.length) { alert('没有落后个股，全部已到最新交易日'); return; }
+    const CHUNK = parseInt(document.getElementById('allPerPage').value || '20', 10);
+    if (!confirm(`将按「最落后优先」逐批修复 ${codes.length} 只（每批 ${CHUNK} 只，补齐到 ${lst.latest_trading_date}）：\n`
+        + `每批下完自动刷新列表，逐批推进直到全部完成；可随时「停止」。\n开始？`)) return;
+
+    _byPageRunning = true;
+    _byPageStart = Date.now();
+    document.getElementById('byPageStop').style.display = '';
+    const st = document.getElementById('staleRepairStatus');
+    let done = 0;
+    try {
+        // 按结束日期升序展示，边修边能看到落后的往后掉
+        document.getElementById('allSortSel').value = 'end_date:asc';
+        for (let i = 0; i < codes.length && _byPageRunning; i += CHUNK) {
+            const chunk = codes.slice(i, i + CHUNK);
+            const j = await fetch('/api/repair_codes', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ codes: chunk })
+            }).then(r => r.json());
+            if (!j.success) { st.textContent = '启动失败：' + (j.message || ''); break; }
+            await _waitRepairDone(done, codes.length);   // 轮询本批完成
+            done += chunk.length;
+            st.textContent = `按页修复中… 已处理 ${done}/${codes.length} 只`;
+            await loadAllRecords(1);   // 及时刷新列表（本批已补的 end_date 更新、往后掉）
+            await updateStatistics();  // 顺带刷新上方统计
+        }
+        st.textContent = _byPageRunning
+            ? `✓ 按页修复完成，共处理 ${done}/${codes.length} 只`
+            : `⏹ 已停止，已处理 ${done}/${codes.length} 只（点「按页依次修复」可继续）`;
+    } finally {
+        _byPageRunning = false;
+        document.getElementById('byPageStop').style.display = 'none';
+    }
+}
+// 轮询单批修复直到后台任务结束。只更新进度/预估文字，不中途刷新列表
+//（列表在本批全部下完后由 repairByPage 统一刷新一次，避免每下一只就跳动）
+function _waitRepairDone(doneBefore, totalAll) {
+    return new Promise(resolve => {
+        const st = document.getElementById('staleRepairStatus');
+        const t = setInterval(async () => {
+            const j = await fetch('/board_data/api/repair_status').then(r => r.json()).catch(() => null);
+            if (!j || !j.success) return;
+            const s = j.data;
+            if (s.running) {
+                const overall = doneBefore + s.done;
+                const pct = totalAll ? Math.round(overall / totalAll * 100) : 0;
+                let eta = '';
+                if (_byPageStart && overall > 0 && overall < totalAll) {
+                    const elapsed = (Date.now() - _byPageStart) / 1000;
+                    const remain = Math.round(elapsed / overall * (totalAll - overall));
+                    eta = `，预计剩余约 ${Math.floor(remain / 60)}分${remain % 60}秒`;
+                }
+                st.textContent = `下载中… 总进度 ${overall}/${totalAll} (${pct}%)｜本批 ${s.done}/${s.total}`
+                    + `｜成功${s.ok} 失败${s.fail}｜当前 ${s.cur || '—'}${eta}`;
+            } else { clearInterval(t); resolve(); }
+        }, 2000);
+    });
+}
+// 页面载入时若已有修复在跑，接上进度
+fetch('/board_data/api/repair_status').then(r => r.json()).then(j => {
+    if (j && j.success && j.data && j.data.running) pollStaleRepair();
+}).catch(() => {});
 
 // 加载成功下载的股票列表
 function loadSuccessStocks(page = 1) {
@@ -1612,11 +1804,16 @@ function loadPreview() {
 }
 
 function updateStatistics() {
-    fetch('{{ url_for("download_data_bp.get_download_statistics") }}')
+    fetch(`{{ url_for("download_data_bp.get_download_statistics") }}?scope=${RECORD_SCOPE}`)
         .then(res => res.json())
         .then(data => {
             document.getElementById('totalCount').innerText = data.total || 0;
             document.getElementById('pendingCount').innerText = data.pending || 0;
+            const bd = document.getElementById('pendingBreakdown');
+            // 下载页统计已限定股票池，非池恒为0，无需再拆分
+            if (bd) bd.innerText = PAGE_MODE === 'repair'
+                ? `池内 ${data.pending_pool || 0} / 非池 ${data.pending_nonpool || 0}`
+                : '';
             document.getElementById('successCount').innerText = data.success || 0;
             document.getElementById('failedCount').innerText = data.failed || 0;
             document.getElementById('processingCount').innerText = data.processing || 0;

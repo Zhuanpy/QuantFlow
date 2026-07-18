@@ -3,6 +3,7 @@
 用于记录所有交易操作和结果
 """
 from App.exts import db
+from sqlalchemy.dialects.mysql import MEDIUMTEXT
 from datetime import datetime
 import logging
 from decimal import Decimal
@@ -79,7 +80,12 @@ class TradeRecord(db.Model):
     cancel_time = db.Column(db.DateTime, nullable=True, comment='取消时间')
     
     # 操作理由/想法（手动填写，复盘用；与系统自动写入的 remarks 区分开）
-    trade_reason = db.Column(db.Text, nullable=True, comment='操作理由/想法(手动填写)')
+    # 拆成四段：列表只显示 reason_title 一行 + 标签，正文/感悟点进详情页看，避免单元格把行撑高。
+    reason_title = db.Column(db.String(200), nullable=True, comment='操作理由一句话摘要(列表单行显示)')
+    reason_tags = db.Column(db.String(200), nullable=True, comment='标签，逗号分隔(如 低吸,板块轮动)')
+    reason_insight = db.Column(db.Text, nullable=True, comment='感悟：这笔交易给我的灵感/教训')
+    # 详细正文：Quill 富文本 HTML；MEDIUMTEXT 是因为贴截图的 base64 会撑爆 TEXT 的 64KB
+    trade_reason = db.Column(MEDIUMTEXT, nullable=True, comment='操作理由详细正文(富文本HTML)')
 
     # 备注信息
     remarks = db.Column(db.Text, nullable=True, comment='备注')
@@ -241,6 +247,11 @@ class TradeRecord(db.Model):
             'signal_source': self.signal_source,
             'confidence_score': self.confidence_score,
             'trade_reason': self.trade_reason,
+            'reason_title': self.reason_title,
+            'reason_tags': self.reason_tags,
+            'reason_tag_list': self.get_reason_tags(),
+            'reason_insight': self.reason_insight,
+            'has_reason_detail': bool((self.trade_reason or '').strip() or (self.reason_insight or '').strip()),
             'order_time': self.order_time.strftime('%Y-%m-%d %H:%M:%S') if self.order_time else None,
             'execute_time': self.execute_time.strftime('%Y-%m-%d %H:%M:%S') if self.execute_time else None,
             'cancel_time': self.cancel_time.strftime('%Y-%m-%d %H:%M:%S') if self.cancel_time else None,
@@ -248,6 +259,54 @@ class TradeRecord(db.Model):
             'created_at': self.created_at.strftime('%Y-%m-%d %H:%M:%S') if self.created_at else None,
             'updated_at': self.updated_at.strftime('%Y-%m-%d %H:%M:%S') if self.updated_at else None
         }
+
+    # ---------- 操作理由：标签 ----------
+    @staticmethod
+    def normalize_tags(raw) -> str:
+        """把标签统一成 '低吸,板块轮动' 这种逗号分隔的规范串。
+
+        接受 list 或字符串（中英文逗号/顿号/空格分隔都吃），去空白、去重、保序。
+        存成规范串是为了标签能被聚合统计——否则「低吸」「低吸 」「低吸,」会被当成三个标签。
+        """
+        if raw is None:
+            return ''
+        if isinstance(raw, str):
+            import re
+            parts = re.split(r'[,，、;；\s]+', raw)
+        else:
+            parts = list(raw)
+
+        seen, out = set(), []
+        for p in parts:
+            t = str(p).strip()
+            if t and t not in seen:
+                seen.add(t)
+                out.append(t)
+        return ','.join(out)
+
+    def get_reason_tags(self) -> list:
+        """标签列表；无标签返回 []"""
+        return [t for t in (self.reason_tags or '').split(',') if t.strip()]
+
+    @classmethod
+    def all_reason_tags(cls, trade_mode: str = None) -> list:
+        """已用过的标签及其次数，按次数倒序。
+
+        用途：编辑页把历史标签列出来供点选，避免「低吸」「低吸买入」「低位吸筹」这类
+        同义标签泛滥，让标签事后还能拿来做统计。
+        """
+        q = cls.query.filter(cls.reason_tags.isnot(None), cls.reason_tags != '')
+        if trade_mode:
+            q = q.filter(cls.trade_mode == trade_mode)
+
+        counter = {}
+        for (tags,) in q.with_entities(cls.reason_tags).all():
+            for t in (tags or '').split(','):
+                t = t.strip()
+                if t:
+                    counter[t] = counter.get(t, 0) + 1
+        return [{'tag': t, 'count': c}
+                for t, c in sorted(counter.items(), key=lambda kv: (-kv[1], kv[0]))]
 
     def is_buy_trade(self):
         """检查是否为买入交易"""

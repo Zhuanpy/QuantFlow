@@ -207,6 +207,42 @@ def _recompute_dist_snapshots_after_download():
         logging.warning(f"[snapshot] 下载后重算分布快照失败（不影响下载主流程）: {e}")
 
 
+def _active_pool_stock_ids():
+    """当前股票池(is_active) 对应的 data_stock_info.id 列表。
+    分层维护：日常收盘下载只维护股票池；其余板块成分股(在账本里但不在池)靠周/月「增量补齐」。
+    池为空则返回 []（日常下载不处理任何股票）。"""
+    from App.models.strategy.StockPool import StockPool
+    from App.models.data.basic_info import StockInfo
+    codes = [p.stock_code for p in
+             StockPool.query.filter(StockPool.is_active == True)
+             .with_entities(StockPool.stock_code).all()]
+    if not codes:
+        return []
+    return [r.id for r in StockInfo.query.filter(StockInfo.code.in_(codes))
+            .with_entities(StockInfo.id).all()]
+
+
+def _board_stock_ids():
+    """所有板块(BKxxxx) 对应的 data_stock_info.id 列表。
+    板块日K/1m/15m 已并入日常收盘下载（与股票池并列一起进下载队列），不再单靠脚本补。"""
+    from App.models.data.basic_info import StockInfo
+    return [r.id for r in StockInfo.query.filter(StockInfo.code.like('BK%'))
+            .with_entities(StockInfo.id).all()]
+
+
+def _apply_scope(query, scope):
+    """按页面口径收窄 RecordStockMinute 查询。
+
+    scope='pool'：盘后下载页(mode=download)口径，看「股票池 + 板块」——日常收盘下载
+    现在同时跑池内个股和板块，列表/统计跟着这个口径，才能既不把全市场几千条一起显示、
+    又能让「板块」筛选/统计有数据（板块从不在池里，只按池收窄会恒为空）。
+    其余：数据修复页(mode=repair)口径，全市场都要看。
+    """
+    if scope != 'pool':
+        return query
+    return query.filter(dlr.stock_code_id.in_(_active_pool_stock_ids() + _board_stock_ids()))
+
+
 def download_file():
     # 声明使用全局变量，记录下载状态、进度、停止下载标志和最大下载天数
     global download_status, download_progress, stop_download, download_max_days, download_force
@@ -228,12 +264,20 @@ def download_file():
 
     # 使用应用上下文以便于访问数据库和其他应用资源
     with current_app.app_context():
-        
+
+        # 分层维护：日常收盘下载处理「当前股票池 + 板块」，其余板块成分股靠周/月增量补齐。
+        # 板块(BKxxxx)与个股并列进下载队列，走同一套 日K+1m+15m 管线，队列里可见、可筛选。
+        pool_ids = _active_pool_stock_ids()
+        board_ids = _board_stock_ids()
+        download_ids = pool_ids + board_ids
+        logging.info(f"日常下载范围=股票池 {len(pool_ids)} 只 + 板块 {len(board_ids)} 个 = {len(download_ids)} 项")
+
         # 重置失败的股票为待下载状态
         logging.info("开始重置失败的股票为待下载状态...")
-        
-        # 将所有失败的股票重置为pending状态
+
+        # 将所有失败的股票重置为pending状态（股票池 + 板块）
         failed_reset_count = dlr.query.filter(
+            dlr.stock_code_id.in_(download_ids),
             dlr.download_status == 'failed',
             dlr.end_date != date(2050, 1, 1),  # 排除被忽略的股票
             dlr.record_date != date(2050, 1, 1)  # 排除被忽略的股票
@@ -242,14 +286,15 @@ def download_file():
             'download_progress': 0.0,
             'error_message': None,  # 清除错误信息
             'updated_at': datetime.utcnow()
-        })
+        }, synchronize_session=False)
 
         # 获取最近交易日，判断是否需要下载
         latest_trading_date, is_today_trading = get_latest_trading_date()
         logging.info(f"最近交易日: {latest_trading_date}, 今天是否交易日: {is_today_trading}")
 
-        # 检查是否需要重置所有success记录
+        # 检查是否需要重置所有success记录（判断口径也限定股票池）
         latest_record = dlr.query.filter(
+            dlr.stock_code_id.in_(pool_ids),
             dlr.record_date != date(2050, 1, 1)  # 排除被忽略的股票
         ).order_by(dlr.record_date.desc()).first()
 
@@ -279,8 +324,9 @@ def download_file():
             else:
                 logging.info(f"重置success记录以获取最新数据（最近交易日: {latest_trading_date}）")
 
-            # 将所有非忽略的success记录重置为pending
+            # 将股票池 + 板块内非忽略的success记录重置为pending（板块也跟着每个新交易日刷新）
             success_reset_count = dlr.query.filter(
+                dlr.stock_code_id.in_(download_ids),
                 dlr.download_status == 'success',
                 dlr.end_date != date(2050, 1, 1),
                 dlr.record_date != date(2050, 1, 1)
@@ -288,15 +334,16 @@ def download_file():
                 'download_status': 'pending',
                 'download_progress': 0.0,
                 'updated_at': datetime.utcnow()
-            })
+            }, synchronize_session=False)
 
             logging.info(f"重置了 {success_reset_count} 条success记录为pending状态")
         
         db.session.commit()
         logging.info(f"重置了 {failed_reset_count} 条失败记录为pending状态")
 
-        # 计算符合条件的数据条数（需要下载且日期在今天之前）
+        # 计算符合条件的数据条数（需要下载且日期在今天之前，股票池 + 板块）
         total_count = dlr.query.filter(
+            dlr.stock_code_id.in_(download_ids),
             dlr.download_status != 'success',  # 排除已下载成功的记录
             dlr.end_date <= today,  # 下载日期在今天或之前
             dlr.record_date <= today,  # 记录日期在今天或之前
@@ -318,8 +365,9 @@ def download_file():
 
         logging.info(f"开始下载任务，总共需要下载 {total_count} 个股票")
 
-        # 获取所有需要下载的记录
+        # 获取所有需要下载的记录（股票池 + 板块）
         records_to_download = dlr.query.filter(
+            dlr.stock_code_id.in_(download_ids),
             dlr.download_status != 'success',
             dlr.end_date <= today,
             dlr.record_date <= today,
@@ -848,6 +896,7 @@ def download_file():
             logging.warning(f"[basics] 批量刷新基本面失败（不影响主下载）: {e}")
 
         # 下载完成 → 重算分布快照，让股票池/筛选页的 15m 趋势随收盘下载即时刷新
+        # 板块(BKxxxx)已随主下载队列走完 日K+1m+15m，无需再单独补（见 download_ids）。
         _recompute_dist_snapshots_after_download()
 
         # 下载任务完成，更新下载状态和进度
@@ -1368,37 +1417,39 @@ def get_download_statistics():
         db.session.rollback()
         db.session.expire_all()
 
-        pending_count = dlr.query.filter(
+        # scope: 'pool'=只统计股票池(盘后下载页) / 其余=全市场(数据修复页)
+        scope = request.args.get('scope', '', type=str)
+
+        def _count(status=None):
+            q = dlr.query.filter(
+                dlr.end_date != date(2050, 1, 1),
+                dlr.record_date != date(2050, 1, 1)
+            )
+            if status:
+                q = q.filter(dlr.download_status == status)
+            return _apply_scope(q, scope).count()
+
+        pending_count = _count('pending')
+        success_count = _count('success')
+        failed_count = _count('failed')
+        processing_count = _count('processing')
+        total_count = _count()
+
+        # 待下载拆分：日常"开始下载"只处理股票池；非池板块成分股靠周/月「一键修复落后」补。
+        # scope=pool 时统计本来就只有池内，池外恒为 0。
+        pool_ids = _active_pool_stock_ids()
+        pending_pool = dlr.query.filter(
             dlr.download_status == 'pending',
+            dlr.stock_code_id.in_(pool_ids),
             dlr.end_date != date(2050, 1, 1),
             dlr.record_date != date(2050, 1, 1)
-        ).count()
-
-        success_count = dlr.query.filter(
-            dlr.download_status == 'success',
-            dlr.end_date != date(2050, 1, 1),
-            dlr.record_date != date(2050, 1, 1)
-        ).count()
-
-        failed_count = dlr.query.filter(
-            dlr.download_status == 'failed',
-            dlr.end_date != date(2050, 1, 1),
-            dlr.record_date != date(2050, 1, 1)
-        ).count()
-
-        processing_count = dlr.query.filter(
-            dlr.download_status == 'processing',
-            dlr.end_date != date(2050, 1, 1),
-            dlr.record_date != date(2050, 1, 1)
-        ).count()
-
-        total_count = dlr.query.filter(
-            dlr.end_date != date(2050, 1, 1),
-            dlr.record_date != date(2050, 1, 1)
-        ).count()
+        ).count() if pool_ids else 0
+        pending_nonpool = pending_count - pending_pool if scope != 'pool' else 0
 
         return jsonify({
             "pending": pending_count,
+            "pending_pool": pending_pool,
+            "pending_nonpool": pending_nonpool,
             "success": success_count,
             "failed": failed_count,
             "processing": processing_count,
@@ -1871,7 +1922,11 @@ def download_fund_holdings():
 
 @download_data_bp.route('/download_minute_data_page')
 def download_minute_data_page():
-    return render_template('data/download_minute_data.html')
+    # mode=download 盘后数据下载(默认) / mode=repair 数据修复，共用本页，路由参数区分
+    mode = request.args.get('mode', 'download')
+    if mode not in ('download', 'repair'):
+        mode = 'download'
+    return render_template('data/download_minute_data.html', mode=mode)
 
 @download_data_bp.route('/open_data_folder', methods=['POST'])
 def open_data_folder():
@@ -1880,12 +1935,13 @@ def open_data_folder():
         import subprocess
         import platform
         
-        # 获取1分钟数据文件夹路径
+        # 获取1分钟数据文件夹路径（1m 按季度存于 <项目根>/data/quarters）
         from config import Config
-        data_folder = os.path.join(Config.get_project_root(), 'data', 'data', 'quarters')
-        
-        # 确保文件夹存在
-        os.makedirs(data_folder, exist_ok=True)
+        data_folder = os.path.join(Config.get_project_root(), 'data', 'quarters')
+
+        # 仅当真实数据目录不存在时才创建，避免拼错路径生成空目录
+        if not os.path.isdir(data_folder):
+            os.makedirs(data_folder, exist_ok=True)
         
         # 根据操作系统打开文件夹
         system = platform.system()
@@ -2107,11 +2163,20 @@ def api_get_download_records():
         status_filter = request.args.get('status', '', type=str)
         # code_type: 'stock'=个股 / 'board'=板块（代码以 BK 开头）/ ''=全部
         code_type = request.args.get('code_type', '', type=str)
+        # 排序：sort=end_date/start_date/record_date/updated_at，order=asc/desc
+        sort_by = request.args.get('sort', 'updated_at', type=str)
+        order = request.args.get('order', 'desc', type=str)
+        # 结束日期范围筛选（找落后股票）
+        end_before = request.args.get('end_before', '', type=str)
+        end_after = request.args.get('end_after', '', type=str)
+        end_on = request.args.get('end_on', '', type=str)  # 结束日期正好等于某天
+        # scope: 'pool'=只看股票池(盘后下载页) / 其余=全市场(数据修复页)
+        scope = request.args.get('scope', '', type=str)
 
         per_page = min(per_page, 100)
 
         # 构建查询
-        query = dlr.query
+        query = _apply_scope(dlr.query, scope)
 
         # 状态筛选
         if status_filter:
@@ -2145,8 +2210,36 @@ def api_get_download_records():
             dlr.record_date != date(2050, 1, 1)
         )
 
-        # 排序
-        query = query.order_by(dlr.updated_at.desc())
+        # 排除退市股票：A股退市后名称会改成含"退"（如"乐视退""退市锐电"）；
+        # 仅风险警示的 *ST/ST 名称不含"退"、仍在交易，不受影响。
+        delisted_ids = [s[0] for s in db.session.query(StockCodes.id)
+                        .filter(StockCodes.name.like('%退%')).all()]
+        if delisted_ids:
+            query = query.filter(~dlr.stock_code_id.in_(delisted_ids))
+
+        # 结束日期筛选：正好等于某天 / 范围
+        if end_on:
+            try:
+                query = query.filter(dlr.end_date == datetime.strptime(end_on, '%Y-%m-%d').date())
+            except ValueError:
+                pass
+        if end_before:
+            try:
+                query = query.filter(dlr.end_date <= datetime.strptime(end_before, '%Y-%m-%d').date())
+            except ValueError:
+                pass
+        if end_after:
+            try:
+                query = query.filter(dlr.end_date >= datetime.strptime(end_after, '%Y-%m-%d').date())
+            except ValueError:
+                pass
+
+        # 排序（默认按更新时间倒序；可切结束日期等）
+        sort_col = {
+            'end_date': dlr.end_date, 'start_date': dlr.start_date,
+            'record_date': dlr.record_date, 'updated_at': dlr.updated_at,
+        }.get(sort_by, dlr.updated_at)
+        query = query.order_by(sort_col.asc() if order == 'asc' else sort_col.desc())
 
         # 分页
         total = query.count()
@@ -2185,6 +2278,108 @@ def api_get_download_records():
     except Exception as e:
         logging.error(f"获取下载记录失败: {e}")
         return jsonify({'error': str(e)}), 500
+
+
+@download_data_bp.route('/api/repair_stale_records', methods=['POST'])
+def api_repair_stale_records():
+    """一键修复「下载表单里结束日期落后」的个股：从各自 end_date 增量补到市场最新交易日。
+    复用板块修复 minute_data_repair（本地zip + TDX缺口 + 重生成15m + 补日K + 回写end_date）。
+    body{end_before:YYYY-MM-DD?} 只修结束日期<=该日的；缺省=修所有 end_date<市场最新 的落后个股。
+    body{preview:true} 只返回数量。自动排除退市(名称含"退")与板块码(BK)。进度/暂停复用 /board_data/api/repair_status|repair_pause。"""
+    try:
+        from App.services.minute_data_repair import start_repair, DEFAULT_ZIP_DIR
+        data = request.get_json(silent=True) or {}
+        end_before = (data.get('end_before') or '').strip()
+        end_after = (data.get('end_after') or '').strip()   # 结束日期 >= 某天（大约从这天起的落后股）
+        preview = bool(data.get('preview'))
+        with_trend = bool(data.get('with_trend'))
+
+        # 最新交易日（考虑15:00收盘；今天收盘后=07-11）——作为"是否已最新"的基准。
+        # 硬性排除 end_date 已 >= 最新交易日 的股票：已是最新，不需要下载（用户要求）。
+        latest_td, _is_td = get_latest_trading_date()
+
+        q = dlr.query.filter(
+            dlr.end_date.isnot(None),
+            dlr.end_date != date(2050, 1, 1),
+            dlr.record_date != date(2050, 1, 1),
+            dlr.end_date < latest_td,   # 已达最新交易日 → 已最新，跳过
+        )
+        # 结束日期范围筛选：≥ end_after 且 ≤ end_before（可只给其一）；base 已含 < 最新交易日
+        if end_after:
+            try:
+                q = q.filter(dlr.end_date >= datetime.strptime(end_after, '%Y-%m-%d').date())
+            except ValueError:
+                return jsonify({'success': False, 'message': '日期格式错误，用 YYYY-MM-DD'}), 400
+        if end_before:
+            try:
+                thr = datetime.strptime(end_before, '%Y-%m-%d').date()
+                q = q.filter(dlr.end_date <= thr)
+            except ValueError:
+                return jsonify({'success': False, 'message': '日期格式错误，用 YYYY-MM-DD'}), 400
+        else:
+            thr = latest_td
+
+        # 按结束日期升序取（最落后的排前面），供"按页依次修复"从最落后开始逐批下载
+        recs = q.order_by(dlr.end_date.asc()).with_entities(dlr.stock_code_id, dlr.end_date).all()
+        codes = []
+        if recs:
+            info = {s.id: (s.code, s.name) for s in
+                    StockCodes.query.filter(StockCodes.id.in_([r[0] for r in recs]))
+                    .with_entities(StockCodes.id, StockCodes.code, StockCodes.name).all()}
+            for sid, _end in recs:  # 已按 end_date 升序
+                cn = info.get(sid)
+                if not cn:
+                    continue
+                code, name = cn
+                if not code or code.startswith('BK'):
+                    continue
+                if name and '退' in name:
+                    continue
+                codes.append(code)
+            codes = list(dict.fromkeys(codes))  # 去重保序(最落后优先)
+
+        # list_only：只返回有序代码列表（前端"按页依次修复"用它分批）
+        if data.get('list_only'):
+            return jsonify({'success': True, 'codes': codes, 'count': len(codes),
+                            'latest_trading_date': str(latest_td)})
+        if preview:
+            return jsonify({'success': True, 'preview': True, 'count': len(codes),
+                            'latest_trading_date': str(latest_td), 'threshold': str(thr)})
+        if not codes:
+            return jsonify({'success': False, 'message': '没有符合条件的落后个股'}), 200
+
+        app = current_app._get_current_object()
+        ok, msg = start_repair(app, '下载表单落后修复', codes,
+                               zip_dir=DEFAULT_ZIP_DIR, then_trend=with_trend)
+        return jsonify({'success': ok, 'message': msg, 'count': len(codes)}), (200 if ok else 409)
+    except Exception as e:
+        logging.error(f"一键修复落后记录失败: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@download_data_bp.route('/api/repair_codes', methods=['POST'])
+def api_repair_codes():
+    """修复指定的一批股票代码（下载详情页"按页依次修复"每批调用）。
+    body{codes:[...], with_trend?}。自动去板块码(BK)/去重。进度复用 /board_data/api/repair_status。"""
+    try:
+        from App.services.minute_data_repair import start_repair, DEFAULT_ZIP_DIR
+        data = request.get_json(silent=True) or {}
+        raw = data.get('codes') or []
+        codes = []
+        for c in raw:
+            c = str(c).strip()
+            if c and not c.startswith('BK'):
+                codes.append(c)
+        codes = list(dict.fromkeys(codes))
+        if not codes:
+            return jsonify({'success': False, 'message': '没有可修复的股票代码'}), 200
+        app = current_app._get_current_object()
+        ok, msg = start_repair(app, '按页修复', codes,
+                               zip_dir=DEFAULT_ZIP_DIR, then_trend=bool(data.get('with_trend')))
+        return jsonify({'success': ok, 'message': msg, 'count': len(codes)}), (200 if ok else 409)
+    except Exception as e:
+        logging.error(f"按页修复失败: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
 
 
 @download_data_bp.route('/api/download_records/<int:record_id>', methods=['GET'])

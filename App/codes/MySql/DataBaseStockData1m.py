@@ -113,9 +113,8 @@ class StockData1m:
 
         # 历史归档（这一天可能已被盘后全量覆盖到这里）
         hist_candidates = [
-            root / 'data' / 'data' / 'quarters' / str(day_ts.year) / f'Q{quarter}' / f'{stock_code}.parquet',
             root / 'data' / 'quarters' / str(day_ts.year) / f'Q{quarter}' / f'{stock_code}.parquet',
-            root / 'data' / 'data' / 'quarters' / str(day_ts.year) / f'Q{quarter}' / f'{stock_code}.csv',
+            root / 'data' / 'quarters' / str(day_ts.year) / f'Q{quarter}' / f'{stock_code}.csv',
         ]
         for p in hist_candidates:
             if p.exists():

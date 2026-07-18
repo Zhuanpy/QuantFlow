@@ -79,8 +79,8 @@ class StockDataPath:
     @classmethod
     def get_stock_data_directory(cls) -> str:
         """获取股票数据根目录"""
-        # 返回 data/data 目录
-        return os.path.join(file_root(), 'data', 'data')
+        # 统一后的数据根目录 data/（旧的 data/data 已合并过来）
+        return os.path.join(file_root(), 'data')
 
 
 class AnalysisDataPath:

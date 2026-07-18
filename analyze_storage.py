@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 import pandas as pd
 
-base = Path('data/data/quarters')
+base = Path('data/quarters')
 
 print('=== 目录结构分析 ===')
 total_files = 0

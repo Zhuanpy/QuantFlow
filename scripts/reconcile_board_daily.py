@@ -87,6 +87,115 @@ def _board_codes(conn, only_code=None):
     return [r[0].strip().upper() for r in rows if r[0]]
 
 
+def reconcile_boards(dry_run=False, only_code=None, sleep=0.8, log=print):
+    """板块日K缺口补救核心逻辑（**须在 app_context 内调用**）。
+
+    逐个板块对比"最新已落库日期"与"参考交易日"，对落后的板块 board_daily() 整段
+    回拉并 upsert，同时标记 DailyTaskStatus。可被收盘下载流水线/CLI 复用。
+
+    Args:
+        dry_run: True 时只检测会补什么，不写库。
+        only_code: 只处理指定板块，如 'BK1032'；None 处理全部 BK%。
+        sleep: 每个板块之间的间隔秒数（节流）。
+        log: 进度输出回调（默认 print；从下载流水线调用可传 logging.info）。
+
+    Returns:
+        dict 汇总：{ref, total, up_to_date, filled, still_gap, failed, gap_detail}。
+    """
+    eng = db.engines['quanttradingsystem']
+    with eng.connect() as conn:
+        ref = _reference_trading_date(conn)
+        codes = _board_codes(conn, only_code)
+        trading_days = _trading_days(conn, ref)
+        # 各板块当前最新日期
+        rows = conn.execute(text(
+            "SELECT stock_code, MAX(date) FROM data_stock_daily "
+            "WHERE stock_code LIKE 'BK%' GROUP BY stock_code"
+        )).fetchall()
+        latest_map = {r[0].strip().upper(): r[1] for r in rows if r[0]}
+
+    win_start = trading_days[0] if trading_days else ref
+    log('=' * 78)
+    log(f'板块日K补救  参考交易日={ref}  板块数={len(codes)}  '
+        f'近窗交易日={[str(d) for d in trading_days]}  '
+        f'{"[DRY-RUN]" if dry_run else "[写库]"}')
+    log('=' * 78)
+
+    up_to_date = filled = still_gap = failed = 0
+    gap_detail = []  # (code, 仍缺的日期)
+
+    for i, code in enumerate(codes, 1):
+        before = latest_map.get(code)
+        if before is not None and before >= ref:
+            up_to_date += 1
+            continue
+
+        # 计算要回拉的天数：覆盖缺口 + 余量
+        if before is None:
+            days = 60
+        else:
+            gap = (ref - before).days
+            days = min(max(gap + 10, 30), 365)
+
+        try:
+            df = BoardDownloader.board_daily(code, days=days)
+        except Exception as e:
+            failed += 1
+            log(f'[{i}/{len(codes)}] {code:<8} 异常: {type(e).__name__}: {str(e)[:80]}')
+            continue
+
+        if df is None or df.empty:
+            failed += 1
+            log(f'[{i}/{len(codes)}] {code:<8} 无数据（push2his RST + 15m无 + Selenium失败）')
+            time.sleep(sleep)
+            continue
+
+        df = df.copy()
+        df['date'] = pd.to_datetime(df['date'])
+        got_dates = {d.date() for d in df['date']}
+        # 这次拉回能补上的、近窗内的真实交易日
+        new_dates = sorted(d for d in trading_days
+                           if d in got_dates and (before is None or d > before))
+
+        if not dry_run and not df.empty:
+            save_daily_stock_data_to_sql(code, df)
+            for d in new_dates:
+                DailyTaskStatus.mark_task(code, d, 'is_daily_processed')
+
+        # 补完后仍缺的近窗交易日（含中间空洞，如有18缺17）
+        with eng.connect() as conn:
+            have = _board_dates(conn, code, win_start, ref) if not dry_run else None
+        if have is None:
+            have = {d for d in trading_days if d == before} | got_dates  # dry-run 预估
+        missing = [d for d in trading_days if d not in have]
+
+        if new_dates:
+            filled += 1
+        tag = ''
+        if missing:
+            still_gap += 1
+            tag = f'  [!] 仍缺: {[str(d) for d in missing]}'
+            gap_detail.append((code, missing))
+        log(f'[{i}/{len(codes)}] {code:<8} {str(before):<12} -> 新增 '
+            f'{[str(d) for d in new_dates] or "无"}{tag}')
+
+        time.sleep(sleep)
+
+    log('-' * 78)
+    log(f'汇总：已最新 {up_to_date}，补到新数据 {filled}，仍有尾部缺口 {still_gap}，失败/无源 {failed}')
+    if gap_detail:
+        log('\n仍有近窗缺口的板块（通常是 push2his 被限流，需清晨/凌晨低峰重跑本脚本）：')
+        for c, miss in gap_detail[:80]:
+            log(f'  {c}: 缺 {[str(d) for d in miss]}')
+    log('=' * 78)
+
+    return {
+        'ref': ref, 'total': len(codes), 'up_to_date': up_to_date,
+        'filled': filled, 'still_gap': still_gap, 'failed': failed,
+        'gap_detail': gap_detail,
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(description='板块日K缺口补救')
     parser.add_argument('--dry-run', action='store_true', help='只检测会补什么，不写库')
@@ -96,92 +205,7 @@ def main():
 
     app = create_app()
     with app.app_context():
-        eng = db.engines['quanttradingsystem']
-        with eng.connect() as conn:
-            ref = _reference_trading_date(conn)
-            codes = _board_codes(conn, args.code)
-            trading_days = _trading_days(conn, ref)
-            # 各板块当前最新日期
-            rows = conn.execute(text(
-                "SELECT stock_code, MAX(date) FROM data_stock_daily "
-                "WHERE stock_code LIKE 'BK%' GROUP BY stock_code"
-            )).fetchall()
-            latest_map = {r[0].strip().upper(): r[1] for r in rows if r[0]}
-
-        win_start = trading_days[0] if trading_days else ref
-        print('=' * 78)
-        print(f'板块日K补救  参考交易日={ref}  板块数={len(codes)}  '
-              f'近窗交易日={[str(d) for d in trading_days]}  '
-              f'{"[DRY-RUN]" if args.dry_run else "[写库]"}')
-        print('=' * 78)
-
-        up_to_date = filled = still_gap = failed = 0
-        gap_detail = []  # (code, 补到的日期, 仍缺的日期)
-
-        for i, code in enumerate(codes, 1):
-            before = latest_map.get(code)
-            if before is not None and before >= ref:
-                up_to_date += 1
-                continue
-
-            # 计算要回拉的天数：覆盖缺口 + 余量
-            if before is None:
-                days = 60
-            else:
-                gap = (ref - before).days
-                days = min(max(gap + 10, 30), 365)
-
-            try:
-                df = BoardDownloader.board_daily(code, days=days)
-            except Exception as e:
-                failed += 1
-                print(f'[{i}/{len(codes)}] {code:<8} 异常: {type(e).__name__}: {str(e)[:80]}')
-                continue
-
-            if df is None or df.empty:
-                failed += 1
-                print(f'[{i}/{len(codes)}] {code:<8} 无数据（push2his RST + 15m无 + Selenium失败）')
-                time.sleep(args.sleep)
-                continue
-
-            df = df.copy()
-            df['date'] = pd.to_datetime(df['date'])
-            got_dates = {d.date() for d in df['date']}
-            # 这次拉回能补上的、近窗内的真实交易日
-            new_dates = sorted(d for d in trading_days
-                               if d in got_dates and (before is None or d > before))
-
-            if not args.dry_run and not df.empty:
-                save_daily_stock_data_to_sql(code, df)
-                for d in new_dates:
-                    DailyTaskStatus.mark_task(code, d, 'is_daily_processed')
-
-            # 补完后仍缺的近窗交易日（含中间空洞，如有18缺17）
-            with eng.connect() as conn:
-                have = _board_dates(conn, code, win_start, ref) if not args.dry_run else None
-            if have is None:
-                have = {d for d in trading_days if d == before} | got_dates  # dry-run 预估
-            missing = [d for d in trading_days if d not in have]
-
-            if new_dates:
-                filled += 1
-            tag = ''
-            if missing:
-                still_gap += 1
-                tag = f'  [!] 仍缺: {[str(d) for d in missing]}'
-                gap_detail.append((code, missing))
-            print(f'[{i}/{len(codes)}] {code:<8} {str(before):<12} -> 新增 '
-                  f'{[str(d) for d in new_dates] or "无"}{tag}')
-
-            time.sleep(args.sleep)
-
-        print('-' * 78)
-        print(f'汇总：已最新 {up_to_date}，补到新数据 {filled}，仍有尾部缺口 {still_gap}，失败/无源 {failed}')
-        if gap_detail:
-            print(f'\n仍有近窗缺口的板块（通常是 push2his 被限流，需清晨/凌晨低峰重跑本脚本）：')
-            for c, miss in gap_detail[:80]:
-                print(f'  {c}: 缺 {[str(d) for d in miss]}')
-        print('=' * 78)
+        reconcile_boards(dry_run=args.dry_run, only_code=args.code, sleep=args.sleep)
 
 
 if __name__ == '__main__':

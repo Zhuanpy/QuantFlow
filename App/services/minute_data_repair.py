@@ -215,6 +215,53 @@ def _upsert_daily(eng, code: str, daily) -> int:
     return len(new_rows)
 
 
+def _upsert_download_record(code, m1_last):
+    """把该股 1m 最新日期回写 data_download_records（1m 下载账本）。缺行则建。
+    m1_last: Timestamp/date/None。None（无任何数据）则不动账本。"""
+    from datetime import datetime as _dt, date as _date
+    from App.models.data.basic_info import StockInfo
+    from App.models.data.Stock1m import DownloadRecord
+    if m1_last is None:
+        return
+    d = m1_last if isinstance(m1_last, _date) and not isinstance(m1_last, _dt) else pd.Timestamp(m1_last).date()
+    si = StockInfo.query.filter(StockInfo.code == code).first()
+    if not si:
+        return
+    now = _dt.utcnow()
+    rec = DownloadRecord.query.filter(DownloadRecord.stock_code_id == si.id).first()
+    if rec is None:
+        db.session.add(DownloadRecord(
+            stock_code_id=si.id, download_status='success', download_progress=100.0,
+            start_date=d, end_date=d, record_date=d,
+            last_download_time=now, created_at=now, updated_at=now))
+    else:
+        if rec.end_date is None or d > rec.end_date:
+            rec.end_date = d
+        rec.record_date = d
+        rec.download_status = 'success'
+        rec.last_download_time = now
+        rec.updated_at = now
+    db.session.commit()
+
+
+def _set_record_status(code, status, error=None):
+    """把该股下载记录的状态改成 processing/failed 等（列表实时显示动态）。缺行则忽略。"""
+    from datetime import datetime as _dt
+    from App.models.data.basic_info import StockInfo
+    from App.models.data.Stock1m import DownloadRecord
+    si = StockInfo.query.filter(StockInfo.code == code).first()
+    if not si:
+        return
+    rec = DownloadRecord.query.filter(DownloadRecord.stock_code_id == si.id).first()
+    if rec is None:
+        return
+    rec.download_status = status
+    if error is not None:
+        rec.error_message = str(error)[:500]
+    rec.updated_at = _dt.utcnow()
+    db.session.commit()
+
+
 def _write_quarters(df, code, dq, write_quarter):
     """按季度切分写 quarters parquet，返回新增分钟数。"""
     added = 0
@@ -240,7 +287,9 @@ def _run(app, board_code, codes, zip_dir, tdx_days, then_trend=False, board_map=
     dq = root / 'data' / 'quarters'
     d15 = root / 'data' / '15m'
     zdir = Path(zip_dir)
-    max_batches = max(1, min(60, (tdx_days * 4 // 800) + 3))  # 天数→批次(每日~240根)
+    # 「全量回溯」批次上限：仅用于本地完全无数据的股票(latest is None)时。
+    # 每交易日~240根1m、每批800根 → tdx_days 天约需 tdx_days*240/800 批，+2 余量。
+    fallback_batches = max(3, min(60, (tdx_days * 240 // 800) + 2))
     # year/Q 目录(新→旧)，用于增量判断已有数据日期范围；只扫一次
     qdirs = sorted([d for y in dq.iterdir() if y.is_dir()
                     for d in y.iterdir() if d.is_dir()],
@@ -313,6 +362,10 @@ def _run(app, board_code, codes, zip_dir, tdx_days, then_trend=False, board_map=
                 with _lock:
                     _state['cur'] = code
                 try:
+                    try:
+                        _set_record_status(code, 'processing')  # 列表实时显示"正在下载"
+                    except Exception:
+                        pass
                     added_any = False   # 本轮是否真有新 1m 落地（决定要不要重算 15m/日K）
                     # 1) 本地 zip —— 仅在缺早期历史时导(避免每次重读 5MB + 去重)
                     if earliest is None or earliest > ZIP_COVERED_BEFORE:
@@ -338,11 +391,21 @@ def _run(app, board_code, codes, zip_dir, tdx_days, then_trend=False, board_map=
                                 f'[repair] {code} 跳过TDX：本地已最新到 {pd.Timestamp(latest):%Y-%m-%d}'
                                 f'（=市场最新 {mkt_latest:%Y-%m-%d}）')
                         else:
-                            tdf = _tdx_recent_df(api, code, _M1_COLS, max_batches, since=latest)
+                            # 增量补齐：按该股「本地最后日期 → 市场最新交易日」的实际缺口算批次，
+                            # 只下这段增量（_tdx_recent_df 翻页翻到 latest 当天即停）。
+                            # 本地完全无数据(latest is None)或探不到市场最新日时，才全量回溯。
+                            if latest is None or mkt_latest is None:
+                                batches = fallback_batches
+                            else:
+                                gap_days = max(1, (mkt_latest.normalize()
+                                                   - pd.Timestamp(latest).normalize()).days)
+                                batches = min(60, (gap_days * 240 // 800) + 2)
+                            tdf = _tdx_recent_df(api, code, _M1_COLS, batches, since=latest)
                             if tdf is not None and not tdf.empty:
                                 n = _write_quarters(tdf, code, dq, _write_quarter_parquet)
                                 tdates = pd.to_datetime(tdf['date'])
                                 tmin, tmax = tdates.min(), tdates.max()
+                                latest = tmax if latest is None else max(latest, tmax)
                                 added_any = added_any or n > 0
                                 logger.info(
                                     f'[repair] {code} TDX下载 {tmin:%Y-%m-%d}~{tmax:%Y-%m-%d}，去重后新增 {n} 根 1m'
@@ -364,10 +427,21 @@ def _run(app, board_code, codes, zip_dir, tdx_days, then_trend=False, board_map=
                                 _state['daily_added'] += n
                         except Exception:
                             logger.exception(f'[repair] {code} 补日K失败')
+                    # 回写 1m 账本 data_download_records：end_date=该股 1m 最新日期，
+                    # 让日常下载/板块页/后续修复都能查表判断缺口（缺行则建）。
+                    try:
+                        _upsert_download_record(code, latest)
+                    except Exception:
+                        logger.exception(f'[repair] {code} 回写下载账本失败')
                     with _lock:
                         _state['ok'] += 1
                 except Exception as e:
                     logger.exception(f'[repair] {code} 失败')
+                    try:
+                        db.session.rollback()          # 清掉失败事务再单独回写状态
+                        _set_record_status(code, 'failed', error=e)  # 列表显示 failed
+                    except Exception:
+                        pass
                     with _lock:
                         _state['fail'] += 1
                         _state['failed'].append(code)

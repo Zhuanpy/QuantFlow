@@ -1,0 +1,386 @@
+{% extends "base.html" %}
+
+{% block content %}
+<style>
+    .cmp-wrap { max-width: 1200px; margin: 20px auto; padding: 0 16px; }
+    .cmp-card {
+        background: var(--card-background); border-radius: 12px;
+        box-shadow: var(--shadow-sm); padding: 18px 20px; margin-bottom: 18px;
+    }
+    .cmp-title { font-size: 20px; font-weight: 700; margin-bottom: 4px; }
+    .cmp-sub { color: var(--text-secondary); font-size: 13px; margin-bottom: 16px; }
+
+    .cmp-row { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-end; }
+    .cmp-field { display: flex; flex-direction: column; gap: 6px; }
+    .cmp-field label { font-size: 12px; color: var(--text-secondary); font-weight: 500; }
+    .cmp-field input, .cmp-field select {
+        padding: 8px 10px; border: 1px solid #cbd5e1; border-radius: 8px;
+        font-size: 14px; font-family: inherit; background: #fff;
+    }
+    .cmp-field input:focus, .cmp-field select:focus { outline: none; border-color: var(--primary-color); }
+
+    /* 搜索 + 候选 */
+    .cmp-search { position: relative; }
+    .cmp-search input { width: 260px; }
+    .cmp-suggest {
+        position: absolute; top: 100%; left: 0; right: 0; z-index: 30;
+        background: #fff; border: 1px solid #e2e8f0; border-radius: 8px;
+        box-shadow: var(--shadow-md); max-height: 280px; overflow-y: auto; display: none;
+    }
+    .cmp-suggest.show { display: block; }
+    .cmp-suggest .grp { padding: 6px 10px; font-size: 11px; color: var(--text-secondary); background: #f8fafc; }
+    .cmp-suggest .item { padding: 8px 12px; cursor: pointer; font-size: 14px; display: flex; justify-content: space-between; }
+    .cmp-suggest .item:hover, .cmp-suggest .item.active { background: #eff6ff; }
+    .cmp-suggest .item .code { color: var(--text-secondary); font-size: 12px; }
+
+    /* 已选 chips */
+    .cmp-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; min-height: 20px; }
+    .cmp-chip {
+        display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px;
+        border-radius: 20px; font-size: 13px; color: #fff; font-weight: 500;
+    }
+    .cmp-chip .x { cursor: pointer; opacity: 0.8; font-weight: 700; }
+    .cmp-chip .x:hover { opacity: 1; }
+
+    .cmp-presets { display: flex; gap: 6px; }
+    .cmp-presets button {
+        padding: 6px 10px; border: 1px solid #cbd5e1; background: #fff; border-radius: 6px;
+        font-size: 12px; cursor: pointer; color: var(--text-secondary);
+    }
+    .cmp-presets button:hover, .cmp-presets button.active { border-color: var(--primary-color); color: var(--primary-color); }
+
+    .cmp-btn {
+        padding: 9px 20px; background: var(--primary-color); color: #fff; border: none;
+        border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer;
+    }
+    .cmp-btn:hover { background: var(--secondary-color); }
+    .cmp-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+
+    .cmp-hint { color: var(--warning-color); font-size: 13px; margin-top: 10px; }
+    .cmp-meta { color: var(--text-secondary); font-size: 13px; margin-bottom: 10px; }
+
+    #cmpChart { width: 100%; height: 480px; }
+    #cmpHeat { width: 100%; height: 380px; }
+    .cmp-2col { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+    @media (max-width: 900px) { .cmp-2col { grid-template-columns: 1fr; } .cmp-search input { width: 100%; } }
+
+    table.cmp-tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
+    table.cmp-tbl th, table.cmp-tbl td { padding: 8px 10px; text-align: right; border-bottom: 1px solid #f1f5f9; }
+    table.cmp-tbl th:first-child, table.cmp-tbl td:first-child { text-align: left; }
+    table.cmp-tbl th { color: var(--text-secondary); font-weight: 600; }
+    .corr-strong { color: #dc2626; font-weight: 700; }
+    .corr-mid { color: #d97706; }
+    .corr-weak { color: var(--text-secondary); }
+    .corr-neg { color: #2563eb; }
+    .cmp-empty { text-align: center; color: var(--text-secondary); padding: 40px 0; }
+</style>
+
+<div class="cmp-wrap">
+    <div class="cmp-card">
+        <div class="cmp-title">多标的 K 线对比 / 相关性分析</div>
+        <div class="cmp-sub">选择个股 / 板块 / 合成指数（可混选，2~8 个），叠加归一化走势，按收益率算相关性，判断走势是否同步。</div>
+
+        <div class="cmp-row">
+            <div class="cmp-field cmp-search">
+                <label>添加标的（代码或名称）</label>
+                <input type="text" id="searchInput" placeholder="如 002812 / 恩捷股份 / BK1036" autocomplete="off">
+                <div class="cmp-suggest" id="suggest"></div>
+            </div>
+
+            <div class="cmp-field">
+                <label>周期</label>
+                <select id="periodSel">
+                    <option value="daily" selected>日 K</option>
+                    <option value="60m">60 分钟</option>
+                    <option value="30m">30 分钟</option>
+                    <option value="15m">15 分钟</option>
+                </select>
+            </div>
+
+            <div class="cmp-field">
+                <label>开始</label>
+                <input type="date" id="startInput">
+            </div>
+            <div class="cmp-field">
+                <label>结束</label>
+                <input type="date" id="endInput">
+            </div>
+            <div class="cmp-field">
+                <label>快捷区间</label>
+                <div class="cmp-presets" id="presets">
+                    <button data-days="30">近1月</button>
+                    <button data-days="90" class="active">近3月</button>
+                    <button data-days="180">近6月</button>
+                    <button data-days="365">近1年</button>
+                    <button data-days="0">全部</button>
+                </div>
+            </div>
+
+            <div class="cmp-field">
+                <label>&nbsp;</label>
+                <button class="cmp-btn" id="analyzeBtn">分析对比</button>
+            </div>
+        </div>
+
+        <div class="cmp-chips" id="chips"></div>
+        <div class="cmp-hint" id="hint" style="display:none;"></div>
+    </div>
+
+    <div class="cmp-card" id="resultCard" style="display:none;">
+        <div class="cmp-meta" id="metaLine"></div>
+        <div id="cmpChart"></div>
+    </div>
+
+    <div class="cmp-2col" id="corrRow" style="display:none;">
+        <div class="cmp-card">
+            <div class="cmp-title" style="font-size:16px;">相关系数（对数收益率）</div>
+            <div class="cmp-sub" id="corrDesc"></div>
+            <div id="cmpHeat"></div>
+        </div>
+        <div class="cmp-card">
+            <div class="cmp-title" style="font-size:16px;">明细</div>
+            <div class="cmp-sub">涨跌幅为对齐区间内的累计变化；两两相关按绝对值排序。</div>
+            <table class="cmp-tbl" id="targetTbl"></table>
+            <div style="height:14px;"></div>
+            <table class="cmp-tbl" id="pairTbl"></table>
+        </div>
+    </div>
+
+    <div class="cmp-card cmp-empty" id="emptyCard">
+        还没有结果。添加至少 2 个标的后点「分析对比」。
+    </div>
+</div>
+
+<script src="{{ url_for('static', filename='js/plotly.min.js') }}"></script>
+<script>
+(function () {
+    const PALETTE = ['#2563eb', '#dc2626', '#059669', '#d97706', '#7c3aed', '#0891b2', '#db2777', '#65a30d'];
+    const MAX = 8;
+    const selected = [];   // [{code, name}]
+    const colorOf = {};
+
+    const $ = id => document.getElementById(id);
+    const searchInput = $('searchInput'), suggest = $('suggest'), chips = $('chips');
+
+    // ---------- 已选 chips ----------
+    function renderChips() {
+        chips.innerHTML = '';
+        selected.forEach((t, i) => {
+            colorOf[t.code] = colorOf[t.code] || PALETTE[i % PALETTE.length];
+            const el = document.createElement('span');
+            el.className = 'cmp-chip';
+            el.style.background = colorOf[t.code];
+            el.innerHTML = `${t.name} <span class="code" style="opacity:.85;font-size:11px;">${t.code}</span> <span class="x">×</span>`;
+            el.querySelector('.x').onclick = () => { removeTarget(t.code); };
+            chips.appendChild(el);
+        });
+    }
+    function addTarget(code, name) {
+        code = (code || '').trim();
+        if (!code) return;
+        if (selected.some(t => t.code === code)) return;
+        if (selected.length >= MAX) { showHint(`最多对比 ${MAX} 个标的`); return; }
+        selected.push({ code, name: name || code });
+        renderChips();
+        hideSuggest();
+        searchInput.value = '';
+    }
+    function removeTarget(code) {
+        const i = selected.findIndex(t => t.code === code);
+        if (i >= 0) selected.splice(i, 1);
+        renderChips();
+    }
+
+    // ---------- 搜索候选（并接 个股 + 板块 两个接口） ----------
+    let searchTimer = null, activeIdx = -1, curItems = [];
+    function doSearch(q) {
+        if (!q) { hideSuggest(); return; }
+        Promise.all([
+            fetch(`/stock_trend/api/search?q=${encodeURIComponent(q)}&limit=8`).then(r => r.json()).catch(() => ({})),
+            fetch(`/board_data/api/search?q=${encodeURIComponent(q)}&limit=8`).then(r => r.json()).catch(() => ({})),
+        ]).then(([sRes, bRes]) => {
+            const stocks = (sRes && sRes.data) ? sRes.data.map(x => ({ code: x.code, name: x.name, kind: '个股' })) : [];
+            const boards = (bRes && bRes.data) ? bRes.data.map(x => ({ code: x.board_code, name: x.board_name, kind: '板块' })) : [];
+            renderSuggest(stocks, boards);
+        });
+    }
+    function renderSuggest(stocks, boards) {
+        curItems = []; activeIdx = -1;
+        let html = '';
+        if (stocks.length) {
+            html += '<div class="grp">个股</div>';
+            stocks.forEach(s => { curItems.push(s); html += itemHtml(s); });
+        }
+        if (boards.length) {
+            html += '<div class="grp">板块</div>';
+            boards.forEach(b => { curItems.push(b); html += itemHtml(b); });
+        }
+        if (!curItems.length) { hideSuggest(); return; }
+        suggest.innerHTML = html;
+        Array.from(suggest.querySelectorAll('.item')).forEach((el, i) => {
+            el.onclick = () => addTarget(curItems[i].code, curItems[i].name);
+        });
+        suggest.classList.add('show');
+    }
+    function itemHtml(x) {
+        return `<div class="item"><span>${x.name}</span><span class="code">${x.code}</span></div>`;
+    }
+    function hideSuggest() { suggest.classList.remove('show'); activeIdx = -1; }
+
+    searchInput.addEventListener('input', e => {
+        clearTimeout(searchTimer);
+        const q = e.target.value.trim();
+        searchTimer = setTimeout(() => doSearch(q), 220);
+    });
+    searchInput.addEventListener('keydown', e => {
+        const items = Array.from(suggest.querySelectorAll('.item'));
+        if (e.key === 'ArrowDown') { e.preventDefault(); activeIdx = Math.min(activeIdx + 1, items.length - 1); markActive(items); }
+        else if (e.key === 'ArrowUp') { e.preventDefault(); activeIdx = Math.max(activeIdx - 1, 0); markActive(items); }
+        else if (e.key === 'Enter') {
+            e.preventDefault();
+            if (activeIdx >= 0 && curItems[activeIdx]) addTarget(curItems[activeIdx].code, curItems[activeIdx].name);
+            else if (searchInput.value.trim()) addTarget(searchInput.value.trim(), searchInput.value.trim());
+        } else if (e.key === 'Escape') hideSuggest();
+    });
+    function markActive(items) {
+        items.forEach((el, i) => el.classList.toggle('active', i === activeIdx));
+        if (items[activeIdx]) items[activeIdx].scrollIntoView({ block: 'nearest' });
+    }
+    document.addEventListener('click', e => {
+        if (!suggest.contains(e.target) && e.target !== searchInput) hideSuggest();
+    });
+
+    // ---------- 时间预设 ----------
+    function fmt(d) { return d.toISOString().slice(0, 10); }
+    function applyPreset(days) {
+        const end = new Date();
+        $('endInput').value = fmt(end);
+        if (days === 0) { $('startInput').value = ''; }
+        else { const s = new Date(); s.setDate(s.getDate() - days); $('startInput').value = fmt(s); }
+    }
+    $('presets').addEventListener('click', e => {
+        if (e.target.tagName !== 'BUTTON') return;
+        Array.from($('presets').children).forEach(b => b.classList.remove('active'));
+        e.target.classList.add('active');
+        applyPreset(parseInt(e.target.dataset.days, 10));
+    });
+    applyPreset(90);
+
+    // ---------- 提示 ----------
+    let hintTimer = null;
+    function showHint(msg) {
+        const h = $('hint'); h.textContent = msg; h.style.display = 'block';
+        clearTimeout(hintTimer); hintTimer = setTimeout(() => { h.style.display = 'none'; }, 4000);
+    }
+
+    // ---------- 分析 ----------
+    function corrClass(v) {
+        const a = Math.abs(v);
+        if (v < 0) return 'corr-neg';
+        if (a >= 0.7) return 'corr-strong';
+        if (a >= 0.4) return 'corr-mid';
+        return 'corr-weak';
+    }
+
+    $('analyzeBtn').addEventListener('click', () => {
+        if (selected.length < 2) { showHint('请至少添加 2 个标的'); return; }
+        const codes = selected.map(t => t.code).join(',');
+        const period = $('periodSel').value;
+        const start = $('startInput').value, end = $('endInput').value;
+        const btn = $('analyzeBtn');
+        btn.disabled = true; btn.textContent = '分析中…';
+
+        const url = `/compare/api/series?codes=${encodeURIComponent(codes)}&period=${period}` +
+                    (start ? `&start=${start}` : '') + (end ? `&end=${end}` : '');
+        fetch(url).then(r => r.json()).then(res => {
+            btn.disabled = false; btn.textContent = '分析对比';
+            if (!res.success) {
+                showHint(res.message || '分析失败');
+                if (res.warnings && res.warnings.length) showHint(res.warnings.join('；'));
+                return;
+            }
+            if (res.warnings && res.warnings.length) showHint(res.warnings.join('；'));
+            render(res, period);
+        }).catch(err => {
+            btn.disabled = false; btn.textContent = '分析对比';
+            showHint('请求失败：' + err);
+        });
+    });
+
+    function render(res, period) {
+        $('emptyCard').style.display = 'none';
+        $('resultCard').style.display = 'block';
+        $('corrRow').style.display = 'grid';
+
+        const periodLabel = { daily: '日K', '60m': '60分钟', '30m': '30分钟', '15m': '15分钟' }[period] || period;
+        $('metaLine').textContent =
+            `${periodLabel} · 对齐区间 ${res.aligned_from} ~ ${res.aligned_to} · 共 ${res.count} 根 K 线 · 归一化到起点=100`;
+
+        // 叠加归一化曲线
+        const traces = res.targets.map(t => ({
+            x: res.dates, y: res.series[t.code], type: 'scatter', mode: 'lines',
+            name: `${t.name}`, line: { color: colorOf[t.code] || undefined, width: 1.8 },
+            hovertemplate: `${t.name} %{y:.2f}<extra></extra>`,
+        }));
+        Plotly.newPlot('cmpChart', traces, {
+            margin: { l: 48, r: 16, t: 10, b: 40 },
+            hovermode: 'x unified',
+            legend: { orientation: 'h', y: 1.12 },
+            xaxis: { type: 'category', nticks: 10, showgrid: false },
+            yaxis: { title: '归一化(起点=100)', zeroline: false },
+            paper_bgcolor: '#fff', plot_bgcolor: '#fff',
+        }, { responsive: true, displayModeBar: false });
+
+        // 相关系数热力图
+        const labels = res.corr.labels.map(c => {
+            const t = res.targets.find(x => x.code === c); return t ? t.name : c;
+        });
+        Plotly.newPlot('cmpHeat', [{
+            z: res.corr.matrix, x: labels, y: labels, type: 'heatmap',
+            zmin: -1, zmax: 1, colorscale: [[0, '#2563eb'], [0.5, '#f8fafc'], [1, '#dc2626']],
+            hovertemplate: '%{y} vs %{x}<br>相关 %{z:.3f}<extra></extra>',
+            showscale: true,
+        }], {
+            margin: { l: 90, r: 16, t: 10, b: 90 },
+            xaxis: { tickangle: -30 }, yaxis: { autorange: 'reversed' },
+            annotations: buildAnnotations(res.corr.matrix, labels),
+            paper_bgcolor: '#fff', plot_bgcolor: '#fff',
+        }, { responsive: true, displayModeBar: false });
+
+        $('corrDesc').textContent = res.pairs.length === 1
+            ? `${labels[0]} 与 ${labels[1]} 的相关系数为 ${res.pairs[0].corr.toFixed(3)}（1=完全同步，0=无关，-1=完全反向）`
+            : '越接近 1（红）走势越同步，接近 -1（蓝）越反向，接近 0 无明显关系。';
+
+        // 明细表
+        let th = '<tr><th>标的</th><th>代码</th><th>K线数</th><th>起</th><th>末</th><th>涨跌幅</th></tr>';
+        let rows = res.targets.map(t => {
+            const cls = t.change_pct >= 0 ? 'corr-strong' : 'corr-neg';
+            return `<tr><td>${t.name}</td><td class="corr-weak">${t.code}</td><td>${t.points}</td>` +
+                   `<td>${t.first}</td><td>${t.last}</td><td class="${cls}">${t.change_pct >= 0 ? '+' : ''}${t.change_pct}%</td></tr>`;
+        }).join('');
+        $('targetTbl').innerHTML = th + rows;
+
+        let pth = '<tr><th>标的 A</th><th>标的 B</th><th>相关系数</th></tr>';
+        const nameOf = c => { const t = res.targets.find(x => x.code === c); return t ? t.name : c; };
+        let prows = res.pairs.map(p =>
+            `<tr><td>${nameOf(p.a)}</td><td>${nameOf(p.b)}</td>` +
+            `<td class="${corrClass(p.corr)}">${p.corr.toFixed(3)}</td></tr>`
+        ).join('');
+        $('pairTbl').innerHTML = pth + prows;
+    }
+
+    function buildAnnotations(matrix, labels) {
+        const ann = [];
+        for (let i = 0; i < matrix.length; i++)
+            for (let j = 0; j < matrix[i].length; j++) {
+                const v = matrix[i][j];
+                ann.push({
+                    x: labels[j], y: labels[i], text: v.toFixed(2), showarrow: false,
+                    font: { size: 12, color: Math.abs(v) > 0.6 ? '#fff' : '#334155' },
+                });
+            }
+        return ann;
+    }
+})();
+</script>
+{% endblock %}

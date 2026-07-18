@@ -101,6 +101,7 @@
           <th style="padding:.5rem;text-align:left;">名称</th>
           <th style="padding:.5rem;text-align:left;">股票池</th>
           <th style="padding:.5rem;text-align:center;" title="是否在每日收盘数据下载表单(data_download_records)中">下载表单</th>
+          <th style="padding:.5rem;text-align:center;" title="该股 1m 数据最早的交易日(开始日期)；比板块内多数股票起步晚的标黄/红，说明早期历史缺失，可用压缩包/修复补齐">1m 开始</th>
           <th style="padding:.5rem;text-align:center;" title="该股 1m 数据最新到的交易日；落后板块最新日的标黄/红，可点「修复数据」补齐">1m 更新到</th>
           <th style="padding:.5rem;text-align:center;" title="15m 口径：来自 stock_dist_snapshot 当日快照。方向=当前周期方向，初期/末期=当前振幅是否已过历史中位">趋势阶段(15m)</th>
           <th style="padding:.5rem;text-align:center;">信号</th>
@@ -203,7 +204,7 @@ function applyFilters() {
 
 function renderRows(rows) {
   const tb = document.getElementById('tb');
-  if (!rows.length) { tb.innerHTML = '<tr><td colspan="11" style="text-align:center;color:#9ca3af;padding:1rem;">无符合条件的成分股</td></tr>'; return; }
+  if (!rows.length) { tb.innerHTML = '<tr><td colspan="12" style="text-align:center;color:#9ca3af;padding:1rem;">无符合条件的成分股</td></tr>'; return; }
   const stageCell = (st) => { if (!st || st==='unknown') return '<span style="color:#9ca3af;">—</span>';
     const up = String(st).startsWith('up'); return `<span style="color:${up?'#b91c1c':'#15803d'};font-weight:600;">${STAGE_LBL[st]||st}</span>`; };
   const sigCell = (s) => { const x = SIG[s]; return x ? `<span style="color:${x[1]};font-weight:600;">${x[0]}</span>` : '<span style="color:#9ca3af;">—</span>'; };
@@ -211,6 +212,17 @@ function renderRows(rows) {
     const sts = s.pool_states||[]; return sts.length
       ? sts.map(x=>`<span class="pchip" style="background:#eef2ff;color:#4f46e5;">${POOL_LBL[x]||x}</span>`).join(' ')
       : '<span style="color:#16a34a;font-size:.75rem;">✓在池</span>'; };
+  // 1m 开始：以板块内最早开始日为基准，起步越晚(早期历史越短)越红
+  const m1min = rows.map(s=>s.m1_first).filter(Boolean).reduce((a,b)=>a<b?a:b, '9999');
+  const m1FirstCell = (s) => {
+    if (!s.m1_first) return '<span style="color:#cbd5e1;font-size:.75rem;">无</span>';
+    let color = '#6b7280';
+    if (m1min!=='9999' && s.m1_first > m1min) {
+      const diff = (new Date(s.m1_first) - new Date(m1min)) / 86400000;
+      color = diff > 60 ? '#dc2626' : (diff > 7 ? '#ca8a04' : '#6b7280');
+    }
+    return `<span style="color:${color};font-family:monospace;font-size:.8rem;">${s.m1_first}</span>`;
+  };
   // 1m 更新到：以板块内最新日期为基准，落后越多越红（看完整性）
   const m1max = rows.map(s=>s.m1_last).filter(Boolean).reduce((a,b)=>a>b?a:b, '');
   const m1Cell = (s) => {
@@ -228,6 +240,7 @@ function renderRows(rows) {
     <td style="padding:.4rem .5rem;">${s.stock_name||'—'}</td>
     <td style="padding:.4rem .5rem;white-space:nowrap;">${poolCell(s)}</td>
     <td style="padding:.4rem .5rem;text-align:center;">${s.in_download ? '<span style="color:#16a34a;font-size:.75rem;">✓在表</span>' : '<span style="color:#cbd5e1;">—</span>'}</td>
+    <td style="padding:.4rem .5rem;text-align:center;">${m1FirstCell(s)}</td>
     <td style="padding:.4rem .5rem;text-align:center;">${m1Cell(s)}</td>
     <td style="padding:.4rem .5rem;text-align:center;">${stageCell(s.trend_stage)}</td>
     <td style="padding:.4rem .5rem;text-align:center;">${sigCell(s.signal)}</td>

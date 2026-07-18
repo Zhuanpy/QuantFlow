@@ -95,6 +95,8 @@ def main():
             sys.exit(4)
 
         # ---- STEP 1：下载行情（日K + 1m + 15m）----
+        # 板块(BKxxxx)已随 download_file() 主下载队列一起跑（与股票池并列），STEP1 即覆盖；
+        # --skip-download 保持纯「只重算快照」语义，不触发任何下载。
         if args.skip_download:
             logger.info('[STEP1] 按 --skip-download 跳过下载，直接重算快照')
         else:

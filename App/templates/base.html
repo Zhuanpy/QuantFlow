@@ -176,6 +176,24 @@
             color: var(--success-color);
         }
 
+        /* 下拉菜单内的分组：横线分隔 + 小标题 */
+        .navbar .dropdown-menu li.dropdown-divider {
+            height: 0;
+            margin: 0.3rem 0.5rem;
+            padding: 0;
+            border-top: 1px solid #e5e7eb;
+            pointer-events: none;
+        }
+        .navbar .dropdown-menu li.dropdown-header {
+            padding: 0.35rem 0.8rem 0.15rem;
+            font-size: 0.72rem;
+            font-weight: 700;
+            color: var(--text-secondary);
+            letter-spacing: 0.03em;
+            pointer-events: none;
+            cursor: default;
+        }
+
         main {
             flex: 1;
             padding: 2rem;
@@ -234,16 +252,24 @@
             <a href="{{ url_for('main_bp.index') }}" class="nav-logo">智能股票交易系统</a>
             <ul class="nav-menu">
                 {# 数据：获取 / 处理 / 管理 #}
-                {% set data_eps = ['dl_bp.dl', 'dl_funds_awkward_bp.download_funds_awake_index', 'process_data.process_15m_data_page', 'data_bp.stock_classification', 'data_bp.stock_market_data', 'data_bp.record_stock_minute', 'daily_viewer.daily_viewer_page', 'stock_detail_bp.stock_onemin_check_page', 'task_status.task_status_page'] %}
+                {% set data_eps = ['dl_bp.dl', 'dl_funds_awkward_bp.download_funds_awake_index', 'process_data.process_15m_data_page', 'data_bp.stock_classification', 'data_bp.stock_market_data', 'data_bp.record_stock_minute', 'daily_viewer.daily_viewer_page', 'stock_detail_bp.stock_onemin_check_page', 'task_status.task_status_page', 'compare_bp.compare_page'] %}
                 <li class="nav-item dropdown">
                     <span class="nav-link dropdown-toggle {% if request.endpoint in data_eps %}active{% endif %}" tabindex="0">数据</span>
                     <ul class="dropdown-menu">
+                        <li class="dropdown-header">下载 / 获取</li>
                         <li><a href="{{ url_for('dl_bp.dl') }}" {% if request.endpoint == 'dl_bp.dl' %}class="active"{% endif %}>股票数据下载</a></li>
                         <li><a href="{{ url_for('dl_funds_awkward_bp.download_funds_awake_index') }}" {% if request.endpoint == 'dl_funds_awkward_bp.download_funds_awake_index' %}class="active"{% endif %}>基金数据分析</a></li>
+                        <li class="dropdown-divider"></li>
+                        <li class="dropdown-header">处理</li>
                         <li><a href="{{ url_for('process_data.process_15m_data_page') }}" {% if request.endpoint == 'process_data.process_15m_data_page' %}class="active"{% endif %}>15分钟数据处理</a></li>
+                        <li class="dropdown-divider"></li>
+                        <li class="dropdown-header">管理</li>
                         <li><a href="{{ url_for('data_bp.stock_classification') }}" {% if request.endpoint == 'data_bp.stock_classification' %}class="active"{% endif %}>股票分类管理</a></li>
                         <li><a href="{{ url_for('data_bp.stock_market_data') }}" {% if request.endpoint == 'data_bp.stock_market_data' %}class="active"{% endif %}>股票市场数据管理</a></li>
                         <li><a href="{{ url_for('data_bp.record_stock_minute') }}" {% if request.endpoint == 'data_bp.record_stock_minute' %}class="active"{% endif %}>股票分钟数据记录</a></li>
+                        <li class="dropdown-divider"></li>
+                        <li class="dropdown-header">查看 / 检测</li>
+                        <li><a href="{{ url_for('compare_bp.compare_page') }}" {% if request.endpoint == 'compare_bp.compare_page' %}class="active"{% endif %}>多标的对比分析</a></li>
                         <li><a href="{{ url_for('daily_viewer.daily_viewer_page') }}" {% if request.endpoint == 'daily_viewer.daily_viewer_page' %}class="active"{% endif %}>日线数据查看器</a></li>
                         <li><a href="{{ url_for('stock_detail_bp.stock_onemin_check_page') }}" {% if request.endpoint == 'stock_detail_bp.stock_onemin_check_page' %}class="active"{% endif %}>1分钟完整性检测</a></li>
                         <li><a href="{{ url_for('task_status.task_status_page') }}" {% if request.endpoint == 'task_status.task_status_page' %}class="active"{% endif %}>每日任务状态看板</a></li>
@@ -274,10 +300,11 @@
                 </li>
 
                 {# 板块分析 #}
-                {% set board_eps = ['board_overview.page', 'board_data.page', 'board_trend.page', 'board_pref.page'] %}
+                {% set board_eps = ['board_overview.page', 'board_data.page', 'board_data.board_hot_page', 'board_trend.page', 'board_pref.page'] %}
                 <li class="nav-item dropdown">
                     <span class="nav-link dropdown-toggle {% if request.endpoint in board_eps %}active{% endif %}" tabindex="0">板块</span>
                     <ul class="dropdown-menu">
+                        <li><a href="{{ url_for('board_data.board_hot_page') }}" {% if request.endpoint == 'board_data.board_hot_page' %}class="active"{% endif %}>🔥 近期热点</a></li>
                         <li><a href="{{ url_for('board_overview.page') }}" {% if request.endpoint == 'board_overview.page' %}class="active"{% endif %}>板块整体预览</a></li>
                         <li><a href="{{ url_for('board_data.page') }}" {% if request.endpoint == 'board_data.page' %}class="active"{% endif %}>板块数据管理</a></li>
                         <li><a href="{{ url_for('board_trend.page') }}" {% if request.endpoint == 'board_trend.page' %}class="active"{% endif %}>板块趋势打分</a></li>
@@ -286,7 +313,7 @@
                 </li>
 
                 {# 交易系统 #}
-                {% set trade_eps = ['stock_pool.stock_pool_page', 'trade_plan.trade_page', 'trade_plan.simulate_trade_page', 'trade_plan.real_trade_page', 'trade_plan.trade_statistics_page'] %}
+                {% set trade_eps = ['stock_pool.stock_pool_page', 'trade_plan.trade_page', 'trade_plan.simulate_trade_page', 'trade_plan.real_trade_page', 'trade_plan.trade_statistics_page', 'trade_plan.trade_reasons_page'] %}
                 <li class="nav-item dropdown">
                     <span class="nav-link dropdown-toggle {% if request.endpoint in trade_eps %}active{% endif %}" tabindex="0">交易</span>
                     <ul class="dropdown-menu">
@@ -295,6 +322,7 @@
                         <li><a href="{{ url_for('trade_plan.simulate_trade_page') }}" {% if request.endpoint == 'trade_plan.simulate_trade_page' %}class="active"{% endif %}>模拟交易</a></li>
                         <li><a href="{{ url_for('trade_plan.real_trade_page') }}" class="is-real {% if request.endpoint == 'trade_plan.real_trade_page' %}active{% endif %}">实盘交易</a></li>
                         <li><a href="{{ url_for('trade_plan.trade_statistics_page') }}" {% if request.endpoint == 'trade_plan.trade_statistics_page' %}class="active"{% endif %}>历史交易统计</a></li>
+                        <li><a href="{{ url_for('trade_plan.trade_reasons_page') }}" {% if request.endpoint == 'trade_plan.trade_reasons_page' %}class="active"{% endif %}>交易理由复盘</a></li>
                     </ul>
                 </li>
 

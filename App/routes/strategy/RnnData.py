@@ -86,11 +86,10 @@ def get_base_directory():
 def get_data_directory(year):
     """获取数据目录的绝对路径
 
-    实际数据在项目根 data/data/years/<year>/，不是 App/static/...。
-    历史路径写错过；这里指向真实位置。
+    实际数据在项目根 data/years/<year>/（路径统一后，旧的 data/data/years 已合并过来）。
     """
     from config import Config
-    return os.path.join(Config.get_project_root(), 'data', 'data', 'years', str(year))
+    return os.path.join(Config.get_project_root(), 'data', 'years', str(year))
 
 class ProcessContext:
     def __init__(self, app, stock_code, year):

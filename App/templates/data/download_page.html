@@ -7,31 +7,60 @@
         <p>选择您需要下载的数据类型</p>
     </div>
 
+    <!-- ============ 功能区：日常生产 ============ -->
+    <div class="section-title">
+        <h2>📦 数据功能</h2>
+        <span>日常盘后运行的生产入口</span>
+    </div>
     <div class="grid">
         <div class="card">
-            <h2>股票数据</h2>
+            <h2>数据下载</h2>
             <div class="button-group">
-                <a href="{{ url_for('download_data_bp.download_stock_1m_close_data_today') }}" class="button">
-                    <span>下载今日1分钟收盘数据</span>
+                <a href="{{ url_for('download_data_bp.download_minute_data_page', mode='download') }}" class="button button-highlight">
+                    <span>📊 盘后数据下载（股票池）</span>
                 </a>
-                <a href="{{ url_for('download_data_bp.download_stock_1m_close_data') }}" class="button">
-                    <span>下载历史1分钟收盘数据</span>
-                </a>
-                <a href="{{ url_for('download_data_bp.download_minute_data_page') }}" class="button">
-                    <span>盘后数据下载</span>
-                </a>
-            </div>
-        </div>
-
-        <div class="card">
-            <h2>完整下载流程</h2>
-            <div class="button-group">
-                <a href="{{ url_for('download_data_bp.complete_download_test') }}" class="button button-highlight">
-                    <span>🚀 完整下载流程测试</span>
+                <a href="{{ url_for('download_data_bp.download_minute_data_page', mode='repair') }}" class="button">
+                    <span>🛠 数据修复（补落后1分钟数据）</span>
                 </a>
             </div>
             <p class="card-description">
-                自动执行：下载1分钟数据 → 分季度保存 → 转换为15分钟数据 → 转换为日线数据 → 更新统计表单
+                统一流程：下载1分钟数据 → 分季度保存 → 转换为15分钟数据 → 转换为日线数据 → 更新统计表单。<br>
+                「盘后数据下载」日常维护股票池；「数据修复」按结束日期找落后个股增量补齐（可一键或按页依次修复）。
+            </p>
+        </div>
+
+        <div class="card">
+            <h2>板块历史数据修复</h2>
+            <div class="repair-panel">
+                <label class="repair-check" title="修复跑完自动接力重算趋势打分 + 分布快照">
+                    <input type="checkbox" id="brChain" checked> 完成后自动重算趋势/分布
+                </label>
+                <div class="repair-row">
+                    <button id="brAllBtn" class="button button-highlight" onclick="brRepairAll()">🛠 增量补齐·全部板块</button>
+                    <button id="brPauseBtn" class="button button-tool" onclick="brTogglePause()" style="display:none;">⏸ 暂停</button>
+                </div>
+                <div class="repair-row">
+                    <input type="text" id="brCode" class="repair-code" placeholder="板块代码 如 BK1034">
+                    <button id="brOneBtn" class="button" onclick="brRepairOne()">增量补齐·指定板块</button>
+                </div>
+                <div id="brStatus" class="repair-status"></div>
+            </div>
+            <p class="card-description">
+                <b>增量补齐</b>：逐股读取本地 1m 最后日期，只下载「该日 → 市场最新交易日」的缺口，
+                已最新的直接跳过 —— 你日常维护后再点，几乎不下多余数据，不给服务器压力。
+                补完自动重生成 15m / 补日K；「全部板块」可随时暂停/继续。
+            </p>
+        </div>
+
+        <div class="card">
+            <h2>数据处理</h2>
+            <div class="button-group">
+                <a href="{{ url_for('process_data.process_15m_data_page') }}" class="button button-highlight">
+                    <span>🔧 15分钟数据处理</span>
+                </a>
+            </div>
+            <p class="card-description">
+                手动重跑15分钟数据：重采样 → 标准化 → 信号计算（下载流程已自动含此步，此处用于单独补算）
             </p>
         </div>
 
@@ -45,21 +74,6 @@
         </div>
 
         <div class="card">
-            <h2>数据处理</h2>
-            <div class="button-group">
-                <a href="{{ url_for('download_data_bp.resample_to_daily_data') }}" class="button">
-                    <span>1分钟数据重采样为日线</span>
-                </a>
-                <a href="{{ url_for('process_data.process_15m_data_page') }}" class="button button-highlight">
-                    <span>🔧 15分钟数据处理</span>
-                </a>
-            </div>
-            <p class="card-description">
-                15分钟数据处理：重采样 → 标准化 → 信号计算
-            </p>
-        </div>
-
-        <div class="card">
             <h2>📡 通达信数据</h2>
             <div class="button-group">
                 <a href="/tdx" class="button button-warning">
@@ -68,6 +82,43 @@
             </div>
             <p class="card-description">
                 使用 pytdx 下载数据或读取本地通达信软件数据
+            </p>
+        </div>
+    </div>
+
+    <!-- ============ 工具区：测试 / 诊断 ============ -->
+    <div class="section-title">
+        <h2>🧪 测试与诊断工具</h2>
+        <span>验证流程 / 数据完整性 / 环境是否正常，非日常运行</span>
+    </div>
+    <div class="grid">
+        <div class="card card-tools">
+            <h2>下载 / 数据校验</h2>
+            <div class="button-group">
+                <a href="{{ url_for('download_data_bp.complete_download_test') }}" class="button button-tool">
+                    <span>🔬 完整下载流程测试（单只/批量抽查）</span>
+                </a>
+                <a href="{{ url_for('stock_detail_bp.stock_onemin_check_page') }}" class="button button-tool">
+                    <span>🔍 1分钟数据完整性检测</span>
+                </a>
+            </div>
+            <p class="card-description">
+                流程测试：对指定代码走一遍完整下载链路，核对各级数据条数；完整性检测：校验1分钟数据是否有缺口。
+            </p>
+        </div>
+
+        <div class="card card-tools">
+            <h2>环境 / 渲染自检</h2>
+            <div class="button-group">
+                <a href="{{ url_for('download_eastmoney_data.path_test') }}" class="button button-tool">
+                    <span>📁 路径 / 权限测试</span>
+                </a>
+                <a href="{{ url_for('process_data.test_plotly') }}" class="button button-tool" target="_blank">
+                    <span>📈 Plotly 渲染测试</span>
+                </a>
+            </div>
+            <p class="card-description">
+                路径测试：检查数据目录读写权限；Plotly 测试：确认图表库能否正常出图。
             </p>
         </div>
     </div>
@@ -105,7 +156,100 @@
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
         gap: 2rem;
-        margin-top: 2rem;
+        margin-top: 1rem;
+    }
+
+    .section-title {
+        display: flex;
+        align-items: baseline;
+        gap: 0.75rem;
+        margin: 2.5rem 0 0.5rem;
+        padding-bottom: 0.5rem;
+        border-bottom: 2px solid var(--background-color);
+        flex-wrap: wrap;
+    }
+
+    .section-title h2 {
+        font-size: 1.35rem;
+        color: var(--text-primary);
+        font-weight: 700;
+        margin: 0;
+    }
+
+    .section-title span {
+        font-size: 0.85rem;
+        color: var(--text-secondary);
+    }
+
+    /* 工具卡：视觉上比生产功能更弱化 */
+    .card-tools {
+        background: var(--background-secondary);
+        border: 1px dashed var(--border-color, #d1d5db);
+        box-shadow: none;
+    }
+
+    .button-tool {
+        background-color: var(--text-secondary);
+        font-weight: 400;
+        font-size: 0.9rem;
+    }
+
+    .button-tool:hover {
+        background-color: var(--text-primary);
+    }
+
+    /* 板块修复面板 */
+    .repair-panel {
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+    }
+
+    .repair-row {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+    }
+
+    .repair-row .button {
+        padding: 0.5rem 1rem;
+    }
+
+    .repair-panel label {
+        color: var(--text-secondary);
+        font-size: 0.9rem;
+        white-space: nowrap;
+    }
+
+    .repair-select,
+    .repair-days,
+    .repair-code {
+        padding: 0.5rem 0.6rem;
+        border: 1px solid var(--border-color, #d1d5db);
+        border-radius: 0.5rem;
+        font-size: 0.9rem;
+        background: var(--card-background);
+        color: var(--text-primary);
+    }
+
+    .repair-days { width: 5rem; }
+    .repair-code { flex: 1; min-width: 8rem; }
+
+    .repair-check {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        cursor: pointer;
+        font-size: 0.85rem !important;
+    }
+
+    .repair-status {
+        font-size: 0.82rem;
+        color: var(--text-secondary);
+        min-height: 1.1rem;
+        line-height: 1.4;
+        word-break: break-all;
     }
 
     .card {
@@ -225,5 +369,119 @@
     .card:nth-child(1) { animation-delay: 0.1s; }
     .card:nth-child(2) { animation-delay: 0.2s; }
     .card:nth-child(3) { animation-delay: 0.3s; }
+    .card:nth-child(4) { animation-delay: 0.4s; }
+    .card:nth-child(5) { animation-delay: 0.5s; }
 </style>
-{% endblock %} 
+
+<script>
+// ===== 板块历史数据修复（增量补齐：逐股本地最后日期→市场最新日，后台运行）=====
+let _brTimer = null;
+let _brChained = false;
+
+function brSetBusy(busy) {
+    document.getElementById('brAllBtn').disabled = busy;
+    document.getElementById('brOneBtn').disabled = busy;
+}
+
+// 增量补齐·指定板块
+async function brRepairOne() {
+    const code = (document.getElementById('brCode').value || '').trim().toUpperCase();
+    if (!code) { alert('请输入板块代码，如 BK1034'); return; }
+    const chain = document.getElementById('brChain').checked;
+    if (!confirm(`将增量补齐板块「${code}」全部成分股 1m 数据：\n· 逐股从本地最后日期补到市场最新交易日\n· 已最新的自动跳过\n· 完成后重生成 15m / 补日K${chain ? '\n· 自动重算趋势/分布' : ''}\n后台运行。开始？`)) return;
+    _brChained = chain;
+    brSetBusy(true);
+    try {
+        const j = await fetch('/board_data/api/repair_members', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ board_code: code, with_trend: chain })
+        }).then(r => r.json());
+        if (!j.success) { alert(j.message || '启动失败'); brSetBusy(false); return; }
+        brPoll();
+    } catch (e) { alert('启动失败：' + e.message); brSetBusy(false); }
+}
+
+// 增量补齐·全部板块（先预览数量再确认）
+async function brRepairAll() {
+    const chain = document.getElementById('brChain').checked;
+    let pv;
+    try {
+        pv = await fetch('/board_data/api/repair_all', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ preview: true })
+        }).then(r => r.json());
+    } catch (e) { alert('预览失败：' + e.message); return; }
+    if (!pv || !pv.success) { alert('预览失败'); return; }
+    const summary = `全部板块成分股 ${pv.total_members} 只（去重）：\n`
+        + `· 已最新，跳过：${pv.skipped_current} 只\n`
+        + `· 从未下载(本地无数据)：${pv.new_available} 只 —— 默认跳过\n`
+        + `· 有数据但落后，实需增量补齐：${pv.count} 只\n\n`
+        + `增量补齐这 ${pv.count} 只（各自缺多少补多少）？（可随时暂停/继续）`;
+    if (!confirm(summary)) return;
+    let includeNew = false;
+    if (pv.new_available > 0) {
+        includeNew = confirm(`是否连同 ${pv.new_available} 只「从未下载」的成分股一起全量下载它们的 1m 历史？\n（量大耗时；\n确定=一起下 共修 ${pv.count + pv.new_available} 只；\n取消=只补有数据的 ${pv.count} 只）`);
+    }
+    _brChained = chain;
+    brSetBusy(true);
+    try {
+        const j = await fetch('/board_data/api/repair_all', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ with_trend: chain, include_new: includeNew })
+        }).then(r => r.json());
+        if (!j.success) { alert(j.message || '启动失败'); brSetBusy(false); return; }
+        document.getElementById('brStatus').textContent =
+            `已启动：实修 ${j.count} 只（已最新跳过 ${j.skipped_current}`
+            + (j.skipped_new ? `，从未下载跳过 ${j.skipped_new}` : '') + `）`;
+        brPoll();
+    } catch (e) { alert('启动失败：' + e.message); brSetBusy(false); }
+}
+
+function brPoll() {
+    const st = document.getElementById('brStatus');
+    const pb = document.getElementById('brPauseBtn');
+    brSetBusy(true);
+    clearInterval(_brTimer);
+    _brTimer = setInterval(async () => {
+        const j = await fetch('/board_data/api/repair_status').then(r => r.json()).catch(() => null);
+        if (!j || !j.success) return;
+        const s = j.data;
+        if (s.running) {
+            pb.style.display = '';
+            pb.textContent = s.paused ? '▶ 继续' : '⏸ 暂停';
+            const boardTxt = s.board_total
+                ? `板块 ${s.board_idx}/${s.board_total}「${s.cur_board || '—'}」(本板块 ${s.cur_board_done}/${s.cur_board_total} 只) · ` : '';
+            st.textContent = (s.paused ? '⏸ 已暂停 ' : '修复中… ')
+                + boardTxt + `总 ${s.done}/${s.total}（成功 ${s.ok} / 失败 ${s.fail}，当前 ${s.cur || '—'}）`;
+        } else {
+            clearInterval(_brTimer);
+            pb.style.display = 'none';
+            brSetBusy(false);
+            st.textContent = s.error ? `失败：${s.error}`
+                : `修复${s.stopped ? '已停止' : '完成'}：成功 ${s.ok} / 失败 ${s.fail}`
+                    + (s.skipped ? `，跳过 ${s.skipped} 只已最新` : '')
+                    + `，1m 新增 ${(s.zip_added||0)+(s.tdx_added||0)} 根，补日K ${s.daily_added||0} 天`
+                    + (_brChained && !s.stopped ? '，已接力重算趋势/分布' : '');
+        }
+    }, 1500);
+}
+
+async function brTogglePause() {
+    try {
+        const j = await fetch('/board_data/api/repair_pause', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ action: 'toggle' })
+        }).then(r => r.json());
+        if (j && j.success) {
+            const pb = document.getElementById('brPauseBtn');
+            pb.textContent = (j.data && j.data.paused) ? '▶ 继续' : '⏸ 暂停';
+        }
+    } catch (e) {}
+}
+
+// 页面载入时若已有修复任务在跑（可能从板块页启动），接上进度
+fetch('/board_data/api/repair_status').then(r => r.json()).then(j => {
+    if (j && j.success && j.data && j.data.running) brPoll();
+}).catch(() => {});
+</script>
+{% endblock %}

@@ -1,0 +1,168 @@
+{% extends "base.html" %}
+{% block content %}
+<div style="padding:1.25rem;max-width:min(1500px,96vw);margin:0 auto;">
+
+  <div class="ht-tabs">
+    <a class="ht-tab {% if tab != 'concept' %}active{% endif %}" href="?tab=trend">📊 近期热点板块</a>
+    <a class="ht-tab {% if tab == 'concept' %}active{% endif %}" href="?tab=concept">🔬 概念热点</a>
+  </div>
+
+  <div id="tab-trend" class="ht-pane"{% if tab == 'concept' %} style="display:none;"{% endif %}>
+  <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:.6rem;margin-bottom:.4rem;">
+    <h1 style="margin:0;font-size:1.25rem;">近期热点板块</h1>
+    <span id="meta" style="color:#6b7280;font-size:.84rem;">加载中…</span>
+  </div>
+  <p style="color:#6b7280;font-size:.8rem;margin:.2rem 0 1rem;">
+    基于板块趋势打分(v1-mtf)的<b>评分动量</b>（近约5交易日分数变化）分档：
+    <b style="color:#d97706;">🌱 新兴</b>=分数快速抬升、尚未到高位；
+    <b style="color:#dc2626;">🔥 持续</b>=高分且仍在上行；
+    <b style="color:#6b7280;">💧 退潮</b>=分数明显回落。
+    <span style="color:#9ca3af;">（监控看板，非买入信号；缺涨停/资金Feature、未回测）</span>
+  </p>
+
+  <div id="cols" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:1rem;align-items:start;">
+    <div class="hot-col"><h3 class="hc-title" style="color:#d97706;">🌱 新兴热点 <span id="cnt-emerging" class="hc-cnt"></span></h3><div id="emerging"></div></div>
+    <div class="hot-col"><h3 class="hc-title" style="color:#dc2626;">🔥 持续热点 <span id="cnt-sustained" class="hc-cnt"></span></h3><div id="sustained"></div></div>
+    <div class="hot-col"><h3 class="hc-title" style="color:#6b7280;">💧 退潮 <span id="cnt-fading" class="hc-cnt"></span></h3><div id="fading"></div></div>
+  </div>
+  </div><!-- /tab-trend -->
+
+  <div id="tab-concept" class="ht-pane"{% if tab != 'concept' %} style="display:none;"{% endif %}>
+  <div style="display:flex;justify-content:space-between;align-items:baseline;margin:.2rem 0 .3rem;flex-wrap:wrap;gap:.5rem;">
+    <h2 style="margin:0;font-size:1.15rem;">🔬 概念热点（东财实时快照）</h2>
+    <span style="display:flex;gap:.7rem;align-items:center;">
+      <span id="cmeta" style="color:#6b7280;font-size:.8rem;"></span>
+      <button onclick="syncFlow()" id="syncBtn" style="padding:.35rem .85rem;border:none;border-radius:.4rem;background:#2563eb;color:#fff;font-size:.8rem;cursor:pointer;">↻ 刷新板块资金流</button>
+    </span>
+  </div>
+  <p style="color:#9ca3af;font-size:.78rem;margin:.1rem 0 .8rem;">直接来自东财板块列表：概念涨幅榜=谁在涨，资金榜=钱往哪去（主力净额为东财推断值，C级参考）。光模块/CPO/芯片等题材在此出现。</p>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;align-items:start;">
+    <div class="hot-col"><h3 class="hc-title" style="color:#dc2626;">概念·涨幅榜</h3><div id="concept_up"></div></div>
+    <div class="hot-col"><h3 class="hc-title" style="color:#16a34a;">概念·资金流入榜</h3><div id="concept_flow"></div></div>
+  </div>
+  </div><!-- /tab-concept -->
+</div>
+
+<style>
+  .hot-col { background: var(--card-background,#fff); border-radius:.6rem; padding:.6rem; box-shadow: var(--shadow-sm,0 1px 2px rgba(0,0,0,.05)); }
+  .hc-title { margin:.1rem 0 .6rem; font-size:1.02rem; border-bottom:1px solid #eef; padding-bottom:.4rem; }
+  .hc-cnt { font-size:.75rem; color:#9ca3af; font-weight:400; }
+  .hb { border:1px solid #eef; border-radius:.5rem; padding:.5rem .6rem; margin-bottom:.5rem; }
+  .hb-top { display:flex; justify-content:space-between; align-items:baseline; gap:.4rem; }
+  .hb-name { font-weight:600; font-size:.95rem; color:#111827; }
+  .hb-score { font-family:monospace; font-size:.9rem; font-weight:700; }
+  .hb-row2 { display:flex; gap:.6rem; flex-wrap:wrap; margin-top:.35rem; font-size:.76rem; color:#6b7280; align-items:center; }
+  .hb-delta-up { color:#16a34a; font-weight:600; }
+  .hb-delta-dn { color:#dc2626; font-weight:600; }
+  .hb-chip { padding:1px 6px; border-radius:3px; font-size:.7rem; }
+  .hb-links { margin-left:auto; display:flex; gap:.5rem; }
+  .hb-links a { color:#2563eb; text-decoration:none; font-size:.74rem; }
+  .empty { color:#9ca3af; font-size:.82rem; padding:.6rem; text-align:center; }
+  @media(max-width:1000px){ #cols{ grid-template-columns:1fr; } }
+  .ht-tabs { display:flex; gap:.3rem; margin-bottom:1rem; border-bottom:2px solid var(--background-color,#f3f4f6); }
+  .ht-tab { padding:.55rem 1.3rem; border:none; background:transparent; color:var(--text-secondary,#6b7280);
+            font-size:.98rem; font-weight:600; cursor:pointer; text-decoration:none; display:inline-block;
+            border-radius:.45rem .45rem 0 0; border-bottom:2px solid transparent; margin-bottom:-2px; }
+  .ht-tab:hover { color:var(--primary-color,#2563eb); }
+  .ht-tab.active { color:var(--primary-color,#2563eb); border-bottom-color:var(--primary-color,#2563eb); }
+</style>
+
+<script>
+const ACTIVE_TAB = "{{ tab }}";   // 由路由参数 ?tab= 决定当前面板
+
+const STAGE_LBL = {up_early:'初升', up_late:'末升', down_early:'初跌', down_late:'末跌', unknown:'—'};
+const SIG = {buy:['买','#16a34a'], hold:['持有','#2563eb'], sell:['卖','#dc2626'], wait:['观望','#d97706'], none:['—','#9ca3af']};
+const STR_LBL = {strong:'强', medium:'中', weak:'弱', none:'—'};
+
+function scoreColor(s){ if(s>=75)return '#dc2626'; if(s>=60)return '#d97706'; if(s>=40)return '#6b7280'; return '#9ca3af'; }
+
+function card(b){
+  const dcls = b.score_delta > 0 ? 'hb-delta-up' : (b.score_delta < 0 ? 'hb-delta-dn' : '');
+  const darrow = b.score_delta > 0 ? '▲' : (b.score_delta < 0 ? '▼' : '');
+  const sig = SIG[b.signal] || SIG.none;
+  const ret = (b.ret_pct==null) ? '—' : (b.ret_pct>0?'+':'')+b.ret_pct+'%';
+  const retc = (b.ret_pct==null)?'#9ca3af':(b.ret_pct>0?'#16a34a':(b.ret_pct<0?'#dc2626':'#6b7280'));
+  return `<div class="hb">
+    <div class="hb-top">
+      <span class="hb-name">${b.board_name||b.board_code}</span>
+      <span class="hb-score" style="color:${scoreColor(b.total_score)}">${b.total_score}</span>
+    </div>
+    <div class="hb-row2">
+      <span title="近约5交易日趋势分变化">评分 <span class="${dcls}">${darrow}${Math.abs(b.score_delta)}</span></span>
+      <span title="近约5交易日涨幅">涨幅 <span style="color:${retc}">${ret}</span></span>
+      <span title="量能配合分">量能 ${b.volume_score}</span>
+      <span class="hb-chip" style="background:#eef2ff;color:#4f46e5;">${STAGE_LBL[b.trend_stage]||'—'}·${STR_LBL[b.trend_strength]||''}</span>
+      <span class="hb-chip" style="background:#f3f4f6;color:${sig[1]};">${sig[0]}</span>
+      <span class="hb-links">
+        <a href="/board_data/board?code=${b.board_code}" target="_blank">详情</a>
+        <a href="/board_data/members?code=${b.board_code}" target="_blank">成分股</a>
+      </span>
+    </div>
+  </div>`;
+}
+
+function render(id, list){
+  const el = document.getElementById(id);
+  document.getElementById('cnt-'+id).textContent = list.length ? `(${list.length})` : '';
+  el.innerHTML = list.length ? list.map(card).join('') : '<div class="empty">暂无</div>';
+}
+
+function loadTrend(){
+  fetch('/board_data/api/hot_boards')
+    .then(r=>r.json())
+    .then(d=>{
+      if(!d.success){ document.getElementById('meta').textContent='加载失败：'+(d.message||''); return; }
+      document.getElementById('meta').textContent =
+        `数据日 ${d.as_of||'—'}｜对比基准 ${d.ref_date||'—'}（评分动量、涨幅均相对该日）`;
+      render('emerging', d.emerging||[]);
+      render('sustained', d.sustained||[]);
+      render('fading', d.fading||[]);
+    })
+    .catch(e=>{ document.getElementById('meta').textContent='请求失败：'+e.message; });
+}
+
+// ===== 概念热点（板块资金流快照）=====
+function yi(v){ return v==null?'—':(v/1e8).toFixed(2)+'亿'; }
+function flowCard(b){
+  const c = b.change_pct>0?'#dc2626':(b.change_pct<0?'#16a34a':'#6b7280');
+  const fc = (b.main_net==null)?'#9ca3af':(b.main_net>0?'#dc2626':'#16a34a');
+  const lp = b.lead_pct==null?'':` <span style="color:${b.lead_pct>0?'#dc2626':'#16a34a'}">${b.lead_pct>0?'+':''}${b.lead_pct}%</span>`;
+  return `<div class="hb">
+    <div class="hb-top">
+      <span class="hb-name">${b.board_name||b.board_code}</span>
+      <span class="hb-score" style="color:${c}">${b.change_pct>0?'+':''}${b.change_pct}%</span>
+    </div>
+    <div class="hb-row2">
+      <span title="主力净额(东财推断,C级)">主力 <span style="color:${fc}">${yi(b.main_net)}</span></span>
+      <span>换手 ${b.turnover_rate==null?'—':b.turnover_rate+'%'}</span>
+      <span title="涨/跌家数">红${b.up_count}/绿${b.down_count}</span>
+      <span title="领涨股">领涨 ${b.lead_stock||'—'}${lp}</span>
+      <span class="hb-links"><a href="/board_data/members?code=${b.board_code}" target="_blank">成分股 →</a></span>
+    </div>
+  </div>`;
+}
+function loadConcepts(){
+  fetch('/board_data/api/hot_concepts').then(r=>r.json()).then(d=>{
+    if(!d.success) return;
+    document.getElementById('cmeta').textContent = d.as_of ? ('快照 '+d.as_of) : '尚无数据';
+    const cu=document.getElementById('concept_up'), cf=document.getElementById('concept_flow');
+    cu.innerHTML = (d.concept_up||[]).length ? d.concept_up.map(flowCard).join('') : '<div class="empty">尚无数据，点右上「刷新板块资金流」</div>';
+    cf.innerHTML = (d.concept_flow||[]).length ? d.concept_flow.map(flowCard).join('') : '<div class="empty">—</div>';
+  }).catch(()=>{});
+}
+async function syncFlow(){
+  const btn=document.getElementById('syncBtn'); if(btn.disabled) return;
+  btn.disabled=true; const t=btn.textContent; btn.textContent='抓取中…';
+  document.getElementById('cmeta').textContent='正在从东财抓取行业+概念板块…';
+  try{
+    const r=await fetch('/board_data/api/sync_sector_flow',{method:'POST'}).then(x=>x.json());
+    if(r.data){ document.getElementById('cmeta').textContent='已更新：'+JSON.stringify(r.data.per_type||{}); loadConcepts(); }
+    else { alert('失败：'+(r.message||'')); }
+  }catch(e){ alert('失败：'+e.message); }
+  finally{ btn.disabled=false; btn.textContent=t; }
+}
+
+// 按路由参数只加载当前面板的数据
+if(ACTIVE_TAB === 'concept'){ loadConcepts(); } else { loadTrend(); }
+</script>
+{% endblock %}
