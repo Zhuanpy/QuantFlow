@@ -47,12 +47,13 @@
         <div class="left-panel">
             <!-- 统计数据 -->
             <div class="panel-card">
-                <h3>下载统计
+                <h3>{% if mode == 'repair' %}🛠 待修复统计{% else %}下载统计{% endif %}
                     <span style="font-size:.72rem;font-weight:400;color:#6b7280;">
                         {% if mode == 'repair' %}范围：全市场·仅落后(end_date &lt; 最新交易日){% else %}范围：股票池{% endif %}
                     </span>
                 </h3>
-                <div class="stats-grid">
+                <!-- 下载页：下载状态统计 -->
+                <div class="stats-grid download-only">
                     <div class="stat-item">
                         <div class="stat-number stat-total" id="totalCount">-</div>
                         <div class="stat-label">总股票数</div>
@@ -73,6 +74,29 @@
                     <div class="stat-item">
                         <div class="stat-number stat-processing" id="processingCount">-</div>
                         <div class="stat-label">正在下载</div>
+                    </div>
+                </div>
+                <!-- 修复页：按落后程度分档（比下载状态更能反映“欠多少、欠多狠”）-->
+                <div class="stats-grid repair-only">
+                    <div class="stat-item">
+                        <div class="stat-number stat-total" id="repairTotal">-</div>
+                        <div class="stat-label">待修复</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-number stat-success" id="lagLe7">-</div>
+                        <div class="stat-label">落后≤7天</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-number stat-pending" id="lag830">-</div>
+                        <div class="stat-label">落后8-30天</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-number stat-failed" id="lagGt30">-</div>
+                        <div class="stat-label">严重&gt;30天</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-number stat-total" id="oldestEnd" style="font-size:1.05rem;">-</div>
+                        <div class="stat-label">最落后日期</div>
                     </div>
                 </div>
             </div>
@@ -1834,13 +1858,22 @@ function updateStatistics() {
     fetch(`{{ url_for("download_data_bp.get_download_statistics") }}?${params.toString()}`)
         .then(res => res.json())
         .then(data => {
+            // 修复页：落后分档（待修复 / 轻·中·重 / 最落后日期）
+            if (PAGE_MODE === 'repair') {
+                const lag = data.lag || {};
+                const set = (id, v) => { const el = document.getElementById(id); if (el) el.innerText = v; };
+                set('repairTotal', data.total || 0);
+                set('lagLe7', lag.le7 || 0);
+                set('lag830', lag.d8_30 || 0);
+                set('lagGt30', lag.gt30 || 0);
+                set('oldestEnd', lag.oldest || '-');
+                return;
+            }
+            // 下载页：下载状态统计
             document.getElementById('totalCount').innerText = data.total || 0;
             document.getElementById('pendingCount').innerText = data.pending || 0;
             const bd = document.getElementById('pendingBreakdown');
-            // 下载页统计已限定股票池，非池恒为0，无需再拆分
-            if (bd) bd.innerText = PAGE_MODE === 'repair'
-                ? `池内 ${data.pending_pool || 0} / 非池 ${data.pending_nonpool || 0}`
-                : '';
+            if (bd) bd.innerText = '';
             document.getElementById('successCount').innerText = data.success || 0;
             document.getElementById('failedCount').innerText = data.failed || 0;
             document.getElementById('processingCount').innerText = data.processing || 0;

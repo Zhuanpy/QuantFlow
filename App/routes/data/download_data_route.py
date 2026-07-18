@@ -1493,6 +1493,22 @@ def get_download_statistics():
         ).count() if pool_ids else 0
         pending_nonpool = pending_count - pending_pool if scope != 'pool' else 0
 
+        # 落后分档（数据修复页专用）：按 end_date 距最新交易日的天数分轻/中/重，
+        # 并给出最落后日期。仅 stale_only 时计算，避免下载页多跑几条查询。
+        lag = None
+        if stale_only:
+            latest_td, _is_td = get_latest_trading_date()
+            d7 = latest_td - timedelta(days=7)
+            d30 = latest_td - timedelta(days=30)
+            lag = {
+                "le7": _base_query().filter(dlr.end_date >= d7).count(),
+                "d8_30": _base_query().filter(dlr.end_date < d7, dlr.end_date >= d30).count(),
+                "gt30": _base_query().filter(dlr.end_date < d30).count(),
+                "oldest": None,
+            }
+            oldest = _base_query().with_entities(db.func.min(dlr.end_date)).scalar()
+            lag["oldest"] = oldest.strftime('%Y-%m-%d') if oldest else None
+
         return jsonify({
             "pending": pending_count,
             "pending_pool": pending_pool,
@@ -1500,7 +1516,8 @@ def get_download_statistics():
             "success": success_count,
             "failed": failed_count,
             "processing": processing_count,
-            "total": total_count
+            "total": total_count,
+            "lag": lag
         }), 200
 
     except Exception as e:
