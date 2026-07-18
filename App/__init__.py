@@ -63,10 +63,24 @@ def create_app(config_name='default'):
     # 注册蓝图
     register_blueprints(app)
 
+    # 预热交易日历：在主线程内完成 akshare(py_mini_racer/V8) 初始化并缓存，
+    # 之后请求线程只读缓存，避免在 worker 线程里初始化 V8 触发 PartitionAlloc 崩溃。
+    _warm_trading_calendar()
+
     # 持仓当日 1m 自动拉取（交易时段每 5 分钟）——后台 daemon 线程
     _maybe_start_holdings_autofetch(app)
 
     return app
+
+
+def _warm_trading_calendar():
+    """启动时（主线程）预拉交易日历，填充进程内缓存。失败不影响启动（回退周末判断）。"""
+    try:
+        from App.routes.data.download_data_route import get_trading_dates
+        dates = get_trading_dates()
+        print(f"交易日历预热: {'成功 %d 个交易日' % len(dates) if dates else '失败(回退周末判断)'}")
+    except Exception as e:
+        print(f"警告: 交易日历预热失败: {e}")
 
 
 def _maybe_start_holdings_autofetch(app):

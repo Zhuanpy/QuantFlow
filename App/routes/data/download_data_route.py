@@ -21,6 +21,7 @@ download_data_bp = Blueprint('download_data_bp', __name__)
 # 交易日历缓存
 _trading_dates_cache = None
 _trading_dates_cache_date = None
+_trading_dates_lock = threading.Lock()
 
 # 下载状态和进度的存储
 download_status = "未开始"
@@ -71,21 +72,33 @@ def get_trading_dates():
     if _trading_dates_cache is not None and _trading_dates_cache_date == today:
         return _trading_dates_cache
 
-    try:
-        import akshare as ak
-        df = ak.tool_trade_date_hist_sina()
-        # 列名可能是 'trade_date'
-        col = df.columns[0]
-        dates = set(pd.to_datetime(df[col]).dt.date)
-        _trading_dates_cache = dates
-        _trading_dates_cache_date = today
-        logging.info(f"成功获取交易日历，共 {len(dates)} 个交易日")
-        return dates
-    except Exception as e:
-        logging.warning(f"获取交易日历失败: {e}，将回退到周末判断")
-        _trading_dates_cache = None
-        _trading_dates_cache_date = today
-        return None
+    # akshare 的日历用 py_mini_racer(V8) 执行 JS，V8/PartitionAlloc 在非主线程或二次初始化
+    # 会直接 abort（[FATAL] partition_address_space.cc: IsConfigurablePoolInitialized）。
+    # 因此只在「主线程」里真正拉取；worker（Flask 请求线程/后台线程）一律复用已有缓存，
+    # 拿不到就返回上次缓存/None（回退周末判断），宁可稍旧也绝不在请求线程里初始化 V8。
+    # 日历一次拉取即含当年全部交易日，跨零点也无需 worker 再拉。启动时会主线程预热。
+    if threading.current_thread() is not threading.main_thread():
+        return _trading_dates_cache
+
+    with _trading_dates_lock:
+        # 双检：等锁期间可能已被别的主线程路径填好
+        if _trading_dates_cache is not None and _trading_dates_cache_date == today:
+            return _trading_dates_cache
+        try:
+            import akshare as ak
+            df = ak.tool_trade_date_hist_sina()
+            # 列名可能是 'trade_date'
+            col = df.columns[0]
+            dates = set(pd.to_datetime(df[col]).dt.date)
+            _trading_dates_cache = dates
+            _trading_dates_cache_date = today
+            logging.info(f"成功获取交易日历，共 {len(dates)} 个交易日")
+            return dates
+        except Exception as e:
+            logging.warning(f"获取交易日历失败: {e}，将回退到周末判断")
+            _trading_dates_cache = None
+            _trading_dates_cache_date = today
+            return None
 
 
 def get_latest_trading_date(ref_date=None):
