@@ -184,8 +184,8 @@
                     <div class="pending-header all-records-toolbar">
                         <div class="all-records-filters">
                             <input type="text" id="allSearchInput" class="all-search"
-                                   placeholder="按代码搜索..." onkeydown="if(event.key==='Enter')loadAllRecords(1)">
-                            <select id="allCodeTypeFilter" class="all-status-select" onchange="loadAllRecords(1)">
+                                   placeholder="按代码搜索..." onkeydown="if(event.key==='Enter')refreshAllAndStats()">
+                            <select id="allCodeTypeFilter" class="all-status-select" onchange="refreshAllAndStats()">
                                 <option value="stock" selected>个股</option>
                                 <option value="board">板块</option>
                                 <option value="">全部</option>
@@ -203,12 +203,12 @@
                                 <option value="end_date:desc">结束日期 ↓(新→旧)</option>
                             </select>
                             <label style="font-size:.75rem;color:#6b7280;display:inline-flex;align-items:center;gap:2px;" title="只看结束日期早于/等于此日的记录(找落后股票)">结束≤
-                                <input type="date" id="allEndBefore" class="all-status-select" onchange="loadAllRecords(1)">
+                                <input type="date" id="allEndBefore" class="all-status-select" onchange="refreshAllAndStats()">
                             </label>
                             <label style="font-size:.75rem;color:#6b7280;display:inline-flex;align-items:center;gap:2px;" title="只看结束日期 ≥ 此日的记录（例：≥2026-05-22，挑出落后但没落后太多、可修复的；配合「结束≤」可框出区间）">结束≥
-                                <input type="date" id="allEndAfter" class="all-status-select" onchange="loadAllRecords(1)">
+                                <input type="date" id="allEndAfter" class="all-status-select" onchange="refreshAllAndStats()">
                             </label>
-                            <button class="btn-small" onclick="loadAllRecords(1)">查询</button>
+                            <button class="btn-small" onclick="refreshAllAndStats()">查询</button>
                             <button class="btn-small" style="background:#6b7280;" onclick="resetAllFilters()" title="清空搜索/状态/排序/结束日期等全部筛选">重置</button>
                             <button class="btn-small repair-only" style="background:#7c3aed;" onclick="repairByPage()"
                                     title="一键修复：按当前筛选(结束≤)找出落后个股，从最落后开始每页(=每页条数)一批下载；边下边在列表实时显示 待下载→正在下载→success/failed，逐批推进直到全部补齐。可随时停止。">🛠 一键修复（按页下载）</button>
@@ -1303,9 +1303,16 @@ function resetAllFilters() {
     document.getElementById('allEndBefore').value = '';
     document.getElementById('allEndAfter').value = '';
     loadAllRecords(1);
+    updateStatistics();
 }
 
 // 加载全部 RecordStockMinute 记录（完整字段，支持搜索/状态筛选/分页）
+// 筛选变化时：列表 + 左侧统计一起刷新（统计与列表同口径）
+function refreshAllAndStats() {
+    loadAllRecords(1);
+    updateStatistics();
+}
+
 function loadAllRecords(page = 1) {
     if (page < 1) page = 1;
     if (page > totalAllPages && totalAllPages > 0) page = totalAllPages;
@@ -1808,7 +1815,18 @@ function loadPreview() {
 }
 
 function updateStatistics() {
-    fetch(`{{ url_for("download_data_bp.get_download_statistics") }}?scope=${RECORD_SCOPE}`)
+    // 统计跟随页面筛选（修复页：仅落后 + 代码类型 + 搜索 + 结束日期区间），与列表口径一致
+    const params = new URLSearchParams({ scope: RECORD_SCOPE });
+    if (STALE_ONLY) params.set('stale_only', '1');
+    const _search = (document.getElementById('allSearchInput')?.value || '').trim();
+    const _codeType = document.getElementById('allCodeTypeFilter')?.value || '';
+    const _endBefore = document.getElementById('allEndBefore')?.value || '';
+    const _endAfter = document.getElementById('allEndAfter')?.value || '';
+    if (_search) params.set('search', _search);
+    if (_codeType) params.set('code_type', _codeType);
+    if (_endBefore) params.set('end_before', _endBefore);
+    if (_endAfter) params.set('end_after', _endAfter);
+    fetch(`{{ url_for("download_data_bp.get_download_statistics") }}?${params.toString()}`)
         .then(res => res.json())
         .then(data => {
             document.getElementById('totalCount').innerText = data.total || 0;

@@ -1419,15 +1419,64 @@ def get_download_statistics():
 
         # scope: 'pool'=只统计股票池(盘后下载页) / 其余=全市场(数据修复页)
         scope = request.args.get('scope', '', type=str)
+        # 统计跟随页面筛选（数据修复页专用），口径与 api_get_download_records 列表一致，
+        # 但不含 status —— 面板本身按状态拆分，若再按 status 收窄会自相矛盾。
+        stale_only = request.args.get('stale_only', '', type=str).lower() in ('1', 'true', 'yes')
+        code_type = request.args.get('code_type', '', type=str)
+        search = request.args.get('search', '', type=str)
+        end_before = request.args.get('end_before', '', type=str)
+        end_after = request.args.get('end_after', '', type=str)
 
-        def _count(status=None):
+        def _base_query():
+            """应用与列表相同的非状态筛选：scope + 仅落后 + 代码类型/搜索 + 结束日期区间 + 排除忽略/退市。"""
             q = dlr.query.filter(
                 dlr.end_date != date(2050, 1, 1),
                 dlr.record_date != date(2050, 1, 1)
             )
+            q = _apply_scope(q, scope)
+
+            # 仅落后：end_date < 最新交易日
+            if stale_only:
+                latest_td, _is_td = get_latest_trading_date()
+                q = q.filter(dlr.end_date.isnot(None), dlr.end_date < latest_td)
+
+            # 代码搜索 + 个股/板块类型
+            if search or code_type in ('stock', 'board'):
+                id_query = db.session.query(StockCodes.id)
+                if search:
+                    id_query = id_query.filter(StockCodes.code.like(f'%{search}%'))
+                if code_type == 'board':
+                    id_query = id_query.filter(StockCodes.code.like('BK%'))
+                elif code_type == 'stock':
+                    id_query = id_query.filter(~StockCodes.code.like('BK%'))
+                matching_ids = [s[0] for s in id_query.all()]
+                # 无匹配时用空 in_()（SQLAlchemy 渲染为恒假），使统计恒为 0（与列表返回空一致）
+                q = q.filter(dlr.stock_code_id.in_(matching_ids if matching_ids else []))
+
+            # 排除退市（名称含"退"）
+            delisted_ids = [s[0] for s in db.session.query(StockCodes.id)
+                            .filter(StockCodes.name.like('%退%')).all()]
+            if delisted_ids:
+                q = q.filter(~dlr.stock_code_id.in_(delisted_ids))
+
+            # 结束日期区间
+            if end_before:
+                try:
+                    q = q.filter(dlr.end_date <= datetime.strptime(end_before, '%Y-%m-%d').date())
+                except ValueError:
+                    pass
+            if end_after:
+                try:
+                    q = q.filter(dlr.end_date >= datetime.strptime(end_after, '%Y-%m-%d').date())
+                except ValueError:
+                    pass
+            return q
+
+        def _count(status=None):
+            q = _base_query()
             if status:
                 q = q.filter(dlr.download_status == status)
-            return _apply_scope(q, scope).count()
+            return q.count()
 
         pending_count = _count('pending')
         success_count = _count('success')
@@ -1438,11 +1487,9 @@ def get_download_statistics():
         # 待下载拆分：日常"开始下载"只处理股票池；非池板块成分股靠周/月「一键修复落后」补。
         # scope=pool 时统计本来就只有池内，池外恒为 0。
         pool_ids = _active_pool_stock_ids()
-        pending_pool = dlr.query.filter(
+        pending_pool = _base_query().filter(
             dlr.download_status == 'pending',
-            dlr.stock_code_id.in_(pool_ids),
-            dlr.end_date != date(2050, 1, 1),
-            dlr.record_date != date(2050, 1, 1)
+            dlr.stock_code_id.in_(pool_ids)
         ).count() if pool_ids else 0
         pending_nonpool = pending_count - pending_pool if scope != 'pool' else 0
 
