@@ -77,6 +77,12 @@
                 </div>
             </div>
 
+            <!-- 修复进度（数据修复页专属；从工具栏移到此处，避免挤压按钮） -->
+            <div class="panel-card repair-only">
+                <h3>🛠 修复进度</h3>
+                <div id="staleRepairStatus" style="font-size:.8rem;color:#374151;line-height:1.7;word-break:break-word;">尚未开始（点右侧「一键修复（按页下载）」启动）</div>
+            </div>
+
             <!-- 进度信息 -->
             <div class="panel-card">
                 <h3>下载进度</h3>
@@ -213,7 +219,6 @@
                             <button class="btn-small repair-only" style="background:#7c3aed;" onclick="repairByPage()"
                                     title="一键修复：按当前筛选(结束≤)找出落后个股，从最落后开始每页(=每页条数)一批下载；边下边在列表实时显示 待下载→正在下载→success/failed，逐批推进直到全部补齐。可随时停止。">🛠 一键修复（按页下载）</button>
                             <button id="byPageStop" class="btn-small repair-only" style="background:#dc2626;display:none;" onclick="_byPageRunning=false">停止</button>
-                            <span id="staleRepairStatus" class="repair-only" style="font-size:.72rem;color:#6b7280;"></span>
                         </div>
                         <div class="pending-pagination">
                             <span id="allInfo">加载中...</span>
