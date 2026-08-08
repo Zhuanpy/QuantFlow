@@ -268,7 +268,129 @@ def build_today_15m(code: str, df_1m: Optional[pd.DataFrame] = None,
 
 
 # ------------------------------------------------------------------
-# 历史 + 当日合并
+# 1m 合并：历史 quarters + 盘中 realtime + 本次现拉
+# ------------------------------------------------------------------
+_1M_MERGE_DAYS = 8   # 合并后只保留最近 N 天 1m（够算 5m/15m 的 MA20+确认，且省内存）
+_1M_COLS = ['date', 'open', 'close', 'high', 'low', 'volume', 'money']
+
+
+def load_history_1m(code: str, quarters: int = 2) -> pd.DataFrame:
+    """读历史 1m（data/quarters/<年>/<季>/<code>.parquet），取最近 `quarters` 个季度文件。
+
+    与个股 1m 下载/RNN 同源。返回按时间升序、仅含标准 7 列的 DataFrame（无则空表）。
+    """
+    try:
+        pm = get_path_manager()
+        qroot = pm.data_base / 'quarters'
+        if not qroot.exists():
+            return pd.DataFrame()
+        # data/quarters/<年>/<季>/<code>.parquet；路径按 年/季 字典序即时间序
+        files = sorted(qroot.glob(f'*/*/{code}.parquet'))
+        if not files:
+            return pd.DataFrame()
+        frames = []
+        for fp in files[-max(1, quarters):]:
+            try:
+                d = pd.read_parquet(fp)
+                if d is not None and not d.empty:
+                    frames.append(d)
+            except Exception as e:
+                logger.debug(f'{code}: 读历史 1m 分片失败 {fp}: {e}')
+        if not frames:
+            return pd.DataFrame()
+        df = pd.concat(frames, ignore_index=True)
+        df['date'] = pd.to_datetime(df['date'])
+        keep = [c for c in _1M_COLS if c in df.columns]
+        return df[keep].sort_values('date').reset_index(drop=True)
+    except Exception as e:
+        logger.warning(f'{code}: 读历史 1m 失败 {e}')
+        return pd.DataFrame()
+
+
+def load_persisted_realtime_1m(code: str, days: int = 10) -> pd.DataFrame:
+    """读已落盘的盘中 1m（data/realtime/1m/<日期>/<code>.csv），扫最近 `days` 个日期目录。
+
+    这些文件由 holdings_1m_autofetch 后台线程 / fetch_today_1m 累积，是本次现拉失败时的兜底。
+    """
+    try:
+        root = os.path.join(get_realtime_dir(), '1m')
+        if not os.path.isdir(root):
+            return pd.DataFrame()
+        date_dirs = sorted(d for d in os.listdir(root)
+                           if os.path.isdir(os.path.join(root, d)))
+        frames = []
+        for d in date_dirs[-max(1, days):]:
+            fp = os.path.join(root, d, f'{code}.csv')
+            if os.path.exists(fp):
+                try:
+                    frames.append(pd.read_csv(fp, parse_dates=['date']))
+                except Exception as e:
+                    logger.debug(f'{code}: 读盘中 1m 失败 {fp}: {e}')
+        if not frames:
+            return pd.DataFrame()
+        df = pd.concat(frames, ignore_index=True)
+        df['date'] = pd.to_datetime(df['date'])
+        keep = [c for c in _1M_COLS if c in df.columns]
+        return df[keep].sort_values('date').reset_index(drop=True)
+    except Exception as e:
+        logger.warning(f'{code}: 读盘中 1m 失败 {e}')
+        return pd.DataFrame()
+
+
+def load_merged_1m(code: str, refresh: bool = True) -> Dict:
+    """合并「历史 1m + 已落盘盘中 1m + 本次现拉当日 1m」为一份连续 1m。
+
+    Args:
+        code: 股票代码
+        refresh: True 则现拉一次 pytdx 当日 1m（成功即落盘 realtime/1m/<今日>/），
+                 并把是否成功透传给调用方；False 只读已落盘数据（不触发网络）。
+
+    Returns:
+        {df, fetch_ok, fetch_attempted, hist_rows, persisted_rows, fetched_rows, total_rows}
+        - fetch_ok: 本次现拉是否成功拿到当日 1m（refresh=False 时为 None）
+        - df: 合并去重后的 1m（升序，仅最近 _1M_MERGE_DAYS 天，标准 7 列；无则空表）
+    """
+    hist = load_history_1m(code)
+    persisted = load_persisted_realtime_1m(code)
+
+    fetch_ok = None
+    fetched = pd.DataFrame()
+    if refresh:
+        try:
+            fetched = fetch_today_1m(code, save=True)   # 成功则落到今日 realtime csv
+        except Exception as e:
+            logger.warning(f'{code}: 本次现拉 1m 异常 {e}')
+            fetched = pd.DataFrame()
+        fetch_ok = fetched is not None and not fetched.empty
+
+    parts = [p for p in (hist, persisted, fetched) if p is not None and not p.empty]
+    if not parts:
+        return {'df': pd.DataFrame(), 'fetch_ok': fetch_ok,
+                'fetch_attempted': refresh, 'hist_rows': 0,
+                'persisted_rows': 0, 'fetched_rows': 0, 'total_rows': 0}
+
+    merged = pd.concat(parts, ignore_index=True)
+    merged['date'] = pd.to_datetime(merged['date'])
+    merged = (merged.drop_duplicates(subset=['date'], keep='last')
+                    .sort_values('date').reset_index(drop=True))
+
+    # 只保留最近 N 天，够算 5m/15m 的均线+确认，省内存
+    cutoff = merged['date'].max().normalize() - pd.Timedelta(days=_1M_MERGE_DAYS)
+    merged = merged[merged['date'] >= cutoff].reset_index(drop=True)
+
+    return {
+        'df': merged,
+        'fetch_ok': fetch_ok,
+        'fetch_attempted': refresh,
+        'hist_rows': len(hist),
+        'persisted_rows': len(persisted),
+        'fetched_rows': 0 if fetched is None else len(fetched),
+        'total_rows': len(merged),
+    }
+
+
+# ------------------------------------------------------------------
+# 历史 + 当日合并（15m）
 # ------------------------------------------------------------------
 def load_history_15m(code: str) -> pd.DataFrame:
     """读历史 15m（与 viewer_15m / stock_trend 同源）"""

@@ -11,7 +11,10 @@
   - 同步下跌 → 坚定止损/空仓观望；同步上涨 → 持有/坚定买入；方向不一致 → 分歧留意。
 盯盘3（放量）：复用 bottom_volume_signal 的 RVOL/底部放量判断（同一数据源，避免重复计算）。
 
-5m 数据来源：pytdx 拉近 LOAD_DAYS 天 1m 再重采样为 5m（早盘也有足够根数算 MA20+7）。
+5m 数据来源：realtime_data_service.load_merged_1m —— 合并「历史 1m(quarters) + 盘中落盘 1m
+(realtime/1m) + 本次现拉当日 1m(pytdx)」再重采样为 5m。这样单次 pytdx 失败也有缓存兜底、不会
+0 根；本次现拉是否失败经 fetch_ok/fetch_failed 透传给页面（失败时出「⚠本次1m下载失败」提示），
+且失败结果不入缓存，下一轮立即重试。
 计算较重，故 5m 结果按 code 缓存 CACHE_TTL 秒、板块 15m 结果按 board_code 缓存 BOARD_TTL 秒。
 """
 from __future__ import annotations
@@ -26,7 +29,6 @@ logger = logging.getLogger(__name__)
 # ---- 可调参数 ----
 MA_PERIODS = (5, 10, 20)   # 5m 三均线周期
 CONFIRM_BARS = 7           # 连续确认根数
-LOAD_DAYS = 5              # 拉取近 N 天 1m 以有足够 5m 根数
 THUMB_BARS = 20            # 明细行缩略图展示的最近根数（图只需 20 根即可）
 CACHE_TTL = 90             # 单只 5m 计算缓存秒数
 BOARD_TTL = 300            # 板块 15m 方向缓存秒数
@@ -63,15 +65,23 @@ def _build_ma_series(df):
 
 # ============== 盯盘1：5m 三均线 ==============
 def _load_5m(code: str):
-    """拉近 LOAD_DAYS 天 1m（pytdx）并重采样为 5m，返回按时间升序的 DataFrame（空则空表）。"""
+    """合并「历史 1m + 盘中落盘 1m + 本次现拉 1m」再重采样为 5m。
+
+    Returns:
+        (df5, fetch_ok)
+        - df5: 5m DataFrame（升序，空则空表）
+        - fetch_ok: 本次 pytdx 现拉当日 1m 是否成功（用于页面「本次1m下载失败」提示）
+    """
     import pandas as pd
 
-    from App.codes.downloads.DlPytdx import download_stock_1m_pytdx
     from App.codes.utils.data_processing import ResampleData
+    from App.services.realtime_data_service import load_merged_1m
 
-    df, _end = download_stock_1m_pytdx(code, days=LOAD_DAYS)
+    res = load_merged_1m(code, refresh=True)
+    df = res['df']
+    fetch_ok = res['fetch_ok']
     if df is None or df.empty:
-        return pd.DataFrame()
+        return pd.DataFrame(), fetch_ok
     df = df.copy()
     df['date'] = pd.to_datetime(df['date'])
     if 'money' not in df.columns:      # resample_fun 依赖 money 列
@@ -80,8 +90,8 @@ def _load_5m(code: str):
         df5 = ResampleData.resample_fun(df, '5min')
     except Exception as e:
         logger.debug(f'[watch1] {code} 1m→5m 重采样失败: {e}')
-        return pd.DataFrame()
-    return df5.sort_values('date').reset_index(drop=True)
+        return pd.DataFrame(), fetch_ok
+    return df5.sort_values('date').reset_index(drop=True), fetch_ok
 
 
 def evaluate_watch1(code: str) -> dict:
@@ -92,15 +102,21 @@ def evaluate_watch1(code: str) -> dict:
             return hit[1]
 
     out = {'ok': False, 'action': 'na', 'streak': 0,
-           'price': None, 'ma': {}, 'last_bar_time': None, 'bars': 0}
+           'price': None, 'ma': {}, 'last_bar_time': None, 'bars': 0,
+           'fetch_ok': None, 'fetch_failed': False}
     try:
         import pandas as pd
-        df5 = _load_5m(code)
+        df5, fetch_ok = _load_5m(code)
+        # 本次现拉当日 1m 是否失败（用缓存兜底时页面加角标提示）
+        out['fetch_ok'] = fetch_ok
+        out['fetch_failed'] = (fetch_ok is False)
         need = max(MA_PERIODS) + CONFIRM_BARS
         out['bars'] = len(df5)
         if df5.empty or len(df5) < need:
-            with _lock:
-                _w1_cache[code] = (time.time(), out)
+            # 本次现拉失败导致的数据不足不入缓存，下一轮立即重试；否则缓存避免重复空算
+            if not out['fetch_failed']:
+                with _lock:
+                    _w1_cache[code] = (time.time(), out)
             return out
 
         close = pd.to_numeric(df5['close'], errors='coerce')
@@ -163,8 +179,10 @@ def evaluate_watch1(code: str) -> dict:
     except Exception as e:
         logger.warning(f'[watch1] {code} 评估失败: {e}')
 
-    with _lock:
-        _w1_cache[code] = (time.time(), out)
+    # 本次现拉失败时不缓存，下一轮重新尝试拉取（信号已用缓存 1m 算出，不影响展示）
+    if not out.get('fetch_failed'):
+        with _lock:
+            _w1_cache[code] = (time.time(), out)
     return out
 
 

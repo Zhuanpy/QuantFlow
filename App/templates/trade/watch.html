@@ -1281,9 +1281,19 @@ function _wd1Chart(code, w) {
 
 function _wdWatch1(w, code) {
     if (!w || !w.ok) {
+        // 本次现拉 1m 失败、且缓存也不足以算信号 → 明确提示「下载1m失败」
+        if (w && w.fetch_failed) {
+            const bars = w.bars ? `（现有 ${w.bars} 根 5m，需 ${20 + 7} 根）` : '';
+            return _wdBox('盯盘1 · 5m三均线', 'warn', '⚠ 下载1m失败',
+                          '本次 pytdx 拉取当日 1m 失败，且历史/盘中缓存不足以算 MA20+7' + bars);
+        }
         const bars = w && w.bars != null ? `（仅 ${w.bars} 根 5m，需 ${20 + 7} 根）` : '';
         return _wdBox('盯盘1 · 5m三均线', 'na', '数据不足', '5m 根数不够算 MA20+7' + bars);
     }
+    // 信号已用（历史+盘中缓存）算出，但本次现拉失败 → 加角标提示数据非最新
+    const staleBadge = w.fetch_failed
+        ? ' <span style="font-size:.62rem;color:#b45309;background:#fef3c7;border-radius:4px;padding:0 .3rem;vertical-align:middle;">⚠本次1m下载失败(用缓存)</span>'
+        : '';
     const m = w.ma || {};
     const maStr = `MA ${m.ma5 ?? '-'} / ${m.ma10 ?? '-'} / ${m.ma20 ?? '-'}`;
     const price = w.price == null ? '-' : w.price;
@@ -1301,7 +1311,7 @@ function _wdWatch1(w, code) {
     }
     // 在方块内嵌 mini 图（若有 series）
     const extra = (w.series && w.series.length) ? _wd1Chart(code, w) : '';
-    return _wdBox('盯盘1 · 5m三均线', tone, headline, sub, extra);
+    return _wdBox('盯盘1 · 5m三均线', tone, headline + staleBadge, sub, extra);
 }
 
 // 画三均线缩略图：高低价竖柱 + 三均线 + 收盘线。
