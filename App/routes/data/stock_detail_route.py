@@ -155,6 +155,10 @@ def _parse_as_of(raw):
 # A股交易费用（估算口径，用于把手续费折进持仓成本）：
 #   券商佣金 万2.5，单笔最低 5 元；过户费 0.001%（双向）；印花税 0.05%（仅卖出）。
 # 当前「浮盈」口径 = 买入费计入成本，卖出费不预扣，故这里只用到买入侧(佣金+过户费)。
+# 指定时间段时的返回上限（根）。区间模式不按 limit 截断，但仍需防止一次吐几万根
+# 把前端画卡死。15m 一年约 4000 根，30000 根 ≈ 7 年，正常复盘区间够用。
+RANGE_MAX_BARS = 30000
+
 COMMISSION_RATE = 0.00025   # 佣金费率
 COMMISSION_MIN = 5.0        # 单笔最低佣金
 TRANSFER_FEE_RATE = 0.00001  # 过户费费率（双向）
@@ -632,6 +636,11 @@ def _merge_small_segments(df, seg_bounds, merge_below,
 def api_15m(code):
     """15m K 线数据，可按时间范围过滤。
 
+    取数范围二选一（互斥）：
+    - 不传 start/end：取最近 limit 根（默认 2000）
+    - 传 start 和/或 end：取该时间段内的**全部**根，limit 不再生效；
+      仅在超过 RANGE_MAX_BARS 时截断头部并置 truncated=True
+
     三种视角：
     - 默认（收盘后）：直接读 15m parquet
     - mode=live：把今天的 1m（盘中临时 + 历史归档）重采样成 15m，append 到尾部
@@ -687,18 +696,45 @@ def api_15m(code):
         df = StatisticsMACD.s_CycleAmplitude(df)
         df = StatisticsMACD.s_CycleLength(df)
 
+    # 时间段筛选。start/end 支持 YYYY-MM-DD 或带时分；end 只给日期时含当天整日。
+    # 与 api_15m_rows 的 has_range 语义保持一致。
+    has_range = False
     if start:
-        df = df[df['date'] >= pd.to_datetime(start)]
+        try:
+            df = df[df['date'] >= pd.to_datetime(start)]
+            has_range = True
+        except Exception:
+            logger.warning(f'{code} 15m start 参数无法解析，已忽略: {start}')
     if end:
-        df = df[df['date'] <= pd.to_datetime(end)]
+        try:
+            end_ts = pd.to_datetime(end)
+            if end_ts == end_ts.normalize():      # 只给了日期 → 含当天 23:59:59
+                end_ts = end_ts + pd.Timedelta(hours=23, minutes=59, seconds=59)
+            df = df[df['date'] <= end_ts]
+            has_range = True
+        except Exception:
+            logger.warning(f'{code} 15m end 参数无法解析，已忽略: {end}')
     if as_of_ts is not None:
         df = df[df['date'] <= as_of_ts]
         if df.empty:
             return jsonify({'success': False,
                             'message': f'as_of={as_of_ts.strftime("%Y-%m-%d %H:%M")} 之前无 {period} 数据'}), 404
 
-    # 取最后 limit 行（避免一次返回几万条）
-    df = df.tail(limit).reset_index(drop=True)
+    if has_range and df.empty:
+        return jsonify({'success': False,
+                        'message': f'{start or "最早"} ~ {end or "最新"} 区间内无 {period} 数据'}), 404
+
+    # 指定了时间段 → 返回整段，不再按"最近 limit 根"截断（否则用户选了长区间却
+    # 只拿到尾部 limit 根，图上看不出被截过，是隐性的数据错觉）。
+    # 仍留一个硬上限兜底，防止一次吐几万根把前端画卡死；截断时用 truncated 明示。
+    truncated = False
+    if has_range:
+        if len(df) > RANGE_MAX_BARS:
+            df = df.tail(RANGE_MAX_BARS)
+            truncated = True
+    else:
+        df = df.tail(limit)
+    df = df.reset_index(drop=True)
 
     has_signal = 'Signal' in df.columns
     has_sidx = 'SignalStartIndex' in df.columns
@@ -836,6 +872,8 @@ def api_15m(code):
         'mode': mode if mode in ('live',) else 'after_close',
         'period': period,
         'live_bars': live_bars,
+        'range': has_range,        # True = 按时间段取的整段，未受 limit 截断
+        'truncated': truncated,    # True = 区间太长，被 RANGE_MAX_BARS 截掉了头部
         'data': records,
     })
 

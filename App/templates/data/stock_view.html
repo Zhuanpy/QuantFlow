@@ -128,14 +128,44 @@
 
   <!-- ========== ① 15m K 线图 ========== -->
   <div class="card" style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:1.25rem;margin-bottom:1rem;">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.75rem;">
-      <h2 id="kTitle" style="margin:0;font-size:1.125rem;">① 15 分钟 K 线</h2>
-      <select id="kRange" class="form-select">
-        <option value="500">最近 500 根</option>
-        <option value="1000" selected>最近 1000 根</option>
-        <option value="2000">最近 2000 根</option>
-        <option value="5000">最近 5000 根</option>
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:.75rem;flex-wrap:wrap;margin-bottom:.75rem;">
+      <h2 id="kTitle" style="margin:0;font-size:1.125rem;white-space:nowrap;">① 15 分钟 K 线</h2>
+      <!-- 取数范围：根数 与 日期区间 二选一。填了日期就完全按区间取，清空回到根数。 -->
+      <div style="display:flex;align-items:center;gap:.45rem;flex-wrap:wrap;justify-content:flex-end;">
+        <select id="kRange" class="form-select" title="未指定日期区间时生效">
+          <option value="500">最近 500 根</option>
+          <option value="1000" selected>最近 1000 根</option>
+          <option value="2000">最近 2000 根</option>
+          <option value="5000">最近 5000 根</option>
+        </select>
+        <span style="color:#d1d5db;">|</span>
+        <input type="date" id="kStart" class="form-select" style="padding:.3rem .4rem;"
+               title="区间起（含）" onchange="onKRangeChange()">
+        <span style="color:#9ca3af;">→</span>
+        <input type="date" id="kEnd" class="form-select" style="padding:.3rem .4rem;"
+               title="区间止（含当天整日）" onchange="onKRangeChange()">
+        <button type="button" class="btn" onclick="clearKRange()"
+                style="padding:.3rem .6rem;font-size:.8rem;border:1px solid #d1d5db;background:#fff;border-radius:6px;cursor:pointer;">
+          清除区间
+        </button>
+      </div>
+    </div>
+    <!-- 复盘定位：直接跳到某一笔完整买卖周期 -->
+    <div style="display:flex;align-items:center;gap:.45rem;flex-wrap:wrap;margin-bottom:.6rem;padding:.4rem .7rem;
+                border:1px solid #e5e7eb;border-radius:6px;background:#f9fafb;">
+      <span style="font-size:.82rem;color:#374151;font-weight:600;white-space:nowrap;">复盘定位</span>
+      <select id="kTradeCycle" class="form-select" style="min-width:330px;font-size:.82rem;"
+              onchange="onTradeCyclePick(this.value)">
+        <option value="">— 选一笔交易，自动框出该周期 —</option>
       </select>
+      <label style="display:flex;align-items:center;gap:.25rem;font-size:.8rem;color:#6b7280;white-space:nowrap;"
+             title="在买入日之前、卖出日之后各多留几个自然日，方便看进出场前后的走势">
+        前后各留
+        <input id="kTradePad" type="number" value="10" min="0" max="120" step="5"
+               style="width:52px;padding:.15rem .3rem;border:1px solid #d1d5db;border-radius:4px;"
+               onchange="reapplyTradeCycle()"> 天
+      </label>
+      <span id="kTradeHint" style="font-size:.78rem;color:#9ca3af;margin-left:auto;"></span>
     </div>
     <div id="currentTrend" style="display:none;margin-bottom:.6rem;padding:.6rem .9rem;border-radius:8px;border:1px solid;display:flex;align-items:center;gap:.75rem;flex-wrap:wrap;"></div>
     <div id="kChart15m" style="width:100%;height:880px;">加载中…</div>
@@ -778,7 +808,12 @@ function ensureZhLocale() {
 
 async function load15m() {
   const limit = document.getElementById('kRange').value;
+  const kStart = document.getElementById('kStart').value;
+  const kEnd = document.getElementById('kEnd').value;
   let u15 = withAsOf(`${API}/15m?limit=${limit}`);
+  // 有区间就带上；后端见到 start/end 会返回整段而不是最近 limit 根
+  if (kStart) u15 += `&start=${kStart}`;
+  if (kEnd) u15 += `&end=${kEnd}`;
   if (typeof MERGE_BELOW !== 'undefined' && MERGE_BELOW > 0) u15 += `&merge_below=${MERGE_BELOW}`;
   const j = await fetchJson(u15);
   if (!j.success) { document.getElementById('kChart15m').innerText = j.message || '加载失败'; return; }
@@ -791,8 +826,13 @@ async function load15m() {
   const segs = j.segments || [];
   const up = segs.filter(s => s.direction > 0).length;
   const dn = segs.filter(s => s.direction < 0).length;
+  // 取数口径要写清楚：区间模式是"整段"，根数模式是"最近 N 根"，被硬上限截断时明说
+  const scopeTxt = j.range
+    ? `时间段 ${document.getElementById('kStart').value || '最早'} ~ ${document.getElementById('kEnd').value || '最新'}`
+      + (j.truncated ? `<span style="color:#d97706;font-weight:600;">（区间过长，仅显示最近 ${j.count} 根）</span>` : '')
+    : `最近 ${document.getElementById('kRange').value} 根`;
   document.getElementById('kSummary15m').innerHTML =
-    `共 ${j.count} 根，${j.first_date} → ${j.last_date}` +
+    `${scopeTxt}&nbsp;|&nbsp;共 ${j.count} 根，${j.first_date} → ${j.last_date}` +
     (segs.length
       ? `&nbsp;|&nbsp;波段 <span style="color:#dc2626;font-weight:600;">■ 上涨 ${up}</span> / <span style="color:#16a34a;font-weight:600;">■ 下跌 ${dn}</span>（底色标注）`
       : '&nbsp;|&nbsp;<span style="color:#9ca3af;">无波段信号数据</span>');
@@ -1575,6 +1615,89 @@ async function loadFundHoldings() {
 }
 
 document.getElementById('kRange').onchange = () => { load15m(); dataPage = 1; loadDataTable(); };
+
+// ---------- ① K 线取数范围：根数 / 日期区间 二选一 ----------
+// K 线图与下方数据表共用同一个区间：数据表自己那两个输入框由这里同步驱动，
+// 避免同一页面上两套区间各说各话。
+function _syncDataTableRange() {
+  const s = document.getElementById('kStart').value;
+  const e = document.getElementById('kEnd').value;
+  const ds = document.getElementById('dataStart');
+  const de = document.getElementById('dataEnd');
+  if (ds) ds.value = s;
+  if (de) de.value = e;
+}
+
+function onKRangeChange() {
+  _syncDataTableRange();
+  load15m();
+  dataPage = 1;
+  loadDataTable();
+}
+
+function clearKRange() {
+  document.getElementById('kStart').value = '';
+  document.getElementById('kEnd').value = '';
+  document.getElementById('kTradeCycle').value = '';
+  document.getElementById('kTradeHint').textContent = '';
+  onKRangeChange();
+}
+
+// ---------- ① 复盘定位：按成交周期一键框选 ----------
+// 周期数据复用 /api/trade/records/statistics?stock=<code> 的 all_completed，
+// 不在前端重新做买卖配对——周期切分口径只保留后端一份。
+let _tradeCycles = [];
+
+async function loadTradeCycles() {
+  const sel = document.getElementById('kTradeCycle');
+  if (!sel) return;
+  try {
+    const j = await fetchJson(`/api/trade/records/statistics?stock=${encodeURIComponent(CODE)}`);
+    if (!j.success) return;
+    // 该接口按代码/名称模糊匹配，可能命中别的股票，这里再按代码精确过滤一次
+    _tradeCycles = (j.data.all_completed || []).filter(t => t.stock_code === CODE);
+    if (!_tradeCycles.length) {
+      sel.innerHTML = '<option value="">— 该股票暂无完整买卖周期 —</option>';
+      sel.disabled = true;
+      return;
+    }
+    sel.disabled = false;
+    sel.innerHTML = '<option value="">— 选一笔交易，自动框出该周期 —</option>'
+      + _tradeCycles.map((t, i) => {
+          const e = (t.entry_time || '').slice(0, 10);
+          const x = (t.exit_time || '').slice(0, 10);
+          const pnl = (t.profit_loss >= 0 ? '+' : '') + t.profit_loss.toFixed(0);
+          const pct = (t.profit_loss_pct >= 0 ? '+' : '') + t.profit_loss_pct.toFixed(2) + '%';
+          return `<option value="${i}">${e} 买 → ${x} 卖 · ${t.hold_days ?? '-'}天 · ${pnl} (${pct})</option>`;
+        }).join('');
+  } catch (e) {
+    console.warn('加载成交周期失败', e);
+  }
+}
+
+function _shiftDays(isoDate, days) {
+  const d = new Date(isoDate + 'T00:00:00');
+  d.setDate(d.getDate() + days);
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+
+function onTradeCyclePick(idx) {
+  const hint = document.getElementById('kTradeHint');
+  if (idx === '' || !_tradeCycles[idx]) { hint.textContent = ''; return; }
+  const t = _tradeCycles[idx];
+  const pad = Math.max(0, parseInt(document.getElementById('kTradePad').value, 10) || 0);
+  document.getElementById('kStart').value = _shiftDays((t.entry_time || '').slice(0, 10), -pad);
+  document.getElementById('kEnd').value = _shiftDays((t.exit_time || '').slice(0, 10), pad);
+  const pnl = (t.profit_loss >= 0 ? '+' : '') + t.profit_loss.toFixed(2);
+  hint.textContent = `买 ${t.avg_entry_price} → 卖 ${t.avg_exit_price} · ${t.bought_qty ?? '-'} 股 · 盈亏 ${pnl}`;
+  onKRangeChange();
+}
+
+// 改「前后各留 N 天」时，按当前选中的那笔重新框一次
+function reapplyTradeCycle() {
+  const sel = document.getElementById('kTradeCycle');
+  if (sel && sel.value !== '') onTradeCyclePick(sel.value);
+}
 document.getElementById('dsOnlyIssues').onchange = loadDailySummary;
 document.getElementById('oneMinDate').onchange = load1m;
 document.getElementById('fundDays').onchange = loadFundHoldings;
@@ -1661,5 +1784,6 @@ if (VIEW_MODE === 'replay') {
 loadOverview().catch(e => console.error('[loadOverview]', e));
 load15m(); loadDataTable(); loadDailySummary(); loadCycles(); load1mDates();
 loadMetrics(); loadPredictions(); loadFundHoldings();
+loadTradeCycles().catch(e => console.error('[loadTradeCycles]', e));
 </script>
 {% endblock %}
