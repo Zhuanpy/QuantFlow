@@ -31,12 +31,19 @@ class DownloadRecord(db.Model):
     # 关联到 data_stock_info 表的外键
     stock_code_id = db.Column(db.BigInteger, db.ForeignKey('data_stock_info.id', ondelete='CASCADE'), nullable=False, comment='股票代码ID')
     
-    # 下载状态和进度
+    # 盘后数据下载(mode=download)的任务状态，只由 download_file() 写
     download_status = db.Column(db.String(20), default='pending', comment='下载状态：pending/processing/success/failed')
     download_progress = db.Column(db.Float, default=0.0, comment='下载进度(0-100)')
     error_message = db.Column(db.Text, comment='错误信息')
-    
-    # 数据时间范围
+
+    # 数据修复(mode=repair)的任务状态，只由 services/minute_data_repair 写。
+    # 与 download_* 分开记：两条流水线互不干扰，失败原因/状态不再互相覆盖。
+    repair_status = db.Column(db.String(20), comment='修复状态：pending/processing/success/failed')
+    repair_progress = db.Column(db.Float, comment='修复进度(0-100)')
+    repair_error = db.Column(db.Text, comment='修复错误信息')
+    repair_time = db.Column(db.DateTime, comment='最后修复时间')
+
+    # 数据时间范围——这是「数据事实」（1m 数据覆盖到哪天），下载与修复共用同一份，不拆
     start_date = db.Column(db.Date, comment='数据开始日期')
     end_date = db.Column(db.Date, comment='数据结束日期')
     record_date = db.Column(db.Date, comment='记录创建日期')
@@ -104,6 +111,22 @@ class DownloadRecord(db.Model):
         if error_msg is not None:
             self.error_message = error_msg
         self.last_download_time = datetime.utcnow()
+        self.updated_at = datetime.utcnow()
+
+    def update_repair_status(self, status: str, progress: float = None, error_msg: str = None):
+        """更新修复状态（数据修复流程专用，不碰 download_*）
+
+        Args:
+            status: 修复状态 pending/processing/success/failed
+            progress: 修复进度
+            error_msg: 错误信息；传 '' 表示清空上一次的错误
+        """
+        self.repair_status = status
+        if progress is not None:
+            self.repair_progress = progress
+        if error_msg is not None:
+            self.repair_error = error_msg or None
+        self.repair_time = datetime.utcnow()
         self.updated_at = datetime.utcnow()
 
 

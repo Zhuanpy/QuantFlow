@@ -220,8 +220,9 @@
                                 <option value="board">板块</option>
                                 <option value="">全部</option>
                             </select>
-                            <select id="allStatusFilter" class="all-status-select" onchange="loadAllRecords(1)">
-                                <option value="">全部状态</option>
+                            <select id="allStatusFilter" class="all-status-select" onchange="loadAllRecords(1)"
+                                    title="{% if mode == 'repair' %}按修复状态筛选{% else %}按下载状态筛选{% endif %}">
+                                <option value="">{% if mode == 'repair' %}全部修复状态{% else %}全部状态{% endif %}</option>
                                 <option value="pending">pending</option>
                                 <option value="processing">processing</option>
                                 <option value="success">success</option>
@@ -263,16 +264,17 @@
                                     <th>ID</th>
                                     <th>代码</th>
                                     <th>名称</th>
-                                    <th>状态</th>
+                                    {# 状态/进度/时间/错误四列按页面模式切换：下载页看 download_*，修复页看 repair_* #}
+                                    <th title="{% if mode == 'repair' %}数据修复流程的状态，与盘后下载状态各记各的{% else %}盘后数据下载流程的状态{% endif %}">{% if mode == 'repair' %}修复状态{% else %}状态{% endif %}</th>
                                     <th>进度</th>
                                     <th>起始日期</th>
                                     <th>结束日期</th>
                                     <th>记录日期</th>
                                     <th>总数</th>
                                     <th>已下载</th>
-                                    <th>最后下载</th>
+                                    <th>{% if mode == 'repair' %}最后修复{% else %}最后下载{% endif %}</th>
                                     <th>更新时间</th>
-                                    <th>错误信息</th>
+                                    <th>{% if mode == 'repair' %}修复错误{% else %}错误信息{% endif %}</th>
                                 </tr>
                             </thead>
                             <tbody id="allRecordsBody">
@@ -1357,7 +1359,8 @@ function loadAllRecords(page = 1) {
     const params = new URLSearchParams({ page: page, per_page: perPage, scope: RECORD_SCOPE });
     if (STALE_ONLY) params.set('stale_only', '1');
     if (search) params.set('search', search);
-    if (status) params.set('status', status);
+    // 状态筛选跟着页面模式走：修复页筛 repair_status，下载页筛 download_status
+    if (status) { params.set('status', status); if (PAGE_MODE === 'repair') params.set('status_of', 'repair'); }
     if (codeType) params.set('code_type', codeType);
     if (sortBy) params.set('sort', sortBy);
     if (sortOrder) params.set('order', sortOrder);
@@ -1399,11 +1402,16 @@ function renderAllRecords(records) {
         body.innerHTML = '<tr><td colspan="13" class="empty-message">暂无记录</td></tr>';
         return;
     }
+    // 修复页读 repair_*，下载页读 download_*：两条流水线的状态各记各的，互不覆盖
+    const isRepair = PAGE_MODE === 'repair';
     body.innerHTML = records.map(r => {
-        const st = r.download_status || '-';
+        const st = (isRepair ? r.repair_status : r.download_status) || '-';
         const badgeCls = ['success', 'failed', 'pending', 'processing'].includes(st) ? st : '';
-        const prog = (r.download_progress != null) ? r.download_progress + '%' : '-';
-        const err = r.error_message ? escapeHtml(r.error_message) : '';
+        const rawProg = isRepair ? r.repair_progress : r.download_progress;
+        const prog = (rawProg != null) ? rawProg + '%' : '-';
+        const rawErr = isRepair ? r.repair_error : r.error_message;
+        const err = rawErr ? escapeHtml(rawErr) : '';
+        const opTime = (isRepair ? r.repair_time : r.last_download_time) || '-';
         return `<tr>
             <td>${r.id}</td>
             <td class="stock-code">${escapeHtml(r.stock_code)}</td>
@@ -1416,7 +1424,7 @@ function renderAllRecords(records) {
             <td>${r.record_date || '-'}</td>
             <td>${r.total_records != null ? r.total_records : '-'}</td>
             <td>${r.downloaded_records != null ? r.downloaded_records : '-'}</td>
-            <td>${r.last_download_time || '-'}</td>
+            <td>${opTime}</td>
             <td>${r.updated_at || '-'}</td>
             <td class="err-cell" title="${err}">${err}</td>
         </tr>`;

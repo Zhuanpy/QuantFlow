@@ -305,45 +305,49 @@ def download_file():
         latest_trading_date, is_today_trading = get_latest_trading_date()
         logging.info(f"最近交易日: {latest_trading_date}, 今天是否交易日: {is_today_trading}")
 
-        # 检查是否需要重置所有success记录（判断口径也限定股票池）
-        latest_record = dlr.query.filter(
+        # 检查是否需要重置success记录（判断口径限定股票池）。
+        # 注意：这里必须「逐只数还有多少只落后」，不能像以前那样取 record_date 最大的
+        # 那一行当全池代表——数据修复(mode=repair)跑的是全市场、包含池内个股，只要它把
+        # 任意一只补到最新交易日，代表行就会命中它，全池被误判「已是最新」而跳过当天下载。
+        stale_pool_count = dlr.query.filter(
             dlr.stock_code_id.in_(pool_ids),
-            dlr.record_date != date(2050, 1, 1)  # 排除被忽略的股票
-        ).order_by(dlr.record_date.desc()).first()
+            dlr.end_date != date(2050, 1, 1),  # 排除被忽略的股票
+            dlr.record_date != date(2050, 1, 1),
+            dlr.end_date < latest_trading_date
+        ).count()
 
         success_reset_count = 0
 
-        if not download_force and latest_record:
-            # 如果上次已下载的数据已经覆盖到最近交易日，无需重新下载
-            if latest_record.end_date >= latest_trading_date:
-                logging.info(
-                    f"数据已是最新：end_date={latest_record.end_date} >= "
-                    f"最近交易日={latest_trading_date}，无需重新下载"
-                )
-                # 不重置success记录，只处理之前失败的
-                need_reset = False
-            else:
-                logging.info(
-                    f"检测到新交易日数据：end_date={latest_record.end_date} < "
-                    f"最近交易日={latest_trading_date}，需要重新下载"
-                )
-                need_reset = True
+        if download_force:
+            need_reset = True
+        elif stale_pool_count == 0:
+            logging.info(
+                f"数据已是最新：股票池内没有 end_date < {latest_trading_date} 的记录，无需重新下载"
+            )
+            # 不重置success记录，只处理之前失败的
+            need_reset = False
         else:
-            need_reset = download_force
+            logging.info(
+                f"检测到 {stale_pool_count} 只池内股票落后于最近交易日 {latest_trading_date}，需要重新下载"
+            )
+            need_reset = True
 
         if need_reset:
-            if download_force:
-                logging.info("用户选择强制重新下载，重置所有success记录")
-            else:
-                logging.info(f"重置success记录以获取最新数据（最近交易日: {latest_trading_date}）")
-
             # 将股票池 + 板块内非忽略的success记录重置为pending（板块也跟着每个新交易日刷新）
-            success_reset_count = dlr.query.filter(
+            reset_filters = [
                 dlr.stock_code_id.in_(download_ids),
                 dlr.download_status == 'success',
                 dlr.end_date != date(2050, 1, 1),
                 dlr.record_date != date(2050, 1, 1)
-            ).update({
+            ]
+            if download_force:
+                logging.info("用户选择强制重新下载，重置所有success记录")
+            else:
+                logging.info(f"重置落后的success记录以获取最新数据（最近交易日: {latest_trading_date}）")
+                # 只重排落后的：已被数据修复补到最新交易日的股票不再白下一遍
+                reset_filters.append(dlr.end_date < latest_trading_date)
+
+            success_reset_count = dlr.query.filter(*reset_filters).update({
                 'download_status': 'pending',
                 'download_progress': 0.0,
                 'updated_at': datetime.utcnow()
@@ -2238,6 +2242,8 @@ def api_get_download_records():
         per_page = request.args.get('per_page', 20, type=int)
         search = request.args.get('search', '', type=str)
         status_filter = request.args.get('status', '', type=str)
+        # status_of: 状态筛选作用在哪条流水线上——'repair'=修复状态(数据修复页) / 其余=下载状态
+        status_of = request.args.get('status_of', '', type=str)
         # code_type: 'stock'=个股 / 'board'=板块（代码以 BK 开头）/ ''=全部
         code_type = request.args.get('code_type', '', type=str)
         # 排序：sort=end_date/start_date/record_date/updated_at，order=asc/desc
@@ -2258,9 +2264,10 @@ def api_get_download_records():
         # 构建查询
         query = _apply_scope(dlr.query, scope)
 
-        # 状态筛选
+        # 状态筛选（下载状态 / 修复状态各筛各的）
         if status_filter:
-            query = query.filter(dlr.download_status == status_filter)
+            query = query.filter(
+                (dlr.repair_status if status_of == 'repair' else dlr.download_status) == status_filter)
 
         # 代码搜索 + 个股/板块类型，都要通过 stock_code_id 关联 StockCodes 解析
         if search or code_type in ('stock', 'board'):
@@ -2345,6 +2352,10 @@ def api_get_download_records():
                 'download_status': record.download_status,
                 'download_progress': record.download_progress,
                 'error_message': record.error_message,
+                'repair_status': record.repair_status,
+                'repair_progress': record.repair_progress,
+                'repair_error': record.repair_error,
+                'repair_time': record.repair_time.strftime('%Y-%m-%d %H:%M:%S') if record.repair_time else None,
                 'start_date': record.start_date.strftime('%Y-%m-%d') if record.start_date else None,
                 'end_date': record.end_date.strftime('%Y-%m-%d') if record.end_date else None,
                 'record_date': record.record_date.strftime('%Y-%m-%d') if record.record_date else None,

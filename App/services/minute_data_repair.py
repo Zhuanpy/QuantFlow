@@ -217,7 +217,11 @@ def _upsert_daily(eng, code: str, daily) -> int:
 
 def _upsert_download_record(code, m1_last):
     """把该股 1m 最新日期回写 data_download_records（1m 下载账本）。缺行则建。
-    m1_last: Timestamp/date/None。None（无任何数据）则不动账本。"""
+    m1_last: Timestamp/date/None。None（无任何数据）则不动账本。
+
+    写入范围：end_date（数据事实，与盘后下载共用）+ repair_*（本流程的任务状态）。
+    不碰 download_status/error_message/last_download_time —— 那是盘后下载的状态，
+    修复去改会覆盖它当天的下载结果，并让 download_file() 误判「全池已是最新」。"""
     from datetime import datetime as _dt, date as _date
     from App.models.data.basic_info import StockInfo
     from App.models.data.Stock1m import DownloadRecord
@@ -230,22 +234,48 @@ def _upsert_download_record(code, m1_last):
     now = _dt.utcnow()
     rec = DownloadRecord.query.filter(DownloadRecord.stock_code_id == si.id).first()
     if rec is None:
+        # 新建行：download_* 记 pending（这只股票从没走过盘后下载流程），
+        # record_date 必须给值，否则 record_date != '2050-01-01' 这类过滤会把 NULL 行滤掉
         db.session.add(DownloadRecord(
-            stock_code_id=si.id, download_status='success', download_progress=100.0,
+            stock_code_id=si.id, download_status='pending', download_progress=0.0,
+            repair_status='success', repair_progress=100.0, repair_time=now,
             start_date=d, end_date=d, record_date=d,
-            last_download_time=now, created_at=now, updated_at=now))
+            created_at=now, updated_at=now))
     else:
         if rec.end_date is None or d > rec.end_date:
             rec.end_date = d
-        rec.record_date = d
-        rec.download_status = 'success'
-        rec.last_download_time = now
+        rec.repair_status = 'success'
+        rec.repair_progress = 100.0
+        rec.repair_error = None
+        rec.repair_time = now
         rec.updated_at = now
     db.session.commit()
 
 
+def _mark_batch_pending(codes):
+    """整批标 repair_status='pending'（已进修复队列，还没轮到）。只写 repair_*。
+    有了它修复页列表读起来就是个队列：pending → processing → success/failed。"""
+    from datetime import datetime as _dt
+    from App.models.data.basic_info import StockInfo
+    from App.models.data.Stock1m import DownloadRecord
+    if not codes:
+        return
+    now = _dt.utcnow()
+    for i in range(0, len(codes), 1000):          # 分批，避免 IN 子句过长
+        chunk = codes[i:i + 1000]
+        ids = [r.id for r in StockInfo.query.filter(StockInfo.code.in_(chunk))
+               .with_entities(StockInfo.id).all()]
+        if not ids:
+            continue
+        DownloadRecord.query.filter(DownloadRecord.stock_code_id.in_(ids)).update(
+            {'repair_status': 'pending', 'repair_progress': 0.0,
+             'repair_error': None, 'updated_at': now}, synchronize_session=False)
+    db.session.commit()
+
+
 def _set_record_status(code, status, error=None):
-    """把该股下载记录的状态改成 processing/failed 等（列表实时显示动态）。缺行则忽略。"""
+    """把该股的修复状态改成 processing/failed 等（列表实时显示动态）。缺行则忽略。
+    只写 repair_*，理由同 _upsert_download_record。"""
     from datetime import datetime as _dt
     from App.models.data.basic_info import StockInfo
     from App.models.data.Stock1m import DownloadRecord
@@ -255,9 +285,9 @@ def _set_record_status(code, status, error=None):
     rec = DownloadRecord.query.filter(DownloadRecord.stock_code_id == si.id).first()
     if rec is None:
         return
-    rec.download_status = status
-    if error is not None:
-        rec.error_message = str(error)[:500]
+    rec.repair_status = status
+    rec.repair_error = str(error)[:500] if error is not None else None
+    rec.repair_time = _dt.utcnow()
     rec.updated_at = _dt.utcnow()
     db.session.commit()
 
@@ -339,6 +369,12 @@ def _run(app, board_code, codes, zip_dir, tdx_days, then_trend=False, board_map=
 
     try:
         with app.app_context():
+            # 整批先入队：列表立刻能看出「这些股票排在本次修复里」
+            try:
+                _mark_batch_pending([c for c, _e, _l in todo])
+            except Exception:
+                db.session.rollback()
+                logger.exception('[repair] 批量标记 pending 失败（不影响修复继续）')
             for code, earliest, latest in todo:
                 # 暂停：卡在这只之前等待，直到继续或停止
                 while _pause.is_set() and not _stop.is_set():
