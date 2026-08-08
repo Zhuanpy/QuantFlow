@@ -52,10 +52,40 @@ def trade_statistics_page():
 
     复用 /api/trade/records/statistics 接口，按"持仓 0→正→0"周期切分展示
     胜率/盈亏比/ROI、按年份汇总、已完成交易明细。
-    可选 query 参数 mode=simulate|real 作为初始模式。
+
+    可选 query 参数（作为筛选条的初始值，与 API 同名同义）：
+        mode: simulate | real，不传为全部
+        stock: 股票代码/名称模糊匹配
+        start_date, end_date: YYYY-MM-DD，按平仓时间筛选
+
+    页面上改筛选时前端会同步改写地址栏，所以这里的参数也决定了「刷新/收藏/分享
+    链接」能还原出同一份统计。日期格式非法时静默忽略该条件（与 API 行为一致）。
     """
+    def _clean_date(name):
+        s = (request.args.get(name) or '').strip()
+        if not s:
+            return ''
+        try:
+            return datetime.strptime(s, '%Y-%m-%d').date().isoformat()
+        except ValueError:
+            return ''
+
     trade_mode = (request.args.get('mode') or '').strip()
-    return render_template('trade/trade_statistics.html', trade_mode=trade_mode)
+    if trade_mode not in ('', 'simulate', 'real'):
+        trade_mode = ''
+    stock_keyword = (request.args.get('stock') or '').strip()
+    start_date = _clean_date('start_date')
+    end_date = _clean_date('end_date')
+    if start_date and end_date and start_date > end_date:
+        start_date, end_date = end_date, start_date
+
+    return render_template(
+        'trade/trade_statistics.html',
+        trade_mode=trade_mode,
+        stock_keyword=stock_keyword,
+        start_date=start_date,
+        end_date=end_date,
+    )
 
 
 # ============ 交易记录导入 ============
@@ -98,16 +128,39 @@ def import_trade_records():
 def trade_records_statistics():
     """从 trade_records 按周期聚合后的统计：胜率、盈亏比、ROI 等。
 
-    Query 参数：
+    Query 参数（都可选）：
         mode: '' (全部) | 'simulate' | 'real'，与前端 currentMode 对齐。
               为兼容旧调用，也接受 trade_mode；都不传时返回全部。
+        stock: 股票代码/名称模糊匹配
+        start_date, end_date: YYYY-MM-DD，按**平仓时间**筛选（含端点）
+
+    所有统计（总览、按年份、明细）都在筛选后的周期集合上计算。
     """
     try:
         from App.services.trade_import_service import calculate_trade_statistics
         trade_mode = (request.args.get('mode')
                       or request.args.get('trade_mode')
                       or '').strip()
-        stats = calculate_trade_statistics(trade_mode=trade_mode)
+        stock_keyword = (request.args.get('stock') or '').strip()
+
+        def _parse_date(name):
+            s = (request.args.get(name) or '').strip()
+            if not s:
+                return None
+            try:
+                return datetime.strptime(s, '%Y-%m-%d').date()
+            except ValueError:
+                return None
+
+        start_date = _parse_date('start_date')
+        end_date = _parse_date('end_date')
+        if start_date and end_date and start_date > end_date:
+            start_date, end_date = end_date, start_date
+
+        stats = calculate_trade_statistics(
+            trade_mode=trade_mode, stock_keyword=stock_keyword,
+            start_date=start_date, end_date=end_date,
+        )
         return jsonify({'success': True, 'data': stats})
     except Exception as e:
         logger.exception('计算交易统计失败')

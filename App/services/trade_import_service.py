@@ -521,6 +521,10 @@ def _summarize_cycle(cycle, stock_code, stock_name):
 
     # 投入本金 = 所有买入的成交金额（不含费用）
     cost_basis = sum(float(r.total_amount or 0) for r in buys)
+    # 卖出回款 = 所有卖出的成交金额（同样不含费用）
+    # 注意：sell_amount - cost_basis ≠ profit_loss，差额是佣金/印花税/过户费，
+    # profit_loss 走的是 net_amount（已扣费用），两者口径不同，别拿来互相校验。
+    sell_amount = sum(float(r.total_amount or 0) for r in sells)
 
     # 盈亏 = 所有 net_amount 之和（已含费用：买入为负、卖出为正）
     pnl = _decimal_sum(r.net_amount for r in recs)
@@ -562,6 +566,7 @@ def _summarize_cycle(cycle, stock_code, stock_name):
         'exit_time': exit_time,
         'hold_days': hold_days,
         'cost_basis': round(cost_basis, 2),
+        'sell_amount': round(sell_amount, 2),
         'profit_loss': round(pnl_f, 2),
         'profit_loss_pct': pnl_pct,
         'result': result_val,
@@ -715,10 +720,22 @@ def infer_plans_from_records(trade_mode: str = 'real',
     return result
 
 
-def calculate_trade_statistics(trade_mode: str = 'real') -> dict:
+def calculate_trade_statistics(trade_mode: str = 'real',
+                               stock_keyword: str = '',
+                               start_date=None,
+                               end_date=None) -> dict:
     """从 trade_records 周期化后算历史交易统计：胜率、盈亏比、平均盈利/亏损、最大回撤等。
 
     只统计**已完成的周期**（持仓从 0 → 正 → 0）。
+
+    筛选发生在**周期切分之后**：周期切分依赖某只股票的全量成交记录，先过滤记录再
+    切周期会把跨区间的周期切碎（例如只留区间内的卖出记录，对应的买入被丢掉），
+    所以这里先在全量记录上切出完整周期，再按条件筛掉不要的周期。
+
+    Args:
+        trade_mode: '' 全部 | 'simulate' | 'real'
+        stock_keyword: 股票代码/名称模糊匹配，空则不限
+        start_date, end_date: datetime.date，按**平仓时间**筛选（含端点），None 表示不限
     """
     q = TradeRecord.query
     if trade_mode:
@@ -735,6 +752,43 @@ def calculate_trade_statistics(trade_mode: str = 'real') -> dict:
             s = _summarize_cycle(cyc, code, g['recs'][0].stock_name)
             completed_pnls.append(s)
 
+    total_before_filter = len(completed_pnls)
+    # 全量（未过滤）的平仓日期跨度，供前端日期选择器给出可选范围
+    _all_exits = sorted(s['exit_time'].date() for s in completed_pnls if s['exit_time'])
+    date_range = {
+        'min': _all_exits[0].isoformat() if _all_exits else None,
+        'max': _all_exits[-1].isoformat() if _all_exits else None,
+    }
+
+    kw = (stock_keyword or '').strip().lower()
+    if kw:
+        completed_pnls = [
+            s for s in completed_pnls
+            if kw in (s['stock_code'] or '').lower()
+            or kw in (s['stock_name'] or '').lower()
+        ]
+
+    if start_date or end_date:
+        kept = []
+        for s in completed_pnls:
+            d = s['exit_time'].date() if s['exit_time'] else None
+            if d is None:
+                continue          # 无平仓时间的周期在时间筛选下无法归属，剔除
+            if start_date and d < start_date:
+                continue
+            if end_date and d > end_date:
+                continue
+            kept.append(s)
+        completed_pnls = kept
+
+    applied_filters = {
+        'trade_mode': trade_mode or '',
+        'stock_keyword': stock_keyword or '',
+        'start_date': start_date.isoformat() if start_date else '',
+        'end_date': end_date.isoformat() if end_date else '',
+        'total_before_filter': total_before_filter,
+    }
+
     if not completed_pnls:
         return {
             'total_trades': 0, 'win_count': 0, 'loss_count': 0, 'break_even_count': 0,
@@ -744,6 +798,9 @@ def calculate_trade_statistics(trade_mode: str = 'real') -> dict:
             'max_profit': 0, 'max_loss': 0,
             'profit_factor': 0, 'avg_hold_days': 0,
             'recent_trades': [],
+            'by_year': [], 'all_completed': [],
+            'date_range': date_range,
+            'filters': applied_filters,
         }
 
     wins = [s for s in completed_pnls if s['result'] == 'win']
@@ -807,6 +864,8 @@ def calculate_trade_statistics(trade_mode: str = 'real') -> dict:
         'profit_factor': round((total_win_amount / len(wins)) / (total_loss_amount / len(losses)), 2)
                           if wins and losses and total_loss_amount > 0 else 0,
         'avg_hold_days': round(sum(hold_days_values) / len(hold_days_values), 1) if hold_days_values else 0,
+        'date_range': date_range,
+        'filters': applied_filters,
         'by_year': by_year_summary,
         'all_completed': [
             {
@@ -817,7 +876,10 @@ def calculate_trade_statistics(trade_mode: str = 'real') -> dict:
                 'hold_days': s['hold_days'],
                 'avg_entry_price': s['avg_entry_price'],
                 'avg_exit_price': s['avg_exit_price'],
-                'cost_basis': s['cost_basis'],
+                'bought_qty': s['bought_qty'],
+                'sold_qty': s['sold_qty'],
+                'cost_basis': s['cost_basis'],      # 买入金额（不含费用）
+                'sell_amount': s['sell_amount'],    # 卖出金额（不含费用）
                 'profit_loss': s['profit_loss'],
                 'profit_loss_pct': s['profit_loss_pct'],
                 'result': s['result'],

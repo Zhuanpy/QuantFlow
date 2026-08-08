@@ -5,7 +5,7 @@
     <div class="ts-header">
         <div>
             <h1>历史交易统计</h1>
-            <p class="ts-sub">按"持仓 0→正→0"周期切分；每个周期 = 一次完整开平仓。数据源：成交记录 trade_records。</p>
+            <p class="ts-sub">按"持仓 0→正→0"周期切分；每个周期 = 一次完整开平仓。数据源：成交记录 trade_records。<br>周期切分在全量记录上完成后再按条件筛选，跨区间的交易不会被切碎。</p>
         </div>
         <div class="ts-actions">
             <a class="ts-btn" href="{{ url_for('trade_plan.real_trade_page') }}">← 返回交易管理</a>
@@ -20,9 +20,38 @@
         <button class="ts-tab" data-mode="real">实盘交易</button>
     </div>
 
+    <!-- 统计筛选：股票 + 平仓时间区间。下面所有统计都基于筛选结果 -->
+    <div class="ts-section ts-filterbar">
+        <div class="ts-filter-row">
+            <label class="ts-field">
+                <span>股票</span>
+                <input id="fStock" class="ts-input" style="min-width:170px;" placeholder="代码或名称，模糊匹配">
+            </label>
+            <label class="ts-field">
+                <span>平仓时间</span>
+                <input id="fStart" type="date" class="ts-input">
+            </label>
+            <span class="ts-dash">→</span>
+            <label class="ts-field">
+                <span>&nbsp;</span>
+                <input id="fEnd" type="date" class="ts-input">
+            </label>
+            <div class="ts-quick" id="quickRanges">
+                <button class="ts-chip" data-range="this_year">今年</button>
+                <button class="ts-chip" data-range="last_year">去年</button>
+                <button class="ts-chip" data-range="1y">近一年</button>
+                <button class="ts-chip" data-range="3y">近三年</button>
+                <button class="ts-chip" data-range="all">全部时间</button>
+            </div>
+            <button class="ts-btn ts-btn-primary" onclick="applyFilters()">查询</button>
+            <button class="ts-btn" onclick="resetFilters()">重置</button>
+        </div>
+        <div class="ts-filter-hint" id="filterHint"></div>
+    </div>
+
     <!-- 汇总卡片 -->
     <div class="ts-section">
-        <h2>总览</h2>
+        <h2>总览 <span class="ts-scope" id="statsScope"></span></h2>
         <div id="tradeStatsPanel" class="ts-cards">
             <div class="ts-loading">加载中…</div>
         </div>
@@ -36,7 +65,7 @@
 
     <!-- 明细 -->
     <div class="ts-section">
-        <h2>已完成交易明细</h2>
+        <h2>已完成交易明细 <span class="ts-scope" id="detailScope"></span></h2>
         <div id="tradeAllControls"></div>
         <div id="tradeAllList"></div>
     </div>
@@ -70,19 +99,47 @@
     .stock-link { color:#2563eb; text-decoration:none; }
     .stock-link:hover { text-decoration:underline; }
     .ts-yearsel { padding:.2rem .5rem; border:1px solid #d1d5db; border-radius:.25rem; font-size:.82rem; }
+
+    /* 统计筛选条 */
+    .ts-filterbar { padding:.85rem 1.25rem; }
+    .ts-filter-row { display:flex; flex-wrap:wrap; gap:.6rem; align-items:flex-end; }
+    .ts-field { display:flex; flex-direction:column; gap:.2rem; }
+    .ts-field > span { font-size:.7rem; color:#6b7280; }
+    .ts-input { padding:.35rem .55rem; border:1px solid #d1d5db; border-radius:.35rem; font-size:.85rem; color:#374151; }
+    .ts-input:focus { outline:none; border-color:#2563eb; box-shadow:0 0 0 2px rgba(37,99,235,.12); }
+    .ts-dash { color:#9ca3af; padding-bottom:.45rem; }
+    .ts-quick { display:flex; gap:.3rem; flex-wrap:wrap; }
+    .ts-chip { padding:.35rem .7rem; border:1px solid #d1d5db; background:#fff; color:#6b7280; border-radius:1rem;
+               font-size:.78rem; cursor:pointer; transition:all .15s; }
+    .ts-chip:hover { background:#f3f4f6; }
+    .ts-chip.active { background:#eff6ff; border-color:#2563eb; color:#2563eb; font-weight:600; }
+    .ts-btn-primary { background:#2563eb; border-color:#2563eb; color:#fff; }
+    .ts-btn-primary:hover { background:#1d4ed8; border-color:#1d4ed8; }
+    .ts-filter-hint { margin-top:.5rem; font-size:.78rem; color:#6b7280; }
+    .ts-scope { font-size:.78rem; font-weight:400; color:#2563eb; margin-left:.4rem; }
 </style>
 
 <script>
+// 初始值由路由从 URL query 解析后注入（tojson 保证转义安全）
 // 当前模式：'' 全部 | 'simulate' | 'real'
-let currentMode = '{{ trade_mode or "" }}';
+let currentMode = {{ (trade_mode or '')|tojson }};
 let _tradeStatsCache = null;
-let _tradeYearFilter = 'all';
-let _tradeStockFilter = '';      // 股票代码/名称模糊匹配
+// 统计筛选（发给后端，影响总览/年份/明细全部三块；同时同步到地址栏）
+let _fStock = {{ (stock_keyword or '')|tojson }};   // 股票代码/名称模糊匹配
+let _fStart = {{ (start_date or '')|tojson }};      // 平仓时间起 YYYY-MM-DD
+let _fEnd   = {{ (end_date or '')|tojson }};        // 平仓时间止 YYYY-MM-DD
+// 明细表内的二次过滤（纯前端，不影响上面的统计口径）
 let _tradeResultFilter = 'all';  // 'all' | 'win' | 'loss' | 'break_even'
 let _completedPage = 1;
 const _COMPLETED_PAGE_SIZE = 15;
 
 document.addEventListener('DOMContentLoaded', () => {
+    // 用 URL 带来的初始值回填筛选条
+    document.getElementById('fStock').value = _fStock;
+    document.getElementById('fStart').value = _fStart;
+    document.getElementById('fEnd').value = _fEnd;
+    _highlightMatchingQuick();
+
     // 初始化模式 tab 高亮
     document.querySelectorAll('#modeTabs .ts-tab').forEach(btn => {
         btn.classList.toggle('active', (btn.dataset.mode || '') === currentMode);
@@ -90,12 +147,122 @@ document.addEventListener('DOMContentLoaded', () => {
             currentMode = btn.dataset.mode || '';
             document.querySelectorAll('#modeTabs .ts-tab').forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
-            _tradeYearFilter = 'all';
             loadTradeStatistics();
         });
     });
+
+    // 股票输入框回车即查
+    document.getElementById('fStock').addEventListener('keydown', e => {
+        if (e.key === 'Enter') applyFilters();
+    });
+    // 日期改完立即查
+    ['fStart', 'fEnd'].forEach(id => {
+        document.getElementById(id).addEventListener('change', () => {
+            _clearQuickActive();
+            applyFilters();
+        });
+    });
+    // 快捷区间
+    document.querySelectorAll('#quickRanges .ts-chip').forEach(chip => {
+        chip.addEventListener('click', () => {
+            _applyQuickRange(chip.dataset.range);
+            _clearQuickActive();
+            chip.classList.add('active');
+            applyFilters();
+        });
+    });
+
     loadTradeStatistics();
 });
+
+// ¥ 金额，两位小数带千分位；空值显示 '-'
+function _money(v) {
+    if (v === null || v === undefined) return '-';
+    return '¥' + Number(v).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+}
+
+// 整数带千分位；空值显示 '-'
+function _num(v) {
+    if (v === null || v === undefined) return '-';
+    return Number(v).toLocaleString('en-US');
+}
+
+function _clearQuickActive() {
+    document.querySelectorAll('#quickRanges .ts-chip').forEach(c => c.classList.remove('active'));
+}
+
+// 快捷区间 → 对应的起止日期
+function _quickRangeValues(kind) {
+    const today = new Date();
+    const fmt = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    if (kind === 'all') return { start: '', end: '' };
+    if (kind === 'this_year') return { start: `${today.getFullYear()}-01-01`, end: fmt(today) };
+    if (kind === 'last_year') {
+        const y = today.getFullYear() - 1;
+        return { start: `${y}-01-01`, end: `${y}-12-31` };
+    }
+    const years = kind === '3y' ? 3 : 1;
+    return { start: fmt(new Date(today.getFullYear() - years, today.getMonth(), today.getDate())), end: fmt(today) };
+}
+
+// 快捷区间 → 填充起止日期输入框
+function _applyQuickRange(kind) {
+    const { start, end } = _quickRangeValues(kind);
+    document.getElementById('fStart').value = start;
+    document.getElementById('fEnd').value = end;
+}
+
+// URL 带来的日期区间若正好等于某个快捷区间，把对应 chip 点亮，避免「设了区间却没有
+// 任何 chip 高亮」的割裂感。「全部时间」不参与匹配（空区间是默认态，不算主动选择）。
+function _highlightMatchingQuick() {
+    _clearQuickActive();
+    if (!_fStart && !_fEnd) return;
+    document.querySelectorAll('#quickRanges .ts-chip').forEach(chip => {
+        const kind = chip.dataset.range;
+        if (kind === 'all') return;
+        const { start, end } = _quickRangeValues(kind);
+        if (start === _fStart && end === _fEnd) chip.classList.add('active');
+    });
+}
+
+// 读取筛选条 → 重新拉取统计
+function applyFilters() {
+    _fStock = (document.getElementById('fStock').value || '').trim();
+    _fStart = document.getElementById('fStart').value || '';
+    _fEnd   = document.getElementById('fEnd').value || '';
+    loadTradeStatistics();
+}
+
+function resetFilters() {
+    document.getElementById('fStock').value = '';
+    document.getElementById('fStart').value = '';
+    document.getElementById('fEnd').value = '';
+    _clearQuickActive();
+    _fStock = _fStart = _fEnd = '';
+    _tradeResultFilter = 'all';
+    loadTradeStatistics();
+}
+
+// 当前筛选 → query string。页面路由 /trade/statistics 与 API
+// /api/trade/records/statistics 参数同名同义，所以两边共用这一份。
+function _buildQuery() {
+    const qs = new URLSearchParams();
+    if (currentMode) qs.set('mode', currentMode);
+    if (_fStock) qs.set('stock', _fStock);
+    if (_fStart) qs.set('start_date', _fStart);
+    if (_fEnd)   qs.set('end_date', _fEnd);
+    return qs.toString();
+}
+
+// 把当前筛选同步到地址栏，让刷新 / 收藏 / 分享链接能还原同一份统计。
+// 用 replaceState 而非 pushState：筛选是同一个页面的视图切换，不该塞满浏览器后退栈。
+function _syncUrl() {
+    const qs = _buildQuery();
+    const url = window.location.pathname + (qs ? ('?' + qs) : '');
+    try {
+        window.history.replaceState(null, '', url);
+    } catch (e) { /* file:// 等场景下不可用，忽略即可 */ }
+}
 
 async function loadTradeStatistics() {
     const panel = document.getElementById('tradeStatsPanel');
@@ -107,10 +274,12 @@ async function loadTradeStatistics() {
     allDiv.innerHTML = '';
     ctrlDiv.innerHTML = '';
     _completedPage = 1;
-    _tradeStockFilter = '';
     _tradeResultFilter = 'all';
+    _renderScopeLabel();
+    _syncUrl();
     try {
-        const url = '/api/trade/records/statistics' + (currentMode ? ('?mode=' + currentMode) : '');
+        const qs = _buildQuery();
+        const url = '/api/trade/records/statistics' + (qs ? ('?' + qs) : '');
         const r = await fetch(url).then(r => r.json());
         if (!r.success) {
             panel.innerHTML = `<div class="ts-loading" style="color:#dc2626;">加载失败：${r.message||''}</div>`;
@@ -118,8 +287,11 @@ async function loadTradeStatistics() {
         }
         const s = r.data;
         _tradeStatsCache = s;
+        _renderFilterHint(s);
         if (!s || s.total_trades === 0) {
-            panel.innerHTML = `<div class="ts-loading">暂无已完成交易（需要至少一个完整的买→卖周期）</div>`;
+            panel.innerHTML = _hasActiveFilter()
+                ? `<div class="ts-loading">当前筛选条件下没有已完成交易，换个股票或时间区间试试</div>`
+                : `<div class="ts-loading">暂无已完成交易（需要至少一个完整的买→卖周期）</div>`;
             return;
         }
         _renderStatsCards(s);
@@ -128,6 +300,38 @@ async function loadTradeStatistics() {
     } catch (e) {
         panel.innerHTML = `<div class="ts-loading" style="color:#dc2626;">请求失败：${e}</div>`;
     }
+}
+
+function _hasActiveFilter() {
+    return !!(_fStock || _fStart || _fEnd);
+}
+
+// 「总览」「已完成交易明细」标题后面那行小字：说明这两块统计的是哪一撮交易。
+// 两处用同一份文案，因为它们本来就吃同一份筛选结果。
+function _renderScopeLabel() {
+    const parts = [];
+    if (_fStock) parts.push(`股票「${_fStock}」`);
+    if (_fStart || _fEnd) parts.push(`平仓 ${_fStart || '最早'} ~ ${_fEnd || '至今'}`);
+    const txt = parts.length ? ('· ' + parts.join(' · ')) : '';
+    ['statsScope', 'detailScope'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = txt;
+    });
+}
+
+// 筛选条下方提示：筛出多少笔 / 全量多少笔 / 数据可选范围
+function _renderFilterHint(s) {
+    const el = document.getElementById('filterHint');
+    if (!el) return;
+    const f = (s && s.filters) || {};
+    const dr = (s && s.date_range) || {};
+    const before = f.total_before_filter || 0;
+    const after = (s && s.total_trades) || 0;
+    let txt = _hasActiveFilter()
+        ? `筛出 ${after} 笔完整交易（当前模式共 ${before} 笔），下面总览 / 年份 / 明细均按筛选结果统计。`
+        : `当前模式共 ${before} 笔完整交易，未设筛选。`;
+    if (dr.min && dr.max) txt += ` 数据平仓时间范围：${dr.min} ~ ${dr.max}。`;
+    el.textContent = txt;
 }
 
 function _renderStatsCards(s) {
@@ -141,7 +345,7 @@ function _renderStatsCards(s) {
       + (sub ? `  <div style="font-size:.7rem;color:#9ca3af;margin-top:.1rem;">${sub}</div>` : '')
       + `</div>`;
     panel.innerHTML =
-        card('总交易笔数（含全部年份）', s.total_trades, '#111827', `胜 ${s.win_count} / 负 ${s.loss_count}${s.break_even_count?(' / 平 '+s.break_even_count):''}`)
+        card('总交易笔数', s.total_trades, '#111827', `胜 ${s.win_count} / 负 ${s.loss_count}${s.break_even_count?(' / 平 '+s.break_even_count):''}`)
       + card('胜率', s.win_rate.toFixed(2)+'%', winRateColor)
       + card('总盈亏', (s.total_profit_loss>=0?'+':'')+'¥'+s.total_profit_loss.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}), pnlColor, `投入 ¥${s.total_invested.toLocaleString()}`)
       + card('收益率 ROI', (s.roi_pct>=0?'+':'')+s.roi_pct.toFixed(2)+'%', pnlColor)
@@ -190,31 +394,18 @@ function _renderAllCompletedTable(s) {
     _renderCompletedRows();
 }
 
-// 把当前各项筛选应用到 all_completed，返回过滤后的数组
+// 明细表的二次过滤：只按盈亏结果。股票/时间在页面顶部的统计筛选里，已经在后端过滤过了。
 function _filterCompleted() {
     const all = (_tradeStatsCache && _tradeStatsCache.all_completed) || [];
-    const kw = _tradeStockFilter.trim().toLowerCase();
-    return all.filter(t => {
-        if (_tradeYearFilter !== 'all' && (t.exit_time||'').slice(0,4) !== String(_tradeYearFilter)) return false;
-        if (_tradeResultFilter !== 'all' && t.result !== _tradeResultFilter) return false;
-        if (kw) {
-            const hay = ((t.stock_code||'') + ' ' + (t.stock_name||'')).toLowerCase();
-            if (!hay.includes(kw)) return false;
-        }
-        return true;
-    });
+    if (_tradeResultFilter === 'all') return all;
+    return all.filter(t => t.result === _tradeResultFilter);
 }
 
-// 渲染筛选条（年份/盈亏下拉 + 股票输入框）。只在加载数据时渲染一次，避免输入框失焦。
+// 渲染明细区的盈亏下拉。只在加载数据时渲染一次。
 function _renderCompletedControls(s) {
     const div = document.getElementById('tradeAllControls');
     const all = s.all_completed || [];
     if (!all.length) { div.innerHTML = ''; return; }
-    const yearsSet = new Set();
-    all.forEach(t => { if (t.exit_time) yearsSet.add(t.exit_time.slice(0,4)); });
-    const yearOpts = ['<option value="all">全部年份</option>']
-        .concat([...yearsSet].sort().reverse().map(y => `<option value="${y}" ${_tradeYearFilter==y?'selected':''}>${y} 年</option>`))
-        .join('');
     const resultOpts =
         `<option value="all" ${_tradeResultFilter=='all'?'selected':''}>全部盈亏</option>`
       + `<option value="win" ${_tradeResultFilter=='win'?'selected':''}>盈利</option>`
@@ -223,10 +414,8 @@ function _renderCompletedControls(s) {
 
     div.innerHTML =
         `<div style="display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;margin-bottom:.6rem;">`
-      + `  <input id="tsStockFilter" class="ts-yearsel" style="min-width:160px;" placeholder="筛选股票代码/名称" value="${_tradeStockFilter.replace(/"/g,'&quot;')}" oninput="_onTradeStockChange(this.value)">`
       + `  <select class="ts-yearsel" onchange="_onTradeResultChange(this.value)">${resultOpts}</select>`
-      + `  <select class="ts-yearsel" onchange="_onTradeYearChange(this.value)">${yearOpts}</select>`
-      + `  <button class="ts-btn-sm" onclick="_resetCompletedFilters()">重置</button>`
+      + `  <span style="font-size:.75rem;color:#9ca3af;">仅过滤下表，不改变上方统计口径</span>`
       + `  <span id="tsCompletedCount" style="margin-left:auto;font-weight:600;font-size:.85rem;color:#374151;"></span>`
       + `</div>`;
 }
@@ -254,12 +443,18 @@ function _renderCompletedRows() {
         const sign = t.profit_loss >= 0 ? '+' : '';
         const e = (t.entry_time||'').slice(0,10);
         const x = (t.exit_time||'').slice(0,10);
+        // 完整周期理论上买入股数 = 卖出股数；若因历史数据缺笔导致不等，两个都摆出来
+        const qty = (t.sold_qty != null && t.sold_qty !== t.bought_qty)
+            ? `<span title="买入与卖出股数不等，可能缺少更早的成交记录">买${_num(t.bought_qty)} / 卖${_num(t.sold_qty)}</span>`
+            : _num(t.bought_qty);
         return `<tr>
             <td><a class="stock-link" href="/stock/?code=${t.stock_code}&period=15m" target="_blank" title="打开 15m 趋势页">${t.stock_code}</a> <span style="color:#6b7280;">${t.stock_name||''}</span></td>
             <td style="font-size:.78rem;">${e} → ${x}</td>
             <td style="text-align:right;">${t.hold_days||'-'}天</td>
+            <td style="text-align:right;">${qty}</td>
             <td style="text-align:right;">${t.avg_entry_price} → ${t.avg_exit_price}</td>
-            <td style="text-align:right;color:#6b7280;">¥${(t.cost_basis||0).toLocaleString()}</td>
+            <td style="text-align:right;color:#6b7280;">${_money(t.cost_basis)}</td>
+            <td style="text-align:right;color:#6b7280;">${_money(t.sell_amount)}</td>
             <td style="text-align:right;color:${pnlC};font-weight:600;">${sign}${t.profit_loss.toFixed(2)} (${sign}${t.profit_loss_pct.toFixed(2)}%)</td>
         </tr>`;
     }).join('');
@@ -276,37 +471,20 @@ function _renderCompletedRows() {
         `<table class="ts-table">`
       + `<thead><tr>`
       + `<th style="text-align:left;">股票</th>`
-      + `<th>区间</th><th>持仓</th><th>入/出价</th>`
-      + `<th style="text-align:right;">投入</th>`
-      + `<th style="text-align:right;">盈亏</th>`
+      + `<th>区间</th><th>持仓</th>`
+      + `<th style="text-align:right;">股数</th>`
+      + `<th style="text-align:right;">入/出价</th>`
+      + `<th style="text-align:right;" title="买入成交金额，不含佣金/印花税/过户费">买入金额</th>`
+      + `<th style="text-align:right;" title="卖出成交金额，不含佣金/印花税/过户费">卖出金额</th>`
+      + `<th style="text-align:right;" title="已扣除各项费用的净盈亏，因此不等于「卖出金额 − 买入金额」">盈亏</th>`
       + `</tr></thead><tbody>${rows}</tbody></table>`
       + pager;
-}
-
-function _onTradeYearChange(v) {
-    _tradeYearFilter = v;
-    _completedPage = 1;
-    _renderCompletedRows();
 }
 
 function _onTradeResultChange(v) {
     _tradeResultFilter = v;
     _completedPage = 1;
     _renderCompletedRows();
-}
-
-function _onTradeStockChange(v) {
-    _tradeStockFilter = v;
-    _completedPage = 1;
-    _renderCompletedRows();
-}
-
-function _resetCompletedFilters() {
-    _tradeYearFilter = 'all';
-    _tradeResultFilter = 'all';
-    _tradeStockFilter = '';
-    _completedPage = 1;
-    if (_tradeStatsCache) _renderAllCompletedTable(_tradeStatsCache);
 }
 
 function _completedGoPage(p) {
