@@ -253,6 +253,12 @@ def register_blueprints(app):
         print(f"警告: 无法导入 BoardOverview 蓝图: {e}")
 
     try:
+        from App.routes.strategy.BoardPool import board_pool_bp
+        app.register_blueprint(board_pool_bp)
+    except ImportError as e:
+        print(f"警告: 无法导入 BoardPool 蓝图: {e}")
+
+    try:
         from App.routes.strategy.StockTrendScoring import stock_trend_bp
         app.register_blueprint(stock_trend_bp)
     except ImportError as e:

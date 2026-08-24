@@ -87,6 +87,8 @@ def _load_board_daily(board_code: str, end_date: date,
     数据源优先级：
       1. quanttradingsystem.data_stock_daily（按 stock_code='BKxxxx' 过滤；最新数据在这里）
       2. datadaily.{board_code 小写}（旧的一表一板块，作 fallback）
+      3. board_synth_daily 的 {code}S 合成指数 —— **概念板块靠这条**：东财不给概念日K，
+         L1 入池后由 board_synth_service 用成分股合成，代码加后缀 S 存在独立表里。
 
     返回 DataFrame 按 date 升序，列：date/open/close/high/low/volume/money。
     """
@@ -152,6 +154,25 @@ def _load_board_daily(board_code: str, end_date: date,
         except Exception as e:
             logger.debug(f"{DAILY_DB}.{code.lower()} 读取失败: {e}")
 
+    # 3) 还是没有 → 试合成指数 {code}S（概念板块的唯一日K来源）
+    if not _is_synth and df.empty:
+        try:
+            with eng.connect() as conn:
+                rows = conn.execute(text("""
+                    SELECT date, open, close, high, low, volume, money
+                    FROM board_synth_daily
+                    WHERE stock_code = :code AND date <= :end_date
+                    ORDER BY date DESC
+                    LIMIT :lim
+                """), {'code': f'{code.upper()}S', 'end_date': end_date,
+                        'lim': lookback}).fetchall()
+            if rows:
+                df = pd.DataFrame(rows, columns=['date', 'open', 'close', 'high',
+                                                 'low', 'volume', 'money'])
+                logger.debug(f'{code}: 无东财日K，改用合成指数 {code}S')
+        except Exception as e:
+            logger.debug(f'board_synth_daily 读取 {code}S 失败: {e}')
+
     if df.empty:
         return df
 
@@ -181,9 +202,13 @@ def _load_board_15m(board_code: str, end_date: Optional[date] = None) -> pd.Data
     code = (board_code or '').strip()
     if not code:
         return pd.DataFrame()
-    fp = Path(Config.get_project_root()) / 'data' / '15m' / f'{code}.parquet'
+    d15 = Path(Config.get_project_root()) / 'data' / '15m'
+    fp = d15 / f'{code}.parquet'
     if not fp.exists():
-        return pd.DataFrame()
+        # 概念板块没有东财 15m，退到合成指数 {code}S（与日K同源，见 _load_board_daily）
+        fp = d15 / f'{code.upper()}S.parquet'
+        if not fp.exists():
+            return pd.DataFrame()
     try:
         df = pd.read_parquet(fp)
     except Exception as e:

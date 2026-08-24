@@ -1,0 +1,230 @@
+{% extends "base.html" %}
+{% block content %}
+<div style="padding:1.25rem;max-width:min(1500px,96vw);margin:0 auto;">
+
+  <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:.6rem;">
+    <h1 style="margin:0;font-size:1.25rem;">🎯 L1 候选池</h1>
+    <span id="task" style="color:#6b7280;font-size:.82rem;"></span>
+  </div>
+  <p style="color:#6b7280;font-size:.8rem;margin:.3rem 0 .9rem;">
+    L0 全量记录 504 个概念的每日热度；评分很贵（拉成分→合成指数→合成15m→打分），
+    所以只有进入候选池的板块才跑那条重管线。<b>一级行业全进</b>，<b>概念限额 <span id="cap">50</span> 个</b>动态进出，手工钉选不受出池规则约束。
+  </p>
+
+  <div id="stat" class="pool-cards"></div>
+
+  <div class="pool-bar">
+    <button class="btn" onclick="doEval()">① 试算进出池</button>
+    <button class="btn btn-primary" onclick="doApply()">② 应用</button>
+    <button class="btn" onclick="doTask('sync_members','同步成分股')">③ 同步成分股</button>
+    <button class="btn" onclick="doTask('build_synth','合成指数')">④ 合成指数</button>
+    <button class="btn" onclick="doTask('score','趋势评分')">⑤ 趋势评分</button>
+    <button class="btn" onclick="doTask('heat_ts','时序热度')" title="用板块自己的日K算滚动分位热度，可整段回补，不依赖全市场快照">⑥ 时序热度</button>
+    <button class="btn" onclick="doFold()">Jaccard 折叠(试算)</button>
+    <span style="flex:1"></span>
+    <select id="viewSel" class="ctl" onchange="loadList()">
+      <option value="pool">池内清单</option>
+      <option value="concept">池内·仅概念</option>
+      <option value="industry">池内·仅行业</option>
+      <option value="blocked">被闸门拦截</option>
+    </select>
+  </div>
+
+  <div id="plan" class="card" style="display:none;"></div>
+
+  <div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:.5rem;">
+      <h3 style="margin:0;font-size:1rem;">清单<span id="cnt" style="color:#9ca3af;font-weight:400;font-size:.8rem;"></span></h3>
+    </div>
+    <div style="overflow-x:auto;">
+      <table class="pool-table">
+        <thead><tr>
+          <th>板块</th><th>类型</th><th>层级</th><th title="当日热度分">热度</th><th title="当日热度排名">排名</th>
+          <th title="成分股数（同步后才有）">成分</th><th title="是否已有日K/合成指数">日K</th>
+          <th title="最后一次进热度榜">末次在榜</th><th>状态</th><th>操作</th>
+        </tr></thead>
+        <tbody id="body"><tr><td colspan="10" class="empty">加载中…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<style>
+  .pool-cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:.6rem; margin-bottom:.9rem; }
+  .pc { background:var(--card-background,#fff); border-radius:.5rem; padding:.6rem .7rem; box-shadow:var(--shadow-sm,0 1px 2px rgba(0,0,0,.05)); }
+  .pc-v { font-size:1.35rem; font-weight:700; font-family:monospace; }
+  .pc-l { font-size:.74rem; color:#6b7280; }
+  .card { background:var(--card-background,#fff); border-radius:.6rem; padding:.8rem; box-shadow:var(--shadow-sm,0 1px 2px rgba(0,0,0,.05)); margin-bottom:1rem; }
+  .pool-bar { display:flex; gap:.45rem; flex-wrap:wrap; align-items:center; margin-bottom:.9rem; }
+  .btn { padding:.4rem .8rem; border:1px solid #e5e7eb; border-radius:.4rem; background:#fff; color:#111827; font-size:.82rem; cursor:pointer; }
+  .btn:hover { border-color:#2563eb; color:#2563eb; }
+  .btn-primary { background:#2563eb; color:#fff; border-color:#2563eb; }
+  .btn-primary:hover { color:#fff; opacity:.9; }
+  .ctl { padding:.35rem .5rem; border:1px solid #e5e7eb; border-radius:.35rem; font-size:.82rem; background:#fff; color:#111827; }
+  .pool-table { width:100%; border-collapse:collapse; font-size:.82rem; }
+  .pool-table th { text-align:right; padding:.35rem .5rem; color:#6b7280; font-weight:600; border-bottom:1px solid #eef; white-space:nowrap; }
+  .pool-table th:first-child, .pool-table td:first-child { text-align:left; }
+  .pool-table td { text-align:right; padding:.35rem .5rem; border-bottom:1px solid #f6f7f9; white-space:nowrap; font-family:monospace; }
+  .pool-table td:first-child { font-family:inherit; font-weight:600; }
+  .chip { padding:1px 7px; border-radius:3px; font-size:.72rem; font-weight:600; font-family:inherit; }
+  .empty { color:#9ca3af; text-align:center; padding:.8rem; font-family:inherit; }
+  .lnk { color:#2563eb; text-decoration:none; font-size:.75rem; cursor:pointer; }
+  .plan-col { display:inline-block; vertical-align:top; margin-right:1.4rem; }
+</style>
+
+<script>
+const RCN = {attribute_tag:'属性标签', too_broad:'成分过宽', alias:'重叠折叠', manual:'手工'};
+let TASK_TIMER = null;
+
+function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function heatColor(s){ if(s==null)return '#9ca3af'; if(s>=75)return '#dc2626'; if(s>=60)return '#d97706'; if(s>=40)return '#6b7280'; return '#9ca3af'; }
+
+async function loadStatus(){
+  const r = await fetch('/board_pool/api/status').then(x=>x.json());
+  if(!r.success) return;
+  const d = r.data;
+  document.getElementById('cap').textContent = d.cap;
+  const b = d.blocked||{};
+  document.getElementById('stat').innerHTML = [
+    ['池内合计', d.l1_total, '#2563eb'],
+    ['概念', `${d.l1_concept}/${d.cap}`, '#dc2626'],
+    ['行业', d.l1_industry, '#16a34a'],
+    ['钉选', d.pinned, '#d97706'],
+    ['成分已同步', `${d.members_synced}/${d.l1_total}`, '#6b7280'],
+    ['有日K可评分', `${d.has_daily}/${d.l1_total}`, '#6b7280'],
+    ['闸门拦截', (b.attribute_tag||0)+(b.too_broad||0)+(b.alias||0), '#9ca3af'],
+  ].map(([l,v,c])=>`<div class="pc"><div class="pc-v" style="color:${c}">${v}</div><div class="pc-l">${l}</div></div>`).join('');
+  renderTask(d.task);
+}
+
+function renderTask(t){
+  const el = document.getElementById('task');
+  if(!t){ el.textContent=''; return; }
+  if(t.running){
+    el.innerHTML = `⏳ ${esc(t.kind)} 运行中：${esc(t.progress||'')}（${esc(t.started_at||'')}）`;
+    if(!TASK_TIMER) TASK_TIMER = setInterval(pollTask, 3000);
+  } else {
+    if(TASK_TIMER){ clearInterval(TASK_TIMER); TASK_TIMER=null; }
+    if(t.error) el.innerHTML = `<span style="color:#dc2626;">✗ ${esc(t.kind)} 失败：${esc(t.error)}</span>`;
+    else if(t.result) el.innerHTML = `✓ ${esc(t.kind)} 完成：${esc(JSON.stringify(t.result).slice(0,220))}`;
+    else el.textContent = '';
+  }
+}
+
+async function pollTask(){
+  const r = await fetch('/board_pool/api/task').then(x=>x.json()).catch(()=>null);
+  if(r && r.success){
+    renderTask(r.data);
+    if(!r.data.running){ loadStatus(); loadList(); }
+  }
+}
+
+async function loadList(){
+  const v = document.getElementById('viewSel').value;
+  let url = '/board_pool/api/list?tier=1';
+  if(v==='blocked') url = '/board_pool/api/list?blocked=1';
+  else if(v==='concept') url += '&classification=' + encodeURIComponent('概念板块');
+  else if(v==='industry') url += '&classification=' + encodeURIComponent('行业板块');
+  const r = await fetch(url).then(x=>x.json());
+  const body = document.getElementById('body');
+  if(!r.success){ body.innerHTML = `<tr><td colspan="10" class="empty">加载失败：${esc(r.message)}</td></tr>`; return; }
+  const rows = r.data||[];
+  document.getElementById('cnt').textContent = rows.length ? `（${rows.length}）` : '';
+  if(!rows.length){ body.innerHTML = '<tr><td colspan="10" class="empty">暂无</td></tr>'; return; }
+  body.innerHTML = rows.map(b=>{
+    const h = b.heat||{};
+    const tier = b.tracking_tier===2?'L2':(b.tracking_tier===1?'L1':'L0');
+    const st = [];
+    if(b.is_pinned) st.push('<span class="chip" style="background:#fef3c7;color:#d97706;">📌钉选</span>');
+    if(b.exclude_reason) st.push(`<span class="chip" style="background:#f3f4f6;color:#6b7280;">${RCN[b.exclude_reason]||b.exclude_reason}</span>`);
+    if(b.alias_of) st.push(`<span class="chip" style="background:#f3f4f6;color:#6b7280;">→${esc(b.alias_of)}</span>`);
+    return `<tr>
+      <td><a class="lnk" href="/board_data/board?code=${b.board_code}" target="_blank">${esc(b.board_name||b.board_code)}</a>
+          <span style="color:#9ca3af;font-size:.72rem;">${b.board_code}</span></td>
+      <td style="font-family:inherit;">${esc(b.classification||'')}</td>
+      <td>${tier}</td>
+      <td style="color:${heatColor(h.heat_score)};font-weight:700;">${h.heat_score==null?'—':h.heat_score}</td>
+      <td>${h.rank_heat==null?'—':'#'+h.rank_heat}</td>
+      <td>${b.member_count==null?'—':b.member_count}</td>
+      <td>${b.has_daily_data?'✓':'—'}</td>
+      <td style="font-size:.75rem;">${b.last_top_date||'—'}</td>
+      <td style="font-family:inherit;">${st.join(' ')||'—'}</td>
+      <td style="font-family:inherit;">
+        <a class="lnk" onclick="pin('${b.board_code}',${b.is_pinned?'false':'true'})">${b.is_pinned?'取消钉选':'钉选'}</a>
+        ${b.tracking_tier===1?` · <a class="lnk" style="color:#9ca3af" onclick="drop('${b.board_code}')">退回L0</a>`:''}
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+async function doEval(){
+  const box = document.getElementById('plan');
+  box.style.display='block'; box.innerHTML='试算中…';
+  const r = await fetch('/board_pool/api/evaluate').then(x=>x.json());
+  if(!r.success){ box.innerHTML = '试算失败：'+esc(r.message); return; }
+  const d = r.data;
+  if(!d.ok){ box.innerHTML = esc(d.message||'无法试算'); return; }
+  const col = (title, list, color, fmt) => `<div class="plan-col"><b style="color:${color}">${title}（${list.length}）</b><div style="font-size:.8rem;color:#374151;margin-top:.3rem;max-height:220px;overflow:auto;">${
+      list.length? list.map(fmt).join('') : '<span style="color:#9ca3af;">无</span>'}</div></div>`;
+  const seedNote = d.mode==='seed'
+    ? `<div style="color:#92400e;background:#fffbeb;border:1px solid #fde68a;border-radius:.4rem;padding:.4rem .6rem;margin-bottom:.6rem;font-size:.8rem;">
+         ⚠ <b>冷启动播种(seed)</b>：概念的热度快照只有 ${d.dates} 个可用日，"连续${d.thresholds.in_consec}日进TOP${d.thresholds.in_rank}"这条规则还跑不起来，
+         本次按<b>当日 TOP${d.thresholds.in_rank}</b> 先把池子填起来。等攒够快照日后会自动切回规则模式。
+       </div>` : '';
+  box.innerHTML = seedNote +
+    `<div style="font-size:.8rem;color:#6b7280;margin-bottom:.5rem;">数据日 ${d.as_of}｜可用快照日 ${d.dates}｜在池概念 ${d.pool_now}/${d.cap}｜本轮可进 ${d.room} 个</div>` +
+    col('入池', d.add, '#16a34a', x=>`<div>${esc(x.board_name)} <span style="color:#9ca3af">#${x.rank_now} 热度${x.avg_heat}</span></div>`) +
+    col('出池', d.drop, '#dc2626', x=>`<div>${esc(x.board_name)} <span style="color:#9ca3af">${x.gap_days}日未在榜</span></div>`) +
+    col('闸门拦截', d.blocked, '#9ca3af', x=>`<div>${esc(x.board_name)} <span style="color:#9ca3af">${RCN[x.reason]||x.reason}</span></div>`) +
+    col('超限额顺延', d.deferred, '#d97706', x=>`<div>${esc(x.board_name)} <span style="color:#9ca3af">热度${x.avg_heat}</span></div>`);
+}
+
+async function doApply(){
+  if(!confirm('把试算结果写入板块主表？（出池只降层级，历史记录不删）')) return;
+  const r = await fetch('/board_pool/api/apply',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}).then(x=>x.json());
+  if(!r.success){ alert('失败：'+(r.message||'')); return; }
+  const d = r.data;
+  alert(`已应用：入池 ${(d.added||[]).length} 个，出池 ${(d.dropped||[]).length} 个`);
+  loadStatus(); loadList();
+}
+
+async function doTask(kind, label){
+  const body = {};
+  if(kind==='sync_members' && !confirm('给池内板块拉成分股？逐个请求东财，可能要几分钟。')) return;
+  if(kind==='build_synth' && !confirm('给池内概念板块合成指数？读成分股本地日K/15m，比较慢。')) return;
+  if(kind==='heat_ts' && !confirm('给池内板块算时序热度分？读各自日K算滚动分位，通常几秒到几十秒。')) return;
+  const r = await fetch('/board_pool/api/'+kind,{method:'POST',headers:{'Content-Type':'application/json'},
+                        body:JSON.stringify(body)}).then(x=>x.json());
+  if(!r.success){ alert(label+'启动失败：'+(r.message||'')); return; }
+  document.getElementById('task').textContent = '⏳ '+label+' 已在后台启动…';
+  if(!TASK_TIMER) TASK_TIMER = setInterval(pollTask, 3000);
+}
+
+async function doFold(){
+  const r = await fetch('/board_pool/api/fold',{method:'POST',headers:{'Content-Type':'application/json'},
+                        body:JSON.stringify({dry_run:true})}).then(x=>x.json());
+  if(!r.success){ alert('失败：'+(r.message||'')); return; }
+  const d = r.data;
+  if(!d.folded.length){ alert(`检查了 ${d.checked} 个池内板块，没有成分重叠 >${(0.7*100)}% 的。`); return; }
+  const txt = d.folded.map(f=>`${f.board_name}(${f.members}只) → ${f.alias_of}(${f.main_members}只)  Jaccard=${f.jaccard}`).join('\n');
+  if(confirm(`发现 ${d.folded.length} 组重叠主线：\n\n${txt}\n\n确认折叠？（保留成分更少更纯的那个，另一个退回 L0 并标 alias）`)){
+    fetch('/board_pool/api/fold',{method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({dry_run:false})}).then(x=>x.json()).then(()=>{ loadStatus(); loadList(); });
+  }
+}
+
+async function pin(code, pinned){
+  await fetch('/board_pool/api/pin',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({board_code:code, pinned:pinned})});
+  loadStatus(); loadList();
+}
+async function drop(code){
+  if(!confirm('退回 L0？该板块仍会每天记录热度，只是不再做成分/合成/评分。')) return;
+  await fetch('/board_pool/api/drop',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({board_code:code})});
+  loadStatus(); loadList();
+}
+
+loadStatus(); loadList();
+</script>
+{% endblock %}

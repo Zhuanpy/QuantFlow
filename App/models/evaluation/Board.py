@@ -15,6 +15,17 @@ logger = logging.getLogger(__name__)
 CLASSIFICATIONS = ('行业板块', '概念板块', '自定义')
 SOURCES = ('industry', 'concept', 'manual')
 
+# 跟踪层级（见《资金流热点监控系统_设计说明书》§11.1）
+#   0 = L0 仅记录（只在 mkt_sector_flow_daily 里留每日热度快照，不做成分/合成/评分）
+#   1 = L1 候选池（做成分同步 + 合成指数 + v1-mtf 趋势评分）—— 概念限额，动态进出
+#   2 = L2 主线深跟（生命周期状态机，尚未实现）
+TIER_L0, TIER_L1, TIER_L2 = 0, 1, 2
+
+# 被闸门挡在 L1 之外的原因
+EXCL_ATTRIBUTE_TAG = 'attribute_tag'   # 属性标签类概念（融资融券/沪股通/机构重仓…）
+EXCL_TOO_BROAD = 'too_broad'           # 成分股过多，覆盖太宽没有主线含义
+EXCL_ALIAS = 'alias'                   # 与在池板块成分高度重叠，折叠到主线板块
+
 
 class Board(db.Model):
     """板块主表（每个板块一条）"""
@@ -35,6 +46,18 @@ class Board(db.Model):
     notes = db.Column(db.String(200), comment='备注')
     last_member_sync = db.Column(db.DateTime, comment='成分股最近同步时间')
 
+    # —— L1 候选池 ——
+    tracking_tier = db.Column(db.Integer, default=TIER_L0,
+                              comment='跟踪层级 0=仅记录 1=候选池 2=主线深跟')
+    is_pinned = db.Column(db.Boolean, default=False,
+                          comment='手工钉选：恒在池内，不受出池规则约束')
+    tier_since = db.Column(db.Date, comment='进入当前层级的日期')
+    last_top_date = db.Column(db.Date, comment='最后一次进入热度榜(TOP N)的日期')
+    alias_of = db.Column(db.String(20),
+                         comment='成分高度重叠时折叠到的主线板块代码')
+    exclude_reason = db.Column(db.String(40),
+                               comment='被挡在 L1 外的原因 attribute_tag/too_broad/alias/manual')
+
     created_at = db.Column(db.DateTime, default=datetime.utcnow, comment='创建时间')
     updated_at = db.Column(db.DateTime, default=datetime.utcnow,
                            onupdate=datetime.utcnow, comment='更新时间')
@@ -54,18 +77,56 @@ class Board(db.Model):
             'enabled': self.enabled,
             'notes': self.notes,
             'last_member_sync': self.last_member_sync.isoformat() if self.last_member_sync else None,
+            'tracking_tier': self.tracking_tier if self.tracking_tier is not None else TIER_L0,
+            'is_pinned': bool(self.is_pinned),
+            'tier_since': self.tier_since.isoformat() if self.tier_since else None,
+            'last_top_date': self.last_top_date.isoformat() if self.last_top_date else None,
+            'alias_of': self.alias_of,
+            'exclude_reason': self.exclude_reason,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
         }
 
+    # 老表缺列时惰性 ALTER 补上（项目没有迁移工具）
+    _ADD_COLUMNS = {
+        'tracking_tier': 'INT NULL DEFAULT 0 COMMENT "跟踪层级 0仅记录/1候选池/2主线"',
+        'is_pinned': 'TINYINT(1) NULL DEFAULT 0 COMMENT "手工钉选"',
+        'tier_since': 'DATE NULL COMMENT "进入当前层级的日期"',
+        'last_top_date': 'DATE NULL COMMENT "最后一次进热度榜的日期"',
+        'alias_of': 'VARCHAR(20) NULL COMMENT "折叠到的主线板块代码"',
+        'exclude_reason': 'VARCHAR(40) NULL COMMENT "被挡在L1外的原因"',
+    }
+
     @classmethod
     def ensure_table(cls):
-        """惰性建表：项目无统一 create_all，首次使用时确保表存在。"""
+        """惰性建表 + 缺列自动补齐：项目无统一 create_all，也没有迁移工具。"""
         try:
             eng = db.engines.get(cls.__bind_key__)
             cls.__table__.create(bind=eng, checkfirst=True)
         except Exception as e:
             logger.warning(f'确保 {cls.__tablename__} 表存在失败: {e}')
+            return
+        try:
+            from sqlalchemy import text
+            insp = db.inspect(eng)
+            have = {c['name'] for c in insp.get_columns(cls.__tablename__)}
+            missing = [(k, v) for k, v in cls._ADD_COLUMNS.items() if k not in have]
+            if missing:
+                with eng.begin() as conn:
+                    for name, ddl in missing:
+                        conn.execute(text(
+                            f'ALTER TABLE {cls.__tablename__} ADD COLUMN {name} {ddl}'))
+                        logger.info(f'[board] 补列 {name}')
+        except Exception as e:
+            logger.warning(f'{cls.__tablename__} 补列失败: {e}')
+
+    @classmethod
+    def list_by_tier(cls, tier, classification=None):
+        """取某一层级的板块（tier=1 即 L1 候选池）。"""
+        q = cls.query.filter(cls.tracking_tier == tier, cls.enabled.isnot(False))
+        if classification:
+            q = q.filter(cls.classification == classification)
+        return q.order_by(cls.board_code.asc()).all()
 
     @classmethod
     def upsert(cls, board_code, **fields):

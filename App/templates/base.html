@@ -300,11 +300,13 @@
                 </li>
 
                 {# 板块分析 #}
-                {% set board_eps = ['board_overview.page', 'board_data.page', 'board_data.board_hot_page', 'board_trend.page', 'board_pref.page'] %}
+                {% set board_eps = ['board_overview.page', 'board_data.page', 'board_data.board_hot_page', 'board_trend.page', 'board_pref.page', 'board_pool.page'] %}
                 <li class="nav-item dropdown">
                     <span class="nav-link dropdown-toggle {% if request.endpoint in board_eps %}active{% endif %}" tabindex="0">板块</span>
                     <ul class="dropdown-menu">
-                        <li><a href="{{ url_for('board_data.board_hot_page') }}" {% if request.endpoint == 'board_data.board_hot_page' %}class="active"{% endif %}>🔥 近期热点</a></li>
+                        <li><a href="{{ url_for('board_data.board_hot_page') }}" {% if request.endpoint == 'board_data.board_hot_page' and request.args.get('tab') != 'track' %}class="active"{% endif %}>🔥 近期热点</a></li>
+                        <li><a href="{{ url_for('board_data.board_hot_page', tab='track') }}" {% if request.endpoint == 'board_data.board_hot_page' and request.args.get('tab') == 'track' %}class="active"{% endif %}>📈 热度追踪</a></li>
+                        <li><a href="{{ url_for('board_pool.page') }}" {% if request.endpoint == 'board_pool.page' %}class="active"{% endif %}>🎯 候选池(L1)</a></li>
                         <li><a href="{{ url_for('board_overview.page') }}" {% if request.endpoint == 'board_overview.page' %}class="active"{% endif %}>板块整体预览</a></li>
                         <li><a href="{{ url_for('board_data.page') }}" {% if request.endpoint == 'board_data.page' %}class="active"{% endif %}>板块数据管理</a></li>
                         <li><a href="{{ url_for('board_trend.page') }}" {% if request.endpoint == 'board_trend.page' %}class="active"{% endif %}>板块趋势打分</a></li>
