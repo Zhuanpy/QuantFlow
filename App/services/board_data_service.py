@@ -128,6 +128,9 @@ _EM_HOSTS = (
     'push2his.eastmoney.com',
     '82.push2.eastmoney.com',
     '45.push2.eastmoney.com',
+    # 延时行情主机：push2* 整组 502/拒连时（2026-08-23 实测）只有它通。
+    # 成分股名单与市值不是实时价，延时源与实时源等价，放最后兜底无副作用。
+    'push2delay.eastmoney.com',
 )
 _EM_UAS = (
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) '
@@ -138,12 +141,35 @@ _EM_UAS = (
 )
 
 
+_CONS_PAGE_SIZE = 100    # 东财 clist 单页硬上限（pz 给多大都只回 100）
+_CONS_MAX_PAGES = 30     # 3000 只，远超任何板块的成分数
+_CONS_DEADLINE = 60      # 全部主机重试的总时限(秒)：页面在同步等这个请求，不能试到天荒地老
+
+# 记住上次成功的 (host, scheme)，下次优先试它。push2 整组挂掉期间，每次都要把前几台
+# 挨个试失败才轮到延时主机（实测 12s），页面是同步等这个请求的，白等没有意义。
+_LAST_GOOD_HOST = {'host': None, 'scheme': None}
+
+
+def _host_order(rnd: int):
+    """生成 (host, scheme) 尝试顺序：上次成功的排最前，其余按 _EM_HOSTS 顺序。"""
+    order = [(h, sch) for h in _EM_HOSTS for sch in ('https', 'http')]
+    lg = (_LAST_GOOD_HOST['host'], _LAST_GOOD_HOST['scheme'])
+    if lg[0] and lg in order:
+        order.remove(lg)
+        order.insert(0, lg)
+    return order
+
+
 def em_industry_cons_via_http(board_code: str, retries: int = 4):
-    """直连东方财富 clist API 拉板块成分股 + 总市值/流通市值。
+    """直连东方财富 clist API 拉板块成分股 + 总市值/流通市值（**翻页取全量**）。
 
     URL: http(s)://push2.eastmoney.com/api/qt/clist/get?fs=b:BKxxxx+f:!50&fields=f12,f14,f20,f21&...
     字段：f12 代码 / f14 名称 / f20 总市值(元) / f21 流通市值(元)
-    重试策略：在多个 host × http/https × 多 UA 上轮换。
+
+    翻页：东财单页硬上限 100 条，`pz=500` 是无效的——成分股超过 100 的板块
+    （多数概念板块、大行业都超）此前一直被静默截断。这里按 pn 翻到 data.total。
+    重试：在多个 host × http/https × 多 UA 上轮换；某台通了就用它翻完所有页。
+
     Returns: list[dict(stock_code, stock_name, total_cap, circ_cap)] 或抛出 RuntimeError
     """
     import time
@@ -158,14 +184,10 @@ def em_industry_cons_via_http(board_code: str, retries: int = 4):
         except (TypeError, ValueError):
             return None
 
-    attempts = []
-    for i in range(retries):
-        host = _EM_HOSTS[i % len(_EM_HOSTS)]
-        ua = _EM_UAS[i % len(_EM_UAS)]
-        scheme = 'http' if i % 2 == 1 else 'https'
+    def _page(scheme, host, ua, pn):
         url = f'{scheme}://{host}/api/qt/clist/get'
         params = {
-            'pn': 1, 'pz': 500, 'po': 1, 'np': 1,
+            'pn': pn, 'pz': _CONS_PAGE_SIZE, 'po': 1, 'np': 1,
             'ut': 'bd1d9ddb04089700cf9c27f6f7426281',
             'fltt': 2, 'invt': 2, 'fid': 'f3',
             'fs': f'b:{board_code}+f:!50',
@@ -176,30 +198,69 @@ def em_industry_cons_via_http(board_code: str, retries: int = 4):
             'Referer': 'https://quote.eastmoney.com/',
             'Accept': '*/*',
         }
-        tag = f'{scheme}://{host}'
+        resp = requests.get(url, params=params, headers=headers, timeout=15)
+        if resp.status_code != 200:
+            raise RuntimeError(f'HTTP {resp.status_code}')
         try:
-            resp = requests.get(url, params=params, headers=headers, timeout=15)
-            if resp.status_code != 200:
-                attempts.append(f'{tag} HTTP {resp.status_code}')
-                time.sleep(1.0 * (i + 1))
-                continue
+            payload = _json.loads(resp.text)
+        except _json.JSONDecodeError:
+            raise RuntimeError(f'non-JSON: {resp.text[:80]!r}')
+        data = (payload or {}).get('data') or {}
+        rows = [{
+            'stock_code': str(r.get('f12', '')).strip().zfill(6),
+            'stock_name': str(r.get('f14', '')).strip(),
+            'total_cap': _to_num(r.get('f20')),
+            'circ_cap': _to_num(r.get('f21')),
+        } for r in (data.get('diff') or []) if r.get('f12')]
+        return rows, int(data.get('total') or 0)
+
+    attempts = []
+    deadline = time.time() + _CONS_DEADLINE      # 页面同步请求，不能无限试下去
+    for rnd in range(retries):
+        # 逐主机试通：不能按 retries 取模轮换 —— retries=3 时后面的主机（含延时兜底）
+        # 永远轮不到，push2 整组挂掉时就直接全败。
+        for hi, (host, scheme) in enumerate(_host_order(rnd)):
+            if time.time() > deadline:
+                attempts.append(f'超过 {_CONS_DEADLINE}s 总时限，放弃')
+                raise RuntimeError('东财 HTTP 兜底全部失败：' + ' | '.join(attempts))
+            ua = _EM_UAS[(rnd + hi) % len(_EM_UAS)]
+            tag = f'{scheme}://{host}'
             try:
-                payload = _json.loads(resp.text)
-            except _json.JSONDecodeError:
-                attempts.append(f'{tag} non-JSON: {resp.text[:80]!r}')
-                time.sleep(1.0 * (i + 1))
+                first, total = _page(scheme, host, ua, 1)
+            except (requests.exceptions.RequestException, RuntimeError) as e:
+                attempts.append(f'{tag} {type(e).__name__}: {str(e)[:60]}')
                 continue
-            diff = ((payload or {}).get('data') or {}).get('diff') or []
-            return [{
-                'stock_code': str(r.get('f12', '')).strip().zfill(6),
-                'stock_name': str(r.get('f14', '')).strip(),
-                'total_cap': _to_num(r.get('f20')),
-                'circ_cap': _to_num(r.get('f21')),
-            } for r in diff if r.get('f12')]
-        except requests.exceptions.RequestException as e:
-            attempts.append(f'{tag} {type(e).__name__}: {str(e)[:80]}')
-            time.sleep(1.0 * (i + 1))
-    raise RuntimeError('东财 HTTP 兜底全部失败：' + ' | '.join(attempts))
+
+            out = list(first)
+            seen = {r['stock_code'] for r in out}
+            pn = 1
+            while (total and len(out) < total) or (not total and len(first) == _CONS_PAGE_SIZE):
+                pn += 1
+                if pn > _CONS_MAX_PAGES:
+                    logger.warning(f'[cons] {board_code} 翻页超过 {_CONS_MAX_PAGES} 页，提前收工')
+                    break
+                try:
+                    page_rows, _t = _page(scheme, host, ua, pn)
+                except (requests.exceptions.RequestException, RuntimeError) as e:
+                    # 中途失败：已取的不丢，但明确告警，避免"以为拿全了"
+                    logger.warning(f'[cons] {board_code} 第 {pn} 页失败，已取 '
+                                   f'{len(out)}/{total or 0}: {e}')
+                    break
+                new = [r for r in page_rows if r['stock_code'] not in seen]
+                if not new:
+                    break
+                out.extend(new)
+                seen.update(r['stock_code'] for r in new)
+                if len(page_rows) < _CONS_PAGE_SIZE:
+                    break
+                time.sleep(0.25)
+
+            if total and len(out) < total:
+                logger.warning(f'[cons] {board_code} 仅取到 {len(out)}/{total} 只成分股')
+            _LAST_GOOD_HOST['host'], _LAST_GOOD_HOST['scheme'] = host, scheme
+            return out
+        time.sleep(1.0 * (rnd + 1))
+    raise RuntimeError('东财 HTTP 兜底全部失败：' + ' | '.join(attempts[-8:]))
 
 
 def ak_industry_cons(board_code: str, retries: int = 3, sleep_sec: float = 1.5):

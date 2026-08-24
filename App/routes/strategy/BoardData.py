@@ -37,9 +37,13 @@ def page():
 
 @board_data_bp.route('/hot')
 def board_hot_page():
-    """近期热点页：tab=trend 近期热点板块(评分动量) / tab=concept 概念热点(东财快照)，路由参数区分。"""
+    """近期热点页，路由参数 tab 区分三个面板：
+      trend   近期热点板块（板块趋势分 v1-mtf 的评分动量，只覆盖主表 86 个行业板块）
+      concept 概念热点（东财当日快照横截面）
+      track   热度追踪（L0 每日快照的**纵向序列**：一日游 vs 持续，见 hot_track_service）
+    """
     tab = request.args.get('tab', 'trend')
-    if tab not in ('trend', 'concept'):
+    if tab not in ('trend', 'concept', 'track'):
         tab = 'trend'
     return render_template('strategy/board_hot.html', tab=tab)
 
@@ -102,15 +106,133 @@ def api_hot_boards():
 
 @board_data_bp.route('/api/sync_sector_flow', methods=['POST'])
 def api_sync_sector_flow():
-    """抓取东财 行业+概念 板块的资金流/热度快照，写入 mkt_sector_flow_daily。"""
+    """抓取东财 行业+概念 板块全量热度快照，写入 mkt_sector_flow_daily（热点追踪 L0）。
+
+    body(可选): {types:['industry','concept'], date:'YYYY-MM-DD'}
+    注意：这是 Flask 请求线程，**禁用 akshare 兜底**（V8 只能主线程初始化，
+    在请求线程里会 PartitionAlloc FATAL 整进程崩）。东财挂了就等收盘调度那次主线程重试。
+    """
     from App.services.sector_flow_service import sync_sector_flow
+    from datetime import datetime as _dt
+
+    data = request.get_json(silent=True) or {}
+    types = tuple(data.get('types') or ('industry', 'concept'))
+    types = tuple(t for t in types if t in ('industry', 'concept')) or ('industry', 'concept')
+    snap = data.get('date')
+    try:
+        snap = _dt.strptime(snap, '%Y-%m-%d').date() if snap else None
+    except ValueError:
+        return jsonify({'success': False, 'message': 'date 格式应为 YYYY-MM-DD'}), 400
+
     app = current_app._get_current_object()
     try:
-        res = sync_sector_flow(app)
+        res = sync_sector_flow(app, snapshot_date=snap, types=types, allow_akshare=False)
         ok = not res.get('errors')
         return jsonify({'success': ok, 'data': res}), (200 if ok else 207)
     except Exception as e:
-        logger.exception('板块资金流同步失败')
+        logger.exception('板块热度快照同步失败')
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@board_data_bp.route('/api/sector_flow_status')
+def api_sector_flow_status():
+    """L0 快照入库状态 + 覆盖天数。前端据此决定是否触发自动补抓、并如实提示样本不足。"""
+    from App.services.sector_flow_auto import get_status
+    from App.services.hot_track_service import coverage
+    try:
+        st = get_status(current_app._get_current_object())
+        st['coverage'] = coverage()
+        return jsonify({'success': True, 'data': st})
+    except Exception as e:
+        logger.exception('读取板块热度快照状态失败')
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@board_data_bp.route('/api/sector_flow_auto', methods=['POST'])
+def api_sector_flow_auto():
+    """页面访问驱动的兜底补抓：最近交易日缺快照才后台跑（盘中不触发）。
+
+    L0 数据不可回补，漏一天就永久缺一天，所以在收盘调度之外留这道保险。
+    """
+    from App.services.sector_flow_auto import trigger_async
+    data = request.get_json(silent=True) or {}
+    try:
+        res = trigger_async(current_app._get_current_object(),
+                            force=bool(data.get('force')))
+        return jsonify({'success': True, 'data': res})
+    except Exception as e:
+        logger.exception('自动补抓板块热度快照失败')
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@board_data_bp.route('/api/hot_timeline')
+def api_hot_timeline():
+    """热度追踪：板块热度的纵向序列 + 持续性指标（一日游 / 持续 / 退潮 …）。
+
+    query:
+      type=concept|industry|industry_sub
+      days=快照日数(默认60)
+      basis=cross 横截面(默认) | self 时序   —— 两种口径见 hot_track_service docstring
+      top=在榜阈值：cross 口径是排名(默认20)，self 口径是 heat_ts 门槛(默认70)
+    """
+    from App.services.hot_track_service import build_timeline, HOT_TS_THRESHOLD
+    board_type = (request.args.get('type') or 'concept').strip().lower()
+    if board_type not in ('concept', 'industry', 'industry_sub'):
+        board_type = 'concept'
+    basis = (request.args.get('basis') or 'cross').strip().lower()
+    if basis not in ('cross', 'self'):
+        basis = 'cross'
+    try:
+        days = max(5, min(1000, int(request.args.get('days', 60))))
+    except (TypeError, ValueError):
+        days = 60
+    raw_top = request.args.get('top')
+    try:
+        top_k = max(3, min(100, int(raw_top))) if raw_top else 20
+    except (TypeError, ValueError):
+        top_k = 20
+    try:
+        hot_t = float(raw_top) if (basis == 'self' and raw_top) else HOT_TS_THRESHOLD
+        hot_t = max(30.0, min(99.0, hot_t))
+    except (TypeError, ValueError):
+        hot_t = HOT_TS_THRESHOLD
+    try:
+        data = build_timeline(board_type=board_type, days=days, top_k=top_k,
+                              basis=basis, hot_threshold=hot_t)
+        return jsonify({'success': True, 'data': data})
+    except Exception as e:
+        logger.exception('热度时间序列构建失败')
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@board_data_bp.route('/api/hot_series/<code>')
+def api_hot_series(code):
+    """单板块热度序列（详情表/图）。basis=cross 横截面快照 / self 时序热度。"""
+    from App.services.hot_track_service import board_series
+    basis = (request.args.get('basis') or 'cross').strip().lower()
+    try:
+        days = max(5, min(1000, int(request.args.get('days', 120))))
+    except (TypeError, ValueError):
+        days = 120
+    code = code.strip()
+    try:
+        if basis == 'self':
+            from App.services.board_heat_ts_service import series as ts_series
+            pts = ts_series(code, days=days)
+            return jsonify({'success': True, 'data': {
+                'board_code': code, 'basis': 'self',
+                'board_name': (pts[-1]['board_name'] if pts else code),
+                # 字段名对齐 cross 口径，前端一套渲染逻辑就够
+                'points': [{'date': p['date'], 'heat': p['heat_ts'], 'rank': None,
+                            'chg': p['change_pct'], 'share': None,
+                            'turnover': None, 'main_net': None, 'up': None, 'down': None,
+                            'lead': None, 'version': p['version'],
+                            'pct_chg': p['pct_chg'], 'pct_amt': p['pct_amt'],
+                            'amount': p['amount'], 'close': p['close']} for p in pts],
+            }})
+        return jsonify({'success': True, 'data': board_series(code, days=days)})
+    except Exception as e:
+        logger.exception('板块热度序列读取失败')
         return jsonify({'success': False, 'message': str(e)}), 500
 
 
@@ -120,14 +242,23 @@ def api_hot_concepts():
     from App.models.strategy.SectorFlowDaily import SectorFlowDaily
     try:
         SectorFlowDaily.ensure_table()
-        latest = db.session.query(db.func.max(SectorFlowDaily.date)).scalar()
+        # 行业/概念各取"自己那一类"的最新快照日：行业有本地日K回补、概念只能从接上调度那天起，
+        # 两边日期常常不一样，用全表 max(date) 会让概念榜空掉。
+        latest_by_type = {bt: d for bt, d in (
+            db.session.query(SectorFlowDaily.board_type,
+                             db.func.max(SectorFlowDaily.date))
+            .group_by(SectorFlowDaily.board_type).all())}
+        latest = max(latest_by_type.values()) if latest_by_type else None
         if latest is None:
             return jsonify({'success': True, 'as_of': None,
                             'concept_up': [], 'concept_flow': [], 'industry_up': []})
 
         def top(board_type, order_col, limit=15):
+            d = latest_by_type.get(board_type)
+            if d is None:
+                return []
             rows = (SectorFlowDaily.query
-                    .filter(SectorFlowDaily.date == latest,
+                    .filter(SectorFlowDaily.date == d,
                             SectorFlowDaily.board_type == board_type)
                     .order_by(order_col.desc()).limit(limit).all())
             return [{
@@ -135,9 +266,12 @@ def api_hot_concepts():
                 'change_pct': r.change_pct, 'main_net': r.main_net, 'main_pct': r.main_pct,
                 'turnover_rate': r.turnover_rate, 'up_count': r.up_count,
                 'down_count': r.down_count, 'lead_stock': r.lead_stock, 'lead_pct': r.lead_pct,
+                'heat_score': r.heat_score, 'rank_heat': r.rank_heat,
+                'amount': r.amount, 'amount_share': r.amount_share,
             } for r in rows]
 
         return jsonify({'success': True, 'as_of': str(latest),
+                        'as_of_by_type': {k: str(v) for k, v in latest_by_type.items()},
                         'concept_up': top('concept', SectorFlowDaily.change_pct),
                         'concept_flow': top('concept', SectorFlowDaily.main_net),
                         'industry_up': top('industry', SectorFlowDaily.change_pct)})

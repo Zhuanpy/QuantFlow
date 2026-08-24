@@ -3,11 +3,12 @@
 <div style="padding:1.25rem;max-width:min(1500px,96vw);margin:0 auto;">
 
   <div class="ht-tabs">
-    <a class="ht-tab {% if tab != 'concept' %}active{% endif %}" href="?tab=trend">📊 近期热点板块</a>
+    <a class="ht-tab {% if tab == 'trend' %}active{% endif %}" href="?tab=trend">📊 近期热点板块</a>
     <a class="ht-tab {% if tab == 'concept' %}active{% endif %}" href="?tab=concept">🔬 概念热点</a>
+    <a class="ht-tab {% if tab == 'track' %}active{% endif %}" href="?tab=track">📈 热度追踪</a>
   </div>
 
-  <div id="tab-trend" class="ht-pane"{% if tab == 'concept' %} style="display:none;"{% endif %}>
+  <div id="tab-trend" class="ht-pane"{% if tab != 'trend' %} style="display:none;"{% endif %}>
   <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:.6rem;margin-bottom:.4rem;">
     <h1 style="margin:0;font-size:1.25rem;">近期热点板块</h1>
     <span id="meta" style="color:#6b7280;font-size:.84rem;">加载中…</span>
@@ -17,7 +18,7 @@
     <b style="color:#d97706;">🌱 新兴</b>=分数快速抬升、尚未到高位；
     <b style="color:#dc2626;">🔥 持续</b>=高分且仍在上行；
     <b style="color:#6b7280;">💧 退潮</b>=分数明显回落。
-    <span style="color:#9ca3af;">（监控看板，非买入信号；缺涨停/资金Feature、未回测）</span>
+    <span style="color:#9ca3af;">（只覆盖主表 86 个行业板块；监控看板，非买入信号）</span>
   </p>
 
   <div id="cols" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:1rem;align-items:start;">
@@ -29,18 +30,128 @@
 
   <div id="tab-concept" class="ht-pane"{% if tab != 'concept' %} style="display:none;"{% endif %}>
   <div style="display:flex;justify-content:space-between;align-items:baseline;margin:.2rem 0 .3rem;flex-wrap:wrap;gap:.5rem;">
-    <h2 style="margin:0;font-size:1.15rem;">🔬 概念热点（东财实时快照）</h2>
+    <h2 style="margin:0;font-size:1.15rem;">🔬 概念热点（东财当日快照）</h2>
     <span style="display:flex;gap:.7rem;align-items:center;">
       <span id="cmeta" style="color:#6b7280;font-size:.8rem;"></span>
-      <button onclick="syncFlow()" id="syncBtn" style="padding:.35rem .85rem;border:none;border-radius:.4rem;background:#2563eb;color:#fff;font-size:.8rem;cursor:pointer;">↻ 刷新板块资金流</button>
+      <button onclick="syncFlow()" id="syncBtn" style="padding:.35rem .85rem;border:none;border-radius:.4rem;background:#2563eb;color:#fff;font-size:.8rem;cursor:pointer;">↻ 抓取今日快照</button>
     </span>
   </div>
-  <p style="color:#9ca3af;font-size:.78rem;margin:.1rem 0 .8rem;">直接来自东财板块列表：概念涨幅榜=谁在涨，资金榜=钱往哪去（主力净额为东财推断值，C级参考）。光模块/CPO/芯片等题材在此出现。</p>
+  <p style="color:#9ca3af;font-size:.78rem;margin:.1rem 0 .8rem;">直接来自东财板块列表（已翻页取全量，非只取前100）：概念涨幅榜=谁在涨，资金榜=钱往哪去（主力净额为东财推断值，C级参考，不进热度分）。</p>
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;align-items:start;">
     <div class="hot-col"><h3 class="hc-title" style="color:#dc2626;">概念·涨幅榜</h3><div id="concept_up"></div></div>
     <div class="hot-col"><h3 class="hc-title" style="color:#16a34a;">概念·资金流入榜</h3><div id="concept_flow"></div></div>
   </div>
   </div><!-- /tab-concept -->
+
+  <div id="tab-track" class="ht-pane"{% if tab != 'track' %} style="display:none;"{% endif %}>
+    <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:.6rem;margin-bottom:.3rem;">
+      <h2 style="margin:0;font-size:1.15rem;">📈 热度追踪 —— 一日游 还是 持续？</h2>
+      <span style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;">
+        <select id="tkType" class="tk-ctl" onchange="loadTrack()">
+          <option value="concept">概念板块</option>
+          <option value="industry">一级行业</option>
+          <option value="industry_sub">细分行业</option>
+        </select>
+        <select id="tkDays" class="tk-ctl" onchange="loadTrack()">
+          <option value="20">近20个快照日</option>
+          <option value="60" selected>近60个快照日</option>
+          <option value="120">近120个快照日</option>
+        </select>
+        <select id="tkBasis" class="tk-ctl" onchange="onBasisChange()"
+                title="横截面=今天谁最热（需全市场快照，概念历史补不回来）；时序=它比自己平时热多少（有日K就能整段回补）">
+          <option value="cross">口径：横截面热度</option>
+          <option value="self">口径：时序热度</option>
+        </select>
+        <select id="tkTop" class="tk-ctl" onchange="loadTrack()">
+          <option value="10">在榜=TOP10</option>
+          <option value="20" selected>在榜=TOP20</option>
+          <option value="30">在榜=TOP30</option>
+        </select>
+        <select id="tkHot" class="tk-ctl" style="display:none;" onchange="loadTrack()">
+          <option value="60">在榜=热度≥60</option>
+          <option value="70" selected>在榜=热度≥70</option>
+          <option value="80">在榜=热度≥80</option>
+        </select>
+      </span>
+    </div>
+
+    <div id="tkCoverage" class="tk-note">加载中…</div>
+
+    <!-- 分组概览：一眼看清今天的热点里，几个是真持续、几个是一日游 -->
+    <div id="tkGroups" class="tk-groups"></div>
+
+    <!-- 详情：点分组卡片进来 -->
+    <div class="hot-col" id="tkDetailBox" style="display:none;padding:.9rem;margin-bottom:1rem;">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem;">
+        <h3 id="tkDetailTitle" style="margin:0;font-size:1.05rem;"></h3>
+        <span style="display:flex;gap:.7rem;align-items:center;">
+          <a href="#" id="tkLinkMembers" target="_blank" class="tk-link">成分股 →</a>
+          <a href="#" id="tkLinkBoard" target="_blank" class="tk-link">板块详情 →</a>
+          <button class="tk-ctl" style="cursor:pointer;" onclick="closeDetail()">✕ 关闭</button>
+        </span>
+      </div>
+
+      <div id="tkKpi" class="tk-kpis"></div>
+
+      <!-- 在榜区间条带：一格一天，实心=当天在榜。一日游=孤立单格，持续=连成一片 -->
+      <div style="margin:.5rem 0 .2rem;">
+        <div style="font-size:.76rem;color:#6b7280;margin-bottom:.25rem;">
+          在榜区间（一格一个快照日，实心=当天进 TOP<span class="tk-topk"></span>）
+        </div>
+        <div id="tkStrip" class="tk-strip"></div>
+      </div>
+
+      <div id="tkDetailChart" style="width:100%;height:300px;margin-top:.5rem;"></div>
+
+      <details style="margin-top:.6rem;">
+        <summary style="cursor:pointer;font-size:.85rem;color:#2563eb;">每日明细</summary>
+        <div style="overflow-x:auto;max-height:320px;margin-top:.4rem;">
+          <table class="tk-table">
+            <thead><tr>
+              <th>日期</th><th>热度</th><th>排名</th><th>涨幅</th>
+              <th title="成交额占同类型合计">额占比</th><th>换手</th>
+              <th title="涨/跌家数">红/绿</th><th>领涨股</th>
+            </tr></thead>
+            <tbody id="tkDailyBody"></tbody>
+          </table>
+        </div>
+      </details>
+    </div>
+
+    <div class="hot-col" style="padding:.8rem;">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:.3rem;flex-wrap:wrap;gap:.4rem;">
+        <h3 style="margin:0;font-size:1rem;">榜单走位</h3>
+        <select id="tkMetric" class="tk-ctl" onchange="renderTrackChart()">
+          <option value="rank">看排名走位</option>
+          <option value="heat">看热度分</option>
+        </select>
+      </div>
+      <div id="tkChart" style="width:100%;height:360px;"></div>
+      <div style="color:#9ca3af;font-size:.74rem;margin-top:.3rem;">
+        线越靠上越热。一天冒头就掉下去 = 一日游；长期贴顶 = 持续。只画当前榜上前 12 个，其余见下方明细。
+      </div>
+    </div>
+
+    <details class="hot-col" style="margin-top:1rem;padding:.8rem;">
+      <summary style="cursor:pointer;font-size:1rem;font-weight:600;">
+        全部明细<span id="tkCount" style="color:#9ca3af;font-weight:400;font-size:.8rem;"></span>
+      </summary>
+      <div style="overflow-x:auto;margin-top:.5rem;">
+        <table class="tk-table">
+          <thead><tr>
+            <th>板块</th><th>标签</th><th title="当前热度分 0-100">热度</th><th title="当日热度排名">排名</th>
+            <th title="当日涨幅">涨幅</th>
+            <th title="当前连续在榜天数">连续</th><th title="窗口内最长连续在榜">最长</th>
+            <th title="窗口内累计在榜天数 / 占比">累计</th>
+            <th title="近5日热度分斜率，正=还在升温">斜率</th>
+            <th title="当前热度距窗口内峰值的回落">距峰</th>
+            <th></th>
+          </tr></thead>
+          <tbody id="tkBody"></tbody>
+        </table>
+      </div>
+    </details>
+  </div><!-- /tab-track -->
 </div>
 
 <style>
@@ -65,8 +176,47 @@
             border-radius:.45rem .45rem 0 0; border-bottom:2px solid transparent; margin-bottom:-2px; }
   .ht-tab:hover { color:var(--primary-color,#2563eb); }
   .ht-tab.active { color:var(--primary-color,#2563eb); border-bottom-color:var(--primary-color,#2563eb); }
+  /* ---- 热度追踪 ---- */
+  .tk-ctl { padding:.3rem .5rem; border:1px solid #e5e7eb; border-radius:.35rem; font-size:.8rem; background:#fff; color:#111827; }
+  .tk-note { color:#6b7280; font-size:.78rem; background:#f9fafb; border:1px solid #f3f4f6; border-radius:.4rem; padding:.45rem .6rem; }
+  .tk-warn { color:#92400e; background:#fffbeb; border-color:#fde68a; }
+  .tk-sum { padding:.3rem .7rem; border-radius:999px; font-size:.8rem; font-weight:600; }
+  .tk-table { width:100%; border-collapse:collapse; font-size:.82rem; }
+  .tk-table th { text-align:right; padding:.35rem .5rem; color:#6b7280; font-weight:600; border-bottom:1px solid #eef; white-space:nowrap; }
+  .tk-table th:first-child, .tk-table td:first-child { text-align:left; }
+  .tk-table td { text-align:right; padding:.35rem .5rem; border-bottom:1px solid #f6f7f9; white-space:nowrap; font-family:monospace; }
+  .tk-table td:first-child { font-family:inherit; font-weight:600; }
+  .tk-table tbody tr { cursor:pointer; }
+  .tk-table tbody tr:hover { background:#f8fafc; }
+  .tk-lab { padding:1px 7px; border-radius:3px; font-size:.72rem; font-weight:600; font-family:inherit; }
+  /* 分组概览：一列一个生命周期分组 */
+  .tk-groups { display:grid; grid-template-columns:repeat(5,1fr); gap:.7rem; margin:.7rem 0 1rem; align-items:start; }
+  @media(max-width:1200px){ .tk-groups{ grid-template-columns:repeat(2,1fr); } }
+  @media(max-width:700px){ .tk-groups{ grid-template-columns:1fr; } }
+  .tk-group { background:var(--card-background,#fff); border-radius:.6rem; padding:.6rem; box-shadow:var(--shadow-sm,0 1px 2px rgba(0,0,0,.05)); }
+  .tk-gtitle { font-size:.95rem; font-weight:700; border-bottom:1px solid #eef; padding-bottom:.35rem; }
+  .tk-gcnt { float:right; font-size:.78rem; color:#9ca3af; font-weight:400; }
+  .tk-ghint { font-size:.72rem; color:#9ca3af; margin:.3rem 0 .45rem; line-height:1.35; }
+  .tk-gcards { max-height:380px; overflow-y:auto; }
+  .tk-card { border:1px solid #eef; border-radius:.45rem; padding:.4rem .5rem; margin-bottom:.4rem; cursor:pointer; }
+  .tk-card:hover { border-color:#93c5fd; background:#f8fafc; }
+  .tk-c1 { display:flex; justify-content:space-between; align-items:baseline; gap:.3rem; }
+  .tk-cname { font-weight:600; font-size:.86rem; color:#111827; }
+  .tk-cheat { font-family:monospace; font-weight:700; font-size:.86rem; }
+  .tk-c2 { display:flex; gap:.45rem; flex-wrap:wrap; margin-top:.2rem; font-size:.71rem; color:#6b7280; }
+  /* 详情 */
+  .tk-kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(96px,1fr)); gap:.5rem; margin-top:.7rem; }
+  .tk-kpi { background:#f9fafb; border-radius:.4rem; padding:.4rem .5rem; text-align:center; }
+  .tk-kv { font-size:1.02rem; font-weight:700; font-family:monospace; }
+  .tk-kl { font-size:.7rem; color:#6b7280; margin-top:.1rem; }
+  .tk-link { color:#2563eb; text-decoration:none; font-size:.78rem; }
+  /* 在榜区间条带：一格一天 */
+  .tk-strip { display:flex; gap:2px; flex-wrap:wrap; }
+  .tk-cell { width:9px; height:16px; border-radius:2px; background:#f3f4f6; display:inline-block; }
+  .tk-cell.on { background:#dc2626; }
 </style>
 
+<script src="{{ url_for('static', filename='js/echarts.common.min.js') }}"></script>
 <script>
 const ACTIVE_TAB = "{{ tab }}";   // 由路由参数 ?tab= 决定当前面板
 
@@ -121,20 +271,22 @@ function loadTrend(){
     .catch(e=>{ document.getElementById('meta').textContent='请求失败：'+e.message; });
 }
 
-// ===== 概念热点（板块资金流快照）=====
+// ===== 概念热点（当日快照横截面）=====
 function yi(v){ return v==null?'—':(v/1e8).toFixed(2)+'亿'; }
 function flowCard(b){
   const c = b.change_pct>0?'#dc2626':(b.change_pct<0?'#16a34a':'#6b7280');
   const fc = (b.main_net==null)?'#9ca3af':(b.main_net>0?'#dc2626':'#16a34a');
   const lp = b.lead_pct==null?'':` <span style="color:${b.lead_pct>0?'#dc2626':'#16a34a'}">${b.lead_pct>0?'+':''}${b.lead_pct}%</span>`;
+  const heat = (b.heat_score==null)?'':`<span title="热度分=50%涨幅百分位+50%成交额占比百分位">热度 <b style="color:${scoreColor(b.heat_score)}">${b.heat_score}</b>${b.rank_heat?`(#${b.rank_heat})`:''}</span>`;
   return `<div class="hb">
     <div class="hb-top">
       <span class="hb-name">${b.board_name||b.board_code}</span>
       <span class="hb-score" style="color:${c}">${b.change_pct>0?'+':''}${b.change_pct}%</span>
     </div>
     <div class="hb-row2">
+      ${heat}
+      <span title="成交额">额 ${yi(b.amount)}</span>
       <span title="主力净额(东财推断,C级)">主力 <span style="color:${fc}">${yi(b.main_net)}</span></span>
-      <span>换手 ${b.turnover_rate==null?'—':b.turnover_rate+'%'}</span>
       <span title="涨/跌家数">红${b.up_count}/绿${b.down_count}</span>
       <span title="领涨股">领涨 ${b.lead_stock||'—'}${lp}</span>
       <span class="hb-links"><a href="/board_data/members?code=${b.board_code}" target="_blank">成分股 →</a></span>
@@ -144,25 +296,364 @@ function flowCard(b){
 function loadConcepts(){
   fetch('/board_data/api/hot_concepts').then(r=>r.json()).then(d=>{
     if(!d.success) return;
-    document.getElementById('cmeta').textContent = d.as_of ? ('快照 '+d.as_of) : '尚无数据';
+    const abt = d.as_of_by_type || {};
+    document.getElementById('cmeta').textContent = d.as_of
+      ? `概念 ${abt.concept||'无'}｜行业 ${abt.industry||'无'}`
+      : '尚无数据';
     const cu=document.getElementById('concept_up'), cf=document.getElementById('concept_flow');
-    cu.innerHTML = (d.concept_up||[]).length ? d.concept_up.map(flowCard).join('') : '<div class="empty">尚无数据，点右上「刷新板块资金流」</div>';
+    cu.innerHTML = (d.concept_up||[]).length ? d.concept_up.map(flowCard).join('')
+      : '<div class="empty">概念快照尚无数据 —— 点右上「抓取今日快照」。<br>概念板块没有本地日K，<b>补不回历史</b>，只能从接上每日调度那天起往后攒。</div>';
     cf.innerHTML = (d.concept_flow||[]).length ? d.concept_flow.map(flowCard).join('') : '<div class="empty">—</div>';
   }).catch(()=>{});
 }
 async function syncFlow(){
   const btn=document.getElementById('syncBtn'); if(btn.disabled) return;
   btn.disabled=true; const t=btn.textContent; btn.textContent='抓取中…';
-  document.getElementById('cmeta').textContent='正在从东财抓取行业+概念板块…';
+  document.getElementById('cmeta').textContent='正在从东财抓取行业+概念板块（翻页取全量）…';
   try{
-    const r=await fetch('/board_data/api/sync_sector_flow',{method:'POST'}).then(x=>x.json());
-    if(r.data){ document.getElementById('cmeta').textContent='已更新：'+JSON.stringify(r.data.per_type||{}); loadConcepts(); }
-    else { alert('失败：'+(r.message||'')); }
+    const r=await fetch('/board_data/api/sync_sector_flow',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}).then(x=>x.json());
+    if(r.data){
+      const d=r.data;
+      document.getElementById('cmeta').textContent =
+        `已更新 ${d.date}${d.is_intraday?'(盘中值)':''}：`+JSON.stringify(d.per_type||{});
+      if((d.errors||[]).length) alert('部分失败：\n'+d.errors.join('\n'));
+      loadConcepts();
+    } else { alert('失败：'+(r.message||'')); }
   }catch(e){ alert('失败：'+e.message); }
   finally{ btn.disabled=false; btn.textContent=t; }
 }
 
+// ===== 热度追踪（L0 纵向序列）=====
+// 页面回答两个层次的问题：
+//   分组概览 —— 今天的热点里，哪些是一日游、哪些真在持续（横着看一眼）
+//   点进详情 —— 这个板块究竟热了几天、什么时候见顶、现在还剩多少（竖着看透）
+const LAB_COLOR = {
+  sustained:['持续','#dc2626','#fee2e2','🔥'],
+  emerging:['新兴','#d97706','#fef3c7','🌱'],
+  fading:['退潮','#2563eb','#dbeafe','💧'],
+  flash:['一日游','#6b7280','#f3f4f6','⚡'],
+  intermittent:['间歇','#9ca3af','#f9fafb','🔁'],
+  insufficient:['样本不足','#92400e','#fffbeb','⚠'],
+};
+// 概览分组顺序：先看还能不能跟（持续/新兴），再看该躲什么（一日游/退潮）
+const GROUP_ORDER = ['sustained','emerging','flash','fading','intermittent'];
+const GROUP_HINT = {
+  sustained:'高热且连续在榜，热点还在延续',
+  emerging:'刚上榜就连着站住，可能正在起来',
+  flash:'冒一天头就掉下去，典型的一日游',
+  fading:'刚掉出榜不久，热度在退',
+  intermittent:'反复上下榜，没形成趋势',
+};
+let TK = null, tkChart = null, tkDetail = null, TK_CUR = null;
+
+function fmt(v, d){ return (v==null)?'—':Number(v).toFixed(d==null?1:d); }
+
+function onBasisChange(){
+  const self = document.getElementById('tkBasis').value === 'self';
+  document.getElementById('tkTop').style.display = self ? 'none' : '';
+  document.getElementById('tkHot').style.display = self ? '' : 'none';
+  loadTrack();
+}
+
+async function loadTrack(){
+  const type  = document.getElementById('tkType').value;
+  const days  = document.getElementById('tkDays').value;
+  const basis = document.getElementById('tkBasis').value;
+  const top   = (basis === 'self') ? document.getElementById('tkHot').value
+                                   : document.getElementById('tkTop').value;
+
+  // 时序口径：覆盖情况来自 heat_ts 自己的历史，与横截面快照无关
+  if(basis === 'self'){
+    const box = document.getElementById('tkCoverage');
+    box.className = 'tk-note';
+    box.innerHTML = `<b>时序口径</b>：热度 = 该板块当日涨幅与成交额在<b>它自己过去250个交易日</b>中的分位（各占50%）。`
+      + `不依赖全市场快照，所以能用日K整段回补 —— 概念板块靠合成指数回到 2021 年。`
+      + `<span style="color:#9ca3af;">只覆盖 L1 候选池内的板块。</span>`;
+  }
+
+  // 覆盖情况 + 缺日自动补抓（盘中不触发，见 sector_flow_auto）
+  if(basis !== 'self'){
+   try{
+    const st = await fetch('/board_data/api/sector_flow_status').then(r=>r.json());
+    if(st.success){
+      const s = st.data, cov = (s.coverage||{})[type] || {};
+      const box = document.getElementById('tkCoverage');
+      const bits = [
+        `目标交易日 <b>${s.target_date}</b>`,
+        `已记录 <b>${cov.days||0}</b> 天`,
+        cov.first ? `(${cov.first} ~ ${cov.last})` : '',
+        `来源 ${JSON.stringify(cov.sources||{})}`,
+      ].filter(Boolean);
+      let cls = 'tk-note', extra = '';
+      if((cov.days||0) < 10){
+        cls = 'tk-note tk-warn';
+        const alt = (type==='concept') ? 'industry' : 'concept';
+        const altName = (alt==='industry') ? '一级行业' : '概念板块';
+        extra = ` ｜ ⚠ 样本不足：热度快照是当日抓取、<b>不可回补</b>，只能从接上调度那天起往后攒；`
+              + `不足约10个交易日时不给生命周期标签（否则"最长连续≤1"对每个板块都成立，会把全部板块误判成一日游）。`
+              + ` <a href="javascript:void(0)" onclick="switchType('${alt}')" style="color:#2563eb;font-weight:600;">切到${altName}看现成的 →</a>`;
+      }
+      box.className = cls;
+      box.innerHTML = bits.join('｜') + extra;
+      if(s.stale){
+        fetch('/board_data/api/sector_flow_auto',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})
+          .then(()=>{}).catch(()=>{});
+      }
+    }
+   }catch(e){ /* 状态失败不挡主流程 */ }
+  }
+
+
+  const r = await fetch(`/board_data/api/hot_timeline?type=${type}&days=${days}&top=${top}&basis=${basis}`).then(x=>x.json());
+  if(!r.success){
+    document.getElementById('tkGroups').innerHTML = `<div class="empty">加载失败：${r.message||''}</div>`;
+    return;
+  }
+  TK = r.data;
+  document.querySelectorAll('.tk-topk').forEach(el=>{ el.textContent = TK.top_k; });
+
+  // 口径混合提示：hist(本地日K回补) 与 em/em-delay(实盘快照) 的热度分定义一致，
+  // 但来源字段不同（hist 段没有换手/涨跌家数），跨段读曲线要心里有数。
+  if(TK.mixed_version){
+    const box = document.getElementById('tkCoverage');
+    box.innerHTML += `<div style="margin-top:.35rem;color:#92400e;">⚠ <b>口径混合</b>：`
+      + `窗口内含 ${(TK.versions||[]).join(' / ')} 两种来源。热度分定义相同（涨幅+成交额占比百分位），`
+      + `但回补段没有换手率/涨跌家数/领涨股，明细表里这几列会是空的。</div>`;
+  }
+  closeDetail();
+  renderGroups();
+  renderTrackChart();
+  renderTrackTable();
+}
+
+function switchType(t){
+  document.getElementById('tkType').value = t;
+  loadTrack();
+}
+
+// ---- 分组概览 ----
+function renderGroups(){
+  const box = document.getElementById('tkGroups');
+  if(!TK || !TK.dates.length){ box.innerHTML = '<div class="empty">暂无数据 —— 先抓一次快照，或等收盘流水线跑完</div>'; return; }
+
+  const buckets = {};
+  (TK.boards||[]).forEach(b=>{ (buckets[b.label] = buckets[b.label] || []).push(b); });
+
+  // 样本不足时只有一个桶，单独渲染，别装成分组结论
+  if(!TK.label_ready){
+    const all = TK.boards||[];
+    box.innerHTML = `<div class="tk-group" style="grid-column:1/-1;">
+        <div class="tk-gtitle" style="color:#92400e;">⚠ 样本不足，暂不分组
+          <span class="tk-gcnt">${all.length} 个曾进 TOP${TK.top_k}</span></div>
+        <div class="tk-ghint">只有 ${TK.recorded_days} 个快照日（需 ≥${TK.min_label_days} 天）。
+          下面按当日热度排序，可以看今天谁最热，但<b>判不了一日游还是持续</b>。</div>
+        <div class="tk-gcards">${all.slice(0,24).map(cardHtml).join('')}</div>
+      </div>`;
+    return;
+  }
+
+  // 分组是**窗口口径**：一日游/退潮的板块今天多半已经不在榜上了，
+  // 所以不能按"今日TOP-K"来分组，否则这两类根本看不到。
+  const note = `<div style="grid-column:1/-1;font-size:.76rem;color:#9ca3af;margin:-.2rem 0 .1rem;">`
+    + `按最近 ${TK.recorded_days} 个交易日的表现分组（在榜=${TK.basis==='self' ? ('热度≥'+TK.hot_threshold) : ('进 TOP'+TK.top_k)}）；`
+    + `<b>一日游/退潮的板块今天通常已掉出榜单</b>，所以这里按窗口整体判定，不是只看当日榜。点卡片看详情。</div>`;
+  box.innerHTML = note + GROUP_ORDER.map(key=>{
+    const [txt,fg,bg,icon] = LAB_COLOR[key];
+    const list = (buckets[key]||[]);
+    // 组内排序：在榜的按连续天数降序，掉榜的按最近在榜优先
+    list.sort((a,b)=> (b.cur_streak-a.cur_streak) || ((a.rank_now||999)-(b.rank_now||999)));
+    return `<div class="tk-group">
+      <div class="tk-gtitle" style="color:${fg};">${icon} ${txt}
+        <span class="tk-gcnt">${list.length}</span></div>
+      <div class="tk-ghint">${GROUP_HINT[key]}</div>
+      <div class="tk-gcards">${list.length ? list.map(cardHtml).join('')
+        : '<div class="empty" style="font-size:.78rem;">无</div>'}</div>
+    </div>`;
+  }).join('');
+}
+
+function cardHtml(b){
+  const [txt,fg,bg] = LAB_COLOR[b.label] || LAB_COLOR.intermittent;
+  const chg = (b.chg_now==null)?'—':((b.chg_now>0?'+':'')+fmt(b.chg_now,2)+'%');
+  const chgc = (b.chg_now==null)?'#9ca3af':(b.chg_now>0?'#dc2626':(b.chg_now<0?'#16a34a':'#6b7280'));
+  const slope = (b.slope5==null)?'':`<span title="近5日热度斜率" style="color:${b.slope5>0?'#dc2626':'#16a34a'}">${b.slope5>0?'↗':'↘'}${Math.abs(b.slope5)}</span>`;
+  return `<div class="tk-card" onclick="openDetail('${b.board_code}')">
+    <div class="tk-c1">
+      <span class="tk-cname">${b.board_name||b.board_code}</span>
+      <span class="tk-cheat" style="color:${scoreColor(b.heat_now)}">${fmt(b.heat_now)}</span>
+    </div>
+    <div class="tk-c2">
+      <span>${TK.basis==='self' ? (b.in_top[b.in_top.length-1]?'在榜':'未在榜')
+                                    : (b.rank_now==null?'掉榜':'#'+b.rank_now)}</span>
+      <span style="color:${chgc}">${chg}</span>
+      <span title="当前连续在榜 / 最长连续 / 窗口累计">连${b.cur_streak}·最长${b.max_streak}·累计${b.days_in_top}</span>
+      ${slope}
+    </div>
+  </div>`;
+}
+
+// ---- 详情 ----
+async function openDetail(code){
+  const b = (TK.boards||[]).find(x=>x.board_code===code);
+  if(!b) return;
+  TK_CUR = b;
+  const box = document.getElementById('tkDetailBox');
+  box.style.display = 'block';
+  const [txt,fg,bg,icon] = LAB_COLOR[b.label] || LAB_COLOR.intermittent;
+  document.getElementById('tkDetailTitle').innerHTML =
+    `${b.board_name||code} <span style="color:#9ca3af;font-size:.8rem;font-weight:400;">${code}</span>
+     <span class="tk-lab" style="background:${bg};color:${fg};margin-left:.4rem;">${icon} ${txt}</span>`;
+  document.getElementById('tkLinkMembers').href = `/board_data/members?code=${code}`;
+  document.getElementById('tkLinkBoard').href = `/board_data/board?code=${code}`;
+
+  // KPI：持续性的全部关键量
+  const kpis = [
+    ['当前热度', fmt(b.heat_now), scoreColor(b.heat_now)],
+    ['当前排名', b.rank_now==null?'掉榜':'#'+b.rank_now, b.rank_now==null?'#9ca3af':'#111827'],
+    ['连续在榜', b.cur_streak+' 天', b.cur_streak>=5?'#dc2626':'#111827'],
+    ['最长连续', b.max_streak+' 天', '#111827'],
+    ['窗口在榜', `${b.days_in_top}天 / ${b.in_top_ratio}%`, '#111827'],
+    ['近5日斜率', b.slope5==null?'—':(b.slope5>0?'+':'')+fmt(b.slope5), b.slope5==null?'#9ca3af':(b.slope5>0?'#dc2626':'#16a34a')],
+    ['距峰回落', b.drawdown==null?'—':'-'+fmt(b.drawdown), '#6b7280'],
+    ['峰值日', b.peak_date||'—', '#6b7280'],
+    ['首次上榜', b.first_top_date||'—', '#6b7280'],
+    ['末次在榜', b.last_top_date||'—', '#6b7280'],
+  ];
+  document.getElementById('tkKpi').innerHTML = kpis.map(([l,v,c])=>
+    `<div class="tk-kpi"><div class="tk-kv" style="color:${c}">${v}</div><div class="tk-kl">${l}</div></div>`).join('');
+
+  // 在榜区间条带：一日游是孤立的单格，持续是连成一片
+  document.getElementById('tkStrip').innerHTML = (b.in_top||[]).map((on,i)=>{
+    const d = TK.dates[i];
+    const rk = (b.rank||[])[i], h = (b.heat||[])[i];
+    const tip = (TK.basis === 'self')
+      ? `${d} 热度${h==null?'无数据':h}`
+      : `${d}${rk==null?' 无数据':' #'+rk}`;
+    return `<span class="tk-cell${on?' on':''}" title="${tip}"></span>`;
+  }).join('');
+
+  renderDetailChart(b);
+
+  // 每日明细（含横截面里才有的字段：换手/涨跌家数/领涨股）
+  const tb = document.getElementById('tkDailyBody');
+  tb.innerHTML = '<tr><td colspan="8" class="empty">加载中…</td></tr>';
+  try{
+    const r = await fetch(`/board_data/api/hot_series/${code}?days=180&basis=${TK.basis}`).then(x=>x.json());
+    const pts = (r.success && r.data.points) ? r.data.points.slice().reverse() : [];
+    tb.innerHTML = pts.length ? pts.map(p=>{
+      const c = (p.chg==null)?'#9ca3af':(p.chg>0?'#dc2626':(p.chg<0?'#16a34a':'#6b7280'));
+      const on = (p.rank!=null && p.rank<=TK.top_k);
+      return `<tr${on?' style="background:#fff7f7;"':''}>
+        <td style="font-size:.75rem;">${p.date}</td>
+        <td style="color:${scoreColor(p.heat)}">${fmt(p.heat)}</td>
+        <td>${p.rank==null?'—':'#'+p.rank}</td>
+        <td style="color:${c}">${p.chg==null?'—':(p.chg>0?'+':'')+fmt(p.chg,2)+'%'}</td>
+        <td>${p.share==null?'—':fmt(p.share,2)+'%'}</td>
+        <td>${p.turnover==null?'—':fmt(p.turnover,2)+'%'}</td>
+        <td>${p.up==null?'—':p.up+'/'+p.down}</td>
+        <td style="font-family:inherit;">${p.lead||'—'}</td>
+      </tr>`;
+    }).join('') : '<tr><td colspan="8" class="empty">无</td></tr>';
+  }catch(e){
+    tb.innerHTML = `<tr><td colspan="8" class="empty">读取失败：${e.message}</td></tr>`;
+  }
+  box.scrollIntoView({behavior:'smooth', block:'start'});
+}
+
+function closeDetail(){
+  document.getElementById('tkDetailBox').style.display = 'none';
+  TK_CUR = null;
+}
+
+function renderDetailChart(b){
+  const el = document.getElementById('tkDetailChart');
+  if(typeof echarts === 'undefined') return;
+  if(!tkDetail) tkDetail = echarts.init(el);
+  tkDetail.setOption({
+    tooltip:{trigger:'axis', confine:true},
+    legend:{top:0, textStyle:{fontSize:11}},
+    grid:{left:46, right:46, top:30, bottom:26},
+    xAxis:{type:'category', data:TK.dates, axisLabel:{fontSize:10}},
+    yAxis:[{type:'value', min:0, max:100, name:'热度分', nameTextStyle:{fontSize:10}, axisLabel:{fontSize:10}},
+           {type:'value', name:'涨幅%', nameTextStyle:{fontSize:10}, axisLabel:{fontSize:10}}],
+    series:[
+      {name:'热度分', type:'line', showSymbol:false, connectNulls:false,
+       data:b.heat, lineStyle:{width:2.2, color:'#dc2626'}, itemStyle:{color:'#dc2626'},
+       markLine:{silent:true, symbol:'none', label:{fontSize:10, formatter:'峰值'},
+                 data:[{yAxis:b.peak_heat, lineStyle:{color:'#fca5a5', type:'dashed'}}]}},
+      {name:'涨幅%', type:'bar', yAxisIndex:1, data:b.chg,
+       itemStyle:{color:function(c){ return c.data>0?'#fca5a5':'#86efac'; }}},
+    ],
+  }, true);
+}
+
+function renderTrackChart(){
+  const el = document.getElementById('tkChart');
+  if(!TK || !TK.dates.length){ el.innerHTML='<div class="empty">暂无数据</div>'; return; }
+  if(typeof echarts === 'undefined') return;
+  if(!tkChart) tkChart = echarts.init(el);
+  const metric = document.getElementById('tkMetric').value;
+  // 时序口径没有"排名"（排名必然依赖横截面），只能画热度分
+  const isRank = (metric === 'rank') && (TK.basis !== 'self');
+  const picks = (TK.basis === 'self')
+    ? TK.boards.slice(0, 12)
+    : TK.boards.filter(b=>b.rank_now!=null && b.rank_now<=TK.top_k).slice(0,12);
+  const series = picks.map(b=>({
+    name: b.board_name,
+    type: 'line',
+    connectNulls: false,
+    showSymbol: false,
+    lineStyle: {width: (b.label==='sustained'?2.4:1.4)},
+    emphasis: {focus:'series'},
+    data: isRank ? b.rank.map(v=>(v!=null && v<=TK.top_k*2)?v:null) : b.heat,
+  }));
+  tkChart.setOption({
+    tooltip: {trigger:'axis', order:'valueAsc', confine:true, axisPointer:{type:'line'}},
+    legend: {type:'scroll', top:0, textStyle:{fontSize:11}},
+    grid: {left:48, right:16, top:34, bottom:28},
+    xAxis: {type:'category', data:TK.dates, axisLabel:{fontSize:10}},
+    yAxis: isRank
+      ? {type:'value', inverse:true, min:1, max:TK.top_k*2, name:'热度排名',
+         nameTextStyle:{fontSize:10}, axisLabel:{fontSize:10}}
+      : {type:'value', min:0, max:100, name:'热度分', nameTextStyle:{fontSize:10}, axisLabel:{fontSize:10}},
+    series: series,
+  }, true);
+  tkChart.off('click');
+  tkChart.on('click', p=>{
+    const hit = picks.find(b=>b.board_name===p.seriesName);
+    if(hit) openDetail(hit.board_code);
+  });
+}
+
+function renderTrackTable(){
+  const body = document.getElementById('tkBody');
+  document.getElementById('tkCount').textContent =
+    TK && TK.boards.length ? `（窗口内曾进 TOP${TK.top_k} 的 ${TK.boards.length} 个板块）` : '';
+  if(!TK || !TK.boards.length){ body.innerHTML='<tr><td colspan="11" class="empty">暂无数据</td></tr>'; return; }
+  body.innerHTML = TK.boards.map(b=>{
+    const [txt,fg,bg] = LAB_COLOR[b.label] || LAB_COLOR.intermittent;
+    const chgc = (b.chg_now==null)?'#9ca3af':(b.chg_now>0?'#dc2626':(b.chg_now<0?'#16a34a':'#6b7280'));
+    const slc  = (b.slope5==null)?'#9ca3af':(b.slope5>0?'#dc2626':'#16a34a');
+    return `<tr onclick="openDetail('${b.board_code}')" style="cursor:pointer;">
+      <td>${b.board_name||b.board_code}</td>
+      <td style="text-align:left;"><span class="tk-lab" style="background:${bg};color:${fg};">${txt}</span></td>
+      <td style="color:${scoreColor(b.heat_now)};font-weight:700;">${fmt(b.heat_now)}</td>
+      <td>${b.rank_now==null?'—':'#'+b.rank_now}</td>
+      <td style="color:${chgc}">${b.chg_now==null?'—':(b.chg_now>0?'+':'')+fmt(b.chg_now,2)+'%'}</td>
+      <td style="font-weight:${b.cur_streak>=5?'700':'400'}">${b.cur_streak}</td>
+      <td>${b.max_streak}</td>
+      <td>${b.days_in_top}<span style="color:#9ca3af">/${b.in_top_ratio}%</span></td>
+      <td style="color:${slc}">${b.slope5==null?'—':(b.slope5>0?'+':'')+fmt(b.slope5)}</td>
+      <td style="color:#9ca3af">${b.drawdown==null?'—':'-'+fmt(b.drawdown)}</td>
+      <td><a href="/board_data/members?code=${b.board_code}" target="_blank" onclick="event.stopPropagation()" style="color:#2563eb;font-size:.75rem;">成分</a></td>
+    </tr>`;
+  }).join('');
+}
+window.addEventListener('resize', ()=>{ if(tkChart) tkChart.resize(); if(tkDetail) tkDetail.resize(); });
+
 // 按路由参数只加载当前面板的数据
-if(ACTIVE_TAB === 'concept'){ loadConcepts(); } else { loadTrend(); }
+if(ACTIVE_TAB === 'concept'){ loadConcepts(); }
+else if(ACTIVE_TAB === 'track'){ loadTrack(); }
+else { loadTrend(); }
 </script>
 {% endblock %}
