@@ -154,20 +154,6 @@
       <div id="ampEstimatePanel" style="flex:1;min-width:300px;border-left:1px dashed #e5e7eb;padding-left:1rem;"></div>
     </div>
 
-    <!-- 周期预估：把上面两个面板的结果存成交易计划的前一步 -->
-    <div style="border-top:1px dashed #e5e7eb;margin-top:.9rem;padding-top:.8rem;">
-      <div style="display:flex;align-items:center;gap:.6rem;flex-wrap:wrap;">
-        <b style="font-size:.92rem;color:#4f46e5;">💾 我的预估</b>
-        <span id="fcHint" style="color:#9ca3af;font-size:.78rem;">存下当前 P 的<b>价格振幅</b>与<b>周期长度</b>，K线上会画出这条预估路径</span>
-        <label style="color:#6b7280;font-size:.76rem;cursor:pointer;white-space:nowrap;" title="默认只画还在跟踪的预估">
-          <input type="checkbox" onchange="toggleClosedForecasts(this)" style="vertical-align:-1px;"> 画已结案的</label>
-        <span style="flex:1"></span>
-        <input id="fcNote" placeholder="备注（为什么这么预估）" style="flex:1;min-width:180px;max-width:340px;padding:.25rem .5rem;border:1px solid #d1d5db;border-radius:5px;font-size:.8rem;">
-        <button onclick="saveForecast()" id="fcSaveBtn"
-                style="padding:.3rem .9rem;border:none;border-radius:5px;background:#4f46e5;color:#fff;font-size:.82rem;cursor:pointer;">保存预估</button>
-      </div>
-      <div id="fcList" style="margin-top:.6rem;"></div>
-    </div>
   </div>
 
   <div class="card" style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:1.25rem;margin-bottom:1rem;">
@@ -192,6 +178,22 @@
       </div>
       <div id="cycleEstimatePanel" style="flex:1;min-width:300px;border-left:1px dashed #e5e7eb;padding-left:1rem;"></div>
     </div>
+  </div>
+
+  <!-- 我的预估：独立成卡片放最后。保存要同时用到「幅度P→目标价」和「长度P→结束时间」，
+       所以必须排在这两个预估面板之后 —— 夹在中间就成了"参数没看全就让你存"。 -->
+  <div class="card" style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:1.25rem;margin-bottom:1rem;">
+    <div style="display:flex;align-items:center;gap:.6rem;flex-wrap:wrap;">
+      <h2 style="margin:0;font-size:1.125rem;color:#4f46e5;">💾 我的预估</h2>
+      <span id="fcHint" style="color:#9ca3af;font-size:.78rem;">存下当前 P 的<b>价格振幅</b>与<b>周期长度</b>，K线上会画出这条预估路径</span>
+      <label style="color:#6b7280;font-size:.76rem;cursor:pointer;white-space:nowrap;" title="默认只画还在跟踪的预估">
+        <input type="checkbox" onchange="toggleClosedForecasts(this)" style="vertical-align:-1px;"> 画已结案的</label>
+      <span style="flex:1"></span>
+      <input id="fcNote" placeholder="备注（为什么这么预估）" style="flex:1;min-width:180px;max-width:340px;padding:.25rem .5rem;border:1px solid #d1d5db;border-radius:5px;font-size:.8rem;">
+      <button onclick="saveForecast()" id="fcSaveBtn"
+              style="padding:.35rem 1.1rem;border:none;border-radius:5px;background:#4f46e5;color:#fff;font-size:.85rem;cursor:pointer;">保存预估</button>
+    </div>
+    <div id="fcList" style="margin-top:.7rem;"></div>
   </div>
 
   {% endif %}
@@ -847,7 +849,7 @@ function buildForecastTraces(data, x) {
     const c = FC_LINE_COLOR[f.status] || '#4f46e5';
     const closed = !FC_OPEN_STATUS.includes(f.status);
     const dirTxt = f.direction === 'down' ? '底' : '顶';
-    const tip = `预估#${f.id} ${f.status_label}<br>`
+    const tip = `预估#${f.id} ${f.status_label}${f.signal_name ? '　'+f.signal_name : ''}<br>`
               + `段起 ${(f.seg_start_at||'').slice(5,16)} @ ${ySeg}<br>`
               + `目标 ${yEnd}　振幅 ${f.proj_amp_pct}%（整段）<br>`
               + `长度 ${f.proj_len_bars} 根，预估结束 ${(f.proj_end_at||'—').slice(5,16)}<br>`
@@ -857,7 +859,7 @@ function buildForecastTraces(data, x) {
     if (xSeg && ySeg != null) {
       traces.push({
         type:'scatter', mode:'lines', x:[xSeg, xEnd], y:[ySeg, yEnd],
-        name:`预估#${f.id} ${dirTxt}${yEnd}`, xaxis:'x', yaxis:'y',
+        name:`${f.signal_name || ('预估#'+f.id)} → ${dirTxt}${yEnd}`, xaxis:'x', yaxis:'y',
         showlegend: !closed,
         line:{color:c, width: closed ? 1 : 2, dash:'dash'},
         opacity: closed ? 0.4 : 0.95,
@@ -1318,6 +1320,9 @@ function collectForecast(){
   }
   return {
     direction: pt.down ? 'down' : 'up',
+    // 趋势名（↓跌#260818-1000）同段内稳定、趋势一翻就换名，存下来才认得出
+    // 这条预估当时管的是哪一波；段结束后回看"预估准不准"全靠它对号入座
+    signal_name: t.signal_name || null,
     seg_start_at: t.started_at,
     seg_start_price: fcNum(pt.start),
     price_at: fcNum(t.last_price != null ? t.last_price : LATEST_LIVE_CLOSE),
@@ -1348,7 +1353,10 @@ async function saveForecast(){
     const ap = r.data.already_passed;
     if (ap) alert('已保存，但请注意：\n' + ap.hint + '\n（' + ap.at + '）');
     const n = document.getElementById('fcNote'); if (n) n.value = '';
-    loadForecasts();
+    await loadForecasts();
+    // 预估点画在最上面的 K 线里，存完滚回去看一眼（这块在页面底部，不滚就看不到）
+    const k = document.getElementById('kChart15m');
+    if (k) k.scrollIntoView({behavior:'smooth', block:'center'});
   }catch(e){ alert('保存失败：' + e.message); }
   finally{ btn.disabled = false; btn.textContent = txt; }
 }
@@ -1367,6 +1375,7 @@ async function loadForecasts(){
     box.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:.78rem;">
       <thead><tr style="color:#6b7280;">
         <th style="text-align:left;padding:.2rem .35rem;">保存时间</th>
+        <th style="text-align:left;" title="下预估时的趋势段名，趋势一翻就换名">趋势</th>
         <th style="text-align:right;">目标价</th><th style="text-align:right;">距现价</th>
         <th style="text-align:right;" title="预估的整段价格振幅">振幅%</th>
         <th style="text-align:right;" title="预估的整段周期长度(15m根数)">长度</th>
@@ -1383,12 +1392,18 @@ async function loadForecasts(){
       const rev = (f.actual_amp_pct != null)
         ? `实际 ${f.actual_amp_pct}% / ${f.actual_len_bars}根　误差 ${f.amp_err_pct>0?'+':''}${f.amp_err_pct}% / ${f.len_err_bars>0?'+':''}${f.len_err_bars}根`
         : (f.reviewed_at ? '—' : '<span style="color:#9ca3af;">段未结束</span>');
-      const act = ['pending','reached','expired'].includes(f.status)
-        ? `<a onclick="convertForecast(${f.id})" style="color:#15803d;cursor:pointer;">转计划</a>
-           · <a onclick="cancelForecast(${f.id})" style="color:#9ca3af;cursor:pointer;">作废</a>`
-        : (f.plan_id ? `<span style="color:#9ca3af;">${f.plan_id}</span>` : '');
+      const live = ['pending','reached','expired'].includes(f.status);
+      const act = (live
+          ? `<a onclick="convertForecast(${f.id})" style="color:#15803d;cursor:pointer;">转计划</a>
+             · <a onclick="cancelForecast(${f.id})" style="color:#9ca3af;cursor:pointer;" title="只改状态，记录保留为校准样本">作废</a> · `
+          : (f.plan_id ? `<span style="color:#9ca3af;" title="已转成的交易计划">${f.plan_id}</span> · ` : ''))
+        + `<a onclick="deleteForecast(${f.id})" style="color:#dc2626;cursor:pointer;" title="彻底删除，不可恢复">删除</a>`;
       return `<tr style="border-top:1px solid #f3f4f6;">
         <td style="padding:.25rem .35rem;font-family:monospace;">${(f.forecast_at||'').slice(5,16)}</td>
+        <td style="font-family:monospace;color:${f.direction==='down'?'#15803d':'#b91c1c'};"
+            title="趋势名与当前是否一致，决定这条预估还成不成立">${f.signal_name||'—'}${
+              (CURRENT_TREND && f.signal_name && CURRENT_TREND.signal_name === f.signal_name)
+              ? '<span style="color:#4f46e5;" title="仍是当前这一波"> ●</span>' : ''}</td>
         <td style="text-align:right;font-family:monospace;font-weight:700;color:${f.direction==='down'?'#15803d':'#b91c1c'};">${f.target_price}</td>
         <td style="text-align:right;">${gap}</td>
         <td style="text-align:right;font-family:monospace;">${f.proj_amp_pct==null?'—':f.proj_amp_pct+'%'}</td>
@@ -1411,6 +1426,25 @@ async function convertForecast(id){
     body: JSON.stringify({quantity: parseInt(qty)||100})}).then(x=>x.json());
   if (!r.success) { alert('失败：' + (r.message||'')); return; }
   alert(`已生成交易计划 ${r.data.plan_id}\n计划买入价 ${r.data.entry_price}`);
+  loadForecasts();
+}
+
+async function deleteForecast(id){
+  const f = (FORECASTS || []).find(x => x.id === id) || {};
+  // 确认文案用数组 join 拼，不写转义换行——之前写成 '\n' 被工具再转义一次，
+  // 落盘成真换行把 JS 字符串截断，整段脚本 SyntaxError，全页 fetch 都不执行。
+  const lines = [
+    `彻底删除预估 #${id}${f.signal_name ? '（' + f.signal_name + '）' : ''}？`,
+    `目标价 ${f.target_price}　不可恢复。`,
+  ];
+  // 已复盘的是校准分位 P 的样本，删了就没了
+  if (f.reviewed_at) lines.push('⚠ 这条已完成复盘（实际振幅/长度已回填），是校准分位 P 的样本。');
+  // 交易计划是独立的东西，可能正在执行，不跟着删
+  if (f.plan_id) lines.push(`注：已转成的交易计划 ${f.plan_id} 不会被删除。`);
+  lines.push('', '若只是不想再跟踪，用「作废」更合适——记录会保留。');
+  if (!confirm(lines.join('\n'))) return;
+  const r = await fetch(`/stock/api/forecast/${id}`, {method:'DELETE'}).then(x=>x.json());
+  if (!r.success) { alert('删除失败：' + (r.message||'')); return; }
   loadForecasts();
 }
 

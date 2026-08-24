@@ -62,6 +62,9 @@ class CycleForecast(db.Model):
     stock_name = db.Column(db.String(50), comment='股票名称')
     timeframe = db.Column(db.String(10), default='15m', comment='周期，目前只有 15m')
     direction = db.Column(db.String(10), nullable=False, comment='段方向 up/down')
+    signal_name = db.Column(db.String(40),
+                            comment='下预估时该段的趋势名，如 ↓跌#260818-1000（方向+段起点，'
+                                    '同段内稳定、趋势一翻就换名），用来一眼认出这条预估管的是哪一波')
 
     # —— 段标识（预估绑定的那一段）——
     seg_start_at = db.Column(db.DateTime, nullable=False,
@@ -113,12 +116,34 @@ class CycleForecast(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+    # 表已存在时靠这里补列（项目没有迁移工具）
+    _ADD_COLUMNS = {
+        'signal_name': 'VARCHAR(40) NULL COMMENT "下预估时的趋势名 如 ↓跌#260818-1000"',
+    }
+
     @classmethod
     def ensure_table(cls):
-        """惰性建表（项目不做全局 create_all）。"""
+        """惰性建表 + 缺列自动补齐（项目不做全局 create_all，也没有迁移工具）。"""
+        import logging
+        logger = logging.getLogger(__name__)
         eng = db.engines['quanttradingsystem']
-        if not db.inspect(eng).has_table(cls.__tablename__):
+        insp = db.inspect(eng)
+        if not insp.has_table(cls.__tablename__):
             cls.__table__.create(bind=eng)
+            return
+        have = {c['name'] for c in insp.get_columns(cls.__tablename__)}
+        missing = [(k, v) for k, v in cls._ADD_COLUMNS.items() if k not in have]
+        if not missing:
+            return
+        from sqlalchemy import text
+        with eng.begin() as conn:
+            for name, ddl in missing:
+                try:
+                    conn.execute(text(
+                        f'ALTER TABLE {cls.__tablename__} ADD COLUMN {name} {ddl}'))
+                    logger.info(f'[forecast] 补列 {name}')
+                except Exception as e:
+                    logger.warning(f'[forecast] 补列 {name} 失败: {e}')
 
     def to_dict(self):
         def _dt(v):
@@ -127,6 +152,7 @@ class CycleForecast(db.Model):
             'id': self.id,
             'stock_code': self.stock_code, 'stock_name': self.stock_name,
             'timeframe': self.timeframe, 'direction': self.direction,
+            'signal_name': self.signal_name,
             'seg_start_at': _dt(self.seg_start_at), 'seg_start_price': self.seg_start_price,
             'forecast_at': _dt(self.forecast_at), 'price_at': self.price_at,
             'bars_at': self.bars_at, 'amp_walked_pct': self.amp_walked_pct,

@@ -1100,6 +1100,20 @@ def api_forecast_cancel(fc_id):
         return jsonify({'success': False, 'message': str(e)}), 500
 
 
+@stock_detail_bp.route('/api/forecast/<int:fc_id>', methods=['DELETE'])
+def api_forecast_delete(fc_id):
+    """彻底删除一条预估（与「作废」不同：作废留样本，删除是真没了）。"""
+    from App.services.cycle_forecast_service import delete
+    try:
+        return jsonify({'success': True, 'data': delete(fc_id)})
+    except ValueError as e:
+        return jsonify({'success': False, 'message': str(e)}), 404
+    except Exception as e:
+        db.session.rollback()
+        logger.exception(f'预估 {fc_id} 删除失败')
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
 @stock_detail_bp.route('/api/<code>/trades', methods=['GET'])
 def api_trades(code):
     """该股票的历史买入/卖出成交记录，用于在 15m K 线上标注。

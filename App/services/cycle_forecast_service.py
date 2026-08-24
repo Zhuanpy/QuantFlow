@@ -172,6 +172,7 @@ def create(payload: dict) -> dict:
         stock_name=(payload.get('stock_name') or '').strip() or None,
         timeframe=(payload.get('timeframe') or '15m'),
         direction=direction,
+        signal_name=(payload.get('signal_name') or None),
         seg_start_at=seg_start,
         seg_start_price=_f(payload.get('seg_start_price')),
         forecast_at=datetime.now(),
@@ -252,8 +253,12 @@ def refresh(fc: CycleForecast, df: pd.DataFrame = None, live_price=None) -> bool
                 fc.updated_at = datetime.utcnow()
                 return True
         fc.status = ST_INVALIDATED
-        fc.status_note = ('段已结束/翻转，全程未触达目标'
-                          if seg else '找不到该段（15m 数据变动）')
+        # 找不到段有一种合理情形：该段收盘后净振幅不足 1%，被弱段合并吸收进了前一段，
+        # 它的 SignalStartIndex 就此消失（见 MacdSignalV2._merge_weak_segments）。
+        seg_label = fc.signal_name or (fc.seg_start_at.strftime('%m-%d %H:%M')
+                                       if fc.seg_start_at else '?')
+        fc.status_note = ('段已结束/翻转，全程未触达目标' if seg else
+                          f'找不到该段（{seg_label}），可能是弱段被合并或 15m 数据重算')
         fc.updated_at = datetime.utcnow()
         return True
 
@@ -393,6 +398,25 @@ def convert_to_plan(fc_id: int, quantity: int = 100, trade_mode: str = 'simulate
     db.session.commit()
     logger.info(f'[forecast] {fc.stock_code} 预估 {fc.id} → 交易计划 {plan_id}')
     return {'plan_id': plan_id, 'entry_price': float(fc.target_price)}
+
+
+def delete(fc_id: int) -> dict:
+    """彻底删除一条预估。
+
+    与 cancel 的区别：cancel 只改状态、记录留着（仍是校准 P 表的样本），
+    delete 是真删。所以只在"这条纯属误操作/没意义"时用，别拿它清理正常的历史。
+    已转成的 TradePlan 不动 —— 那是独立的交易计划，可能正在执行中。
+    """
+    fc = CycleForecast.query.get(fc_id)
+    if not fc:
+        raise ValueError(f'预估 {fc_id} 不存在')
+    info = {'id': fc.id, 'stock_code': fc.stock_code, 'signal_name': fc.signal_name,
+            'target_price': fc.target_price, 'status': fc.status,
+            'plan_id': fc.plan_id, 'reviewed': bool(fc.reviewed_at)}
+    db.session.delete(fc)
+    db.session.commit()
+    logger.info(f'[forecast] 删除预估 {info}')
+    return info
 
 
 def cancel(fc_id: int, reason: str = None) -> dict:
