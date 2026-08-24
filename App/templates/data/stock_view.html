@@ -881,6 +881,19 @@ async function load15m() {
 
   const x = data.map(r => r.date);
   const sname = data.map(r => r.signal_name || '—');
+  // 悬浮框要显示的每根涨跌幅（相对前一根收盘）
+  const chgPct = data.map((r, i) => {
+    const pc = i > 0 ? data[i - 1].close : null;
+    return (pc && r.close != null) ? (r.close - pc) / pc * 100 : null;
+  });
+  // 悬浮框里 K 线那一行的附加文案。
+  // 注意：Plotly 的 candlestick **不支持 hovertemplate**（少数几个不支持的 trace 之一），
+  // 只能走 text/hovertext 通道，所以把涨跌幅和波段名拼成字符串塞进去。
+  const kText = data.map((r, i) => {
+    const c = chgPct[i];
+    const cs = (c == null) ? '—' : (c > 0 ? '+' : '') + c.toFixed(2) + '%';
+    return `${sname[i]}　涨跌 ${cs}`;
+  });
 
   // 用 SignalStartIndex 区段在价格区(yaxis 域 0.48~1.0)铺涨跌底色
   const shapes = segs.map(s => ({
@@ -970,7 +983,7 @@ async function load15m() {
   Plotly.newPlot('kChart15m', [
     {type:'candlestick', x, open:data.map(r=>r.open), close:data.map(r=>r.close),
      high:data.map(r=>r.high), low:data.map(r=>r.low), name:'K线', xaxis:'x', yaxis:'y',
-     text:sname, hovertext:sname, showlegend:false,
+     text:kText, hovertext:kText, showlegend:false,
      increasing:{line:{color:'#dc2626'}}, decreasing:{line:{color:'#16a34a'}}},
     // 均线：MA12 / MA20 / MA30，叠在 K 线之上
     {type:'scatter', mode:'lines', x, y:emaShort, name:'MA12', xaxis:'x', yaxis:'y',
@@ -982,7 +995,8 @@ async function load15m() {
     {type:'scatter', mode:'lines', x, y:emaLong, name:'MA30', xaxis:'x', yaxis:'y',
      line:{color:'#475569', width:1.1}, connectgaps:false,
      hovertemplate:'MA30 %{y:.2f}<extra></extra>'},
-    {type:'bar', x, y:data.map(r=>r.volume), name:'量', xaxis:'x', yaxis:'y2', marker:{color:'#94a3b8'}, showlegend:false},
+    {type:'bar', x, y:data.map(r=>r.volume), name:'量', xaxis:'x', yaxis:'y2', marker:{color:'#94a3b8'},
+     showlegend:false, hovertemplate:'%{y:,.0f}<extra>成交量</extra>'},
     // MACD 子图：柱(MACD) + 线(DIF/DEA)
     {type:'bar', x, y:macd, name:'MACD', xaxis:'x', yaxis:'y3',
      marker:{color:macdColors}, showlegend:false,
@@ -996,9 +1010,15 @@ async function load15m() {
     ...tradeTraces
   ], {
     margin:{t:10,r:30,l:60,b:18},
+    // 鼠标在该列任意高度都弹同一个框，框头就是这根K线的完整时间
+    hovermode:'x unified',
+    hoverlabel:{bgcolor:'rgba(255,255,255,0.96)', bordercolor:'#d1d5db',
+                font:{size:11, color:'#111827'}, align:'left'},
     xaxis:{
       rangeslider:{visible:false},   // 去掉底部时间条：它会把K线/量/MACD缩小重画一遍，造成重复观感；缩放用鼠标在主图拖框
       type:'category', tickangle:-45, nticks:12, tickfont:{size:10},
+      showspikes:true, spikemode:'across', spikesnap:'cursor',
+      spikethickness:1, spikedash:'dot', spikecolor:'#94a3b8',
     },
     yaxis:{domain:[0.48,1.0], title:'价格', rangemode:'normal',
            ...(yRange ? {range: yRange, autorange: false} : {autorange: true})},

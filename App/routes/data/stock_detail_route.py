@@ -1014,6 +1014,92 @@ def api_set_sl_tp(code):
     }})
 
 
+# ===================== 周期预估（trading plan 的前一步）=====================
+# 面板算出来的"预估幅度/目标价"和"预估周期/结束时间"原本刷新即丢；这里把它连同
+# 分位 P、拟合均值σ、段起点价一起存下来，既能当交易计划挂着等触达，也是日后校准
+# 「多周期自动定 P」那张硬编码表的样本。口径见 models/evaluation/CycleForecast.py。
+
+@stock_detail_bp.route('/api/<code>/forecast', methods=['POST'])
+def api_forecast_create(code):
+    """保存一条周期预估。body 见 cycle_forecast_service.create 的字段。"""
+    from App.services.cycle_forecast_service import create
+    body = request.get_json(silent=True) or {}
+    body['stock_code'] = code
+    if not body.get('stock_name'):
+        info = StockInfo.find_stock(code)
+        body['stock_name'] = info.name if info else code
+    try:
+        return jsonify({'success': True, 'data': create(body)})
+    except ValueError as e:
+        return jsonify({'success': False, 'message': str(e)}), 400
+    except Exception as e:
+        db.session.rollback()
+        logger.exception(f'{code} 保存周期预估失败')
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@stock_detail_bp.route('/api/<code>/forecasts', methods=['GET'])
+def api_forecast_list(code):
+    """该股票的预估列表（顺带刷新状态、回填已结束段的复盘）+ 当前段信息。"""
+    from App.services.cycle_forecast_service import list_for_stock, current_segment
+    try:
+        limit = max(1, min(100, int(request.args.get('limit', 20))))
+    except (TypeError, ValueError):
+        limit = 20
+    try:
+        seg = current_segment(code)
+        if seg:
+            for k in ('seg_start_at', 'extreme_at', 'last_bar_at'):
+                if seg.get(k):
+                    seg[k] = seg[k].strftime('%Y-%m-%d %H:%M:%S')
+        return jsonify({'success': True, 'data': {
+            'current_segment': seg,
+            'forecasts': list_for_stock(code, limit=limit),
+        }})
+    except Exception as e:
+        db.session.rollback()
+        logger.exception(f'{code} 读取周期预估失败')
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@stock_detail_bp.route('/api/forecast/<int:fc_id>/convert', methods=['POST'])
+def api_forecast_convert(fc_id):
+    """把预估转成 TradePlan（目标价即计划买入价）。"""
+    from App.services.cycle_forecast_service import convert_to_plan
+    body = request.get_json(silent=True) or {}
+    try:
+        qty = int(body.get('quantity') or 100)
+    except (TypeError, ValueError):
+        qty = 100
+    try:
+        data = convert_to_plan(fc_id, quantity=qty,
+                               trade_mode=(body.get('trade_mode') or 'simulate'),
+                               stop_loss_price=body.get('stop_loss_price'),
+                               note=body.get('note'))
+        return jsonify({'success': True, 'data': data})
+    except ValueError as e:
+        return jsonify({'success': False, 'message': str(e)}), 404
+    except Exception as e:
+        db.session.rollback()
+        logger.exception(f'预估 {fc_id} 转交易计划失败')
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@stock_detail_bp.route('/api/forecast/<int:fc_id>/cancel', methods=['POST'])
+def api_forecast_cancel(fc_id):
+    """手工作废一条预估（不删，保留为校准样本）。"""
+    from App.services.cycle_forecast_service import cancel
+    body = request.get_json(silent=True) or {}
+    try:
+        return jsonify({'success': True, 'data': cancel(fc_id, body.get('reason'))})
+    except ValueError as e:
+        return jsonify({'success': False, 'message': str(e)}), 404
+    except Exception as e:
+        db.session.rollback()
+        logger.exception(f'预估 {fc_id} 作废失败')
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
 @stock_detail_bp.route('/api/<code>/trades', methods=['GET'])
 def api_trades(code):
     """该股票的历史买入/卖出成交记录，用于在 15m K 线上标注。

@@ -153,6 +153,21 @@
       </div>
       <div id="ampEstimatePanel" style="flex:1;min-width:300px;border-left:1px dashed #e5e7eb;padding-left:1rem;"></div>
     </div>
+
+    <!-- 周期预估：把上面两个面板的结果存成交易计划的前一步 -->
+    <div style="border-top:1px dashed #e5e7eb;margin-top:.9rem;padding-top:.8rem;">
+      <div style="display:flex;align-items:center;gap:.6rem;flex-wrap:wrap;">
+        <b style="font-size:.92rem;color:#4f46e5;">💾 我的预估</b>
+        <span id="fcHint" style="color:#9ca3af;font-size:.78rem;">存下当前 P 的<b>价格振幅</b>与<b>周期长度</b>，K线上会画出这条预估路径</span>
+        <label style="color:#6b7280;font-size:.76rem;cursor:pointer;white-space:nowrap;" title="默认只画还在跟踪的预估">
+          <input type="checkbox" onchange="toggleClosedForecasts(this)" style="vertical-align:-1px;"> 画已结案的</label>
+        <span style="flex:1"></span>
+        <input id="fcNote" placeholder="备注（为什么这么预估）" style="flex:1;min-width:180px;max-width:340px;padding:.25rem .5rem;border:1px solid #d1d5db;border-radius:5px;font-size:.8rem;">
+        <button onclick="saveForecast()" id="fcSaveBtn"
+                style="padding:.3rem .9rem;border:none;border-radius:5px;background:#4f46e5;color:#fff;font-size:.82rem;cursor:pointer;">保存预估</button>
+      </div>
+      <div id="fcList" style="margin-top:.6rem;"></div>
+    </div>
   </div>
 
   <div class="card" style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:1.25rem;margin-bottom:1rem;">
@@ -663,6 +678,19 @@ function drawKline() {
   const { data, segs, j, x, tradeTraces, tradeShapes } = KLINE;
   let yRange = KLINE.yRange ? KLINE.yRange.slice() : null;
   const sname = data.map(r => r.signal_name || '—');
+  // 悬浮框要显示的每根涨跌幅（相对前一根收盘）
+  const chgPct = data.map((r, i) => {
+    const pc = i > 0 ? data[i - 1].close : null;
+    return (pc && r.close != null) ? (r.close - pc) / pc * 100 : null;
+  });
+  // 悬浮框里 K 线那一行的附加文案。
+  // 注意：Plotly 的 candlestick **不支持 hovertemplate**（少数几个不支持的 trace 之一），
+  // 只能走 text/hovertext 通道，所以把涨跌幅和波段名拼成字符串塞进去。
+  const kText = data.map((r, i) => {
+    const c = chgPct[i];
+    const cs = (c == null) ? '—' : (c > 0 ? '+' : '') + c.toFixed(2) + '%';
+    return `${sname[i]}　涨跌 ${cs}`;
+  });
 
   // 波段背景色块
   const shapes = segs.map(s => ({
@@ -696,10 +724,17 @@ function drawKline() {
     if (yRange) yRange = [Math.min(yRange[0], proj.yLo), Math.max(yRange[1], proj.yHi)];
   }
 
+  // 已保存的预估点：起点→目标的连线，横向跨度=预估周期长度，纵向跨度=预估价格振幅
+  const fcp = buildForecastTraces(data, x);
+  if (fcp) {
+    if (yRange) yRange = [Math.min(yRange[0], fcp.yLo), Math.max(yRange[1], fcp.yHi)];
+    shapes.push(...(fcp.shapes || []));
+  }
+
   Plotly.newPlot('kChart15m', [
     {type:'candlestick', x, open:data.map(r=>r.open), close:data.map(r=>r.close),
      high:data.map(r=>r.high), low:data.map(r=>r.low), name:'K线', xaxis:'x', yaxis:'y',
-     text:sname, hovertext:sname, showlegend:false,
+     text:kText, hovertext:kText, showlegend:false,
      increasing:{line:{color:'#dc2626'}}, decreasing:{line:{color:'#16a34a'}}},
     {type:'scatter', mode:'lines', x, y:emaShort, name:'MA12', xaxis:'x', yaxis:'y',
      line:{color:'#9333ea', width:1.1}, connectgaps:false, hovertemplate:'MA12 %{y:.2f}<extra></extra>'},
@@ -707,15 +742,24 @@ function drawKline() {
      line:{color:'#0891b2', width:1.1}, connectgaps:false, hovertemplate:'MA20 %{y:.2f}<extra></extra>'},
     {type:'scatter', mode:'lines', x, y:emaLong, name:'MA30', xaxis:'x', yaxis:'y',
      line:{color:'#475569', width:1.1}, connectgaps:false, hovertemplate:'MA30 %{y:.2f}<extra></extra>'},
-    {type:'bar', x, y:data.map(r=>r.volume), name:'量', xaxis:'x', yaxis:'y2', marker:{color:'#94a3b8'}, showlegend:false},
+    {type:'bar', x, y:data.map(r=>r.volume), name:'量', xaxis:'x', yaxis:'y2', marker:{color:'#94a3b8'},
+     showlegend:false, hovertemplate:'%{y:,.0f}<extra>成交量</extra>'},
     {type:'bar', x, y:macd, name:'MACD', xaxis:'x', yaxis:'y3', marker:{color:macdColors}, showlegend:false, hovertemplate:'MACD %{y:.3f}<extra></extra>'},
     {type:'scatter', mode:'lines', x, y:dif, name:'DIF', xaxis:'x', yaxis:'y3', line:{color:'#2563eb', width:1.2}, connectgaps:false, hovertemplate:'DIF %{y:.3f}<extra></extra>'},
     {type:'scatter', mode:'lines', x, y:dea, name:'DEA', xaxis:'x', yaxis:'y3', line:{color:'#f59e0b', width:1.2}, connectgaps:false, hovertemplate:'DEA %{y:.3f}<extra></extra>'},
     ...tradeTraces,
-    ...projTraces
+    ...projTraces,
+    ...(fcp ? fcp.traces : [])
   ], {
     margin:{t:10,r:30,l:60,b:18},
-    xaxis:{rangeslider:{visible:true, thickness:0.03, bgcolor:'#fff7ed', bordercolor:'#fed7aa', borderwidth:1}, type:'category', tickangle:-45, tickvals:_tickvals, ticktext:_ticktext, tickfont:{size:10}},
+    // 鼠标在该列任意高度都弹同一个框，框头就是这根K线的完整时间
+    hovermode:'x unified',
+    hoverlabel:{bgcolor:'rgba(255,255,255,0.96)', bordercolor:'#d1d5db',
+                font:{size:11, color:'#111827'}, align:'left'},
+    xaxis:{rangeslider:{visible:true, thickness:0.03, bgcolor:'#fff7ed', bordercolor:'#fed7aa', borderwidth:1},
+           type:'category', tickangle:-45, tickvals:_tickvals, ticktext:_ticktext, tickfont:{size:10},
+           showspikes:true, spikemode:'across', spikesnap:'cursor',
+           spikethickness:1, spikedash:'dot', spikecolor:'#94a3b8'},
     yaxis:{domain:[0.48,1.0], title:'价格', ...(yRange?{range:yRange,autorange:false}:{autorange:true})},
     yaxis2:{domain:[0.30,0.46], title:'量'},
     yaxis3:{domain:[0.0,0.28], title:'MACD', zeroline:true, zerolinecolor:'#9ca3af', zerolinewidth:1},
@@ -741,6 +785,144 @@ function _seededRand(seed) {
 // 预估虚拟 K 线：从最后一根真实 K 线，按"预估剩余根数"沿交易时段延伸，
 // 用「布朗桥」随机游走生成 OHLC（末根收在预估目标价），淡灰色与真实红绿区分。
 // 振幅分位决定目标价、长度分位决定延伸多少根；两个滑块任一变动都会重画。
+// ===== 把已保存的预估画到 15m K 线上 =====
+// 每条预估画成一条「起点 → 目标」的虚线：
+//   横向跨度 = 预估周期长度（保存时点 → 预估结束时间）
+//   纵向跨度 = 预估价格振幅（保存时现价 → 预估目标价）
+// 这样"价格振幅"和"周期长度"两个预估量在图上是同一条线的两个方向，一眼可读。
+const FC_LINE_COLOR = {
+  pending:'#4f46e5', reached:'#b91c1c', expired:'#ea580c',
+  converted:'#15803d', invalidated:'#9ca3af', superseded:'#d1d5db', cancelled:'#d1d5db',
+};
+// 默认只画还在跟踪的；已结案的要看就点图例上方的开关
+const FC_OPEN_STATUS = ['pending','reached','expired','converted'];
+
+// 把一个时间戳映射到 K 线的类别值：
+//   落在已有 bar 上 → 用该 bar 的类别（'YYYY-MM-DD HH:MM:SS'）
+//   在最后一根之后  → 按交易时段前推，生成与 buildProjection 完全一致的未来类别
+//     （格式必须一致，否则 Plotly 会把它当成新类别甩到最右端，位置就错了）
+// allowFuture=false 时钳在最后一根真实 bar 上 —— 收盘后（比如 19:24）保存的预估，
+// 它的"保存时刻"晚于当日最后一根 15:00，绝不能被推到明天第一根去。
+function fcXCat(dtStr, data, x, allowFuture) {
+  if (!dtStr || !data.length) return null;
+  const t = new Date(String(dtStr).replace(/-/g, '/').replace('T', ' '));
+  if (isNaN(t)) return null;
+  const lastDate = data[data.length - 1].date;
+  const lastT = new Date(String(lastDate).replace(/-/g, '/'));
+  if (t <= lastT) {
+    // 取 <= t 的最后一根真实 bar
+    for (let i = data.length - 1; i >= 0; i--) {
+      const bt = new Date(String(data[i].date).replace(/-/g, '/'));
+      if (bt <= t) return x[i];
+    }
+    return x[0];
+  }
+  if (allowFuture === false) return x[x.length - 1];
+  // 未来：逐根前推直到覆盖目标时刻（上限 400 根，防呆）
+  for (let k = 1; k <= 400; k++) {
+    const d = addTradingBars(lastDate, k);
+    if (!d) return null;
+    if (d >= t) return _fmtDT(d);
+  }
+  return null;
+}
+
+function buildForecastTraces(data, x) {
+  if (!FORECASTS || !FORECASTS.length || !data || !data.length) return null;
+  const list = FORECASTS.filter(f => FC_SHOW_CLOSED || FC_OPEN_STATUS.includes(f.status))
+                        .slice(0, 8);          // 最多 8 条，多了图上糊成一片
+  if (!list.length) return null;
+
+  const traces = [], shapes = [];
+  let yLo = Infinity, yHi = -Infinity;
+  list.forEach(f => {
+    // 主线画「段起点 → 目标」而不是「保存时刻 → 目标」：
+    // proj_amp_pct 和 proj_len_bars 都是**整段**口径（振幅从段起点算、长度从段起点数），
+    // 从保存时刻画起的话，线的跨度对不上保存下来的那两个数。
+    const xSeg = fcXCat(f.seg_start_at, data, x, false);
+    const xNow = fcXCat(f.forecast_at, data, x, false);   // 保存时刻钉在已收的最后一根
+    const xEnd = fcXCat(f.proj_end_at, data, x, true);
+    const ySeg = f.seg_start_price, yEnd = f.target_price;
+    if (!xEnd || yEnd == null) return;
+    const c = FC_LINE_COLOR[f.status] || '#4f46e5';
+    const closed = !FC_OPEN_STATUS.includes(f.status);
+    const dirTxt = f.direction === 'down' ? '底' : '顶';
+    const tip = `预估#${f.id} ${f.status_label}<br>`
+              + `段起 ${(f.seg_start_at||'').slice(5,16)} @ ${ySeg}<br>`
+              + `目标 ${yEnd}　振幅 ${f.proj_amp_pct}%（整段）<br>`
+              + `长度 ${f.proj_len_bars} 根，预估结束 ${(f.proj_end_at||'—').slice(5,16)}<br>`
+              + `保存于 ${(f.forecast_at||'').slice(5,16)} @ ${f.price_at}　P 幅${f.amp_p}/长${f.len_p}`;
+
+    // 主线：段起点 → 目标（纵=预估整段振幅，横=预估整段长度）
+    if (xSeg && ySeg != null) {
+      traces.push({
+        type:'scatter', mode:'lines', x:[xSeg, xEnd], y:[ySeg, yEnd],
+        name:`预估#${f.id} ${dirTxt}${yEnd}`, xaxis:'x', yaxis:'y',
+        showlegend: !closed,
+        line:{color:c, width: closed ? 1 : 2, dash:'dash'},
+        opacity: closed ? 0.4 : 0.95,
+        hovertemplate: tip + '<extra></extra>',
+      });
+      // 段起点（方块）
+      traces.push({
+        type:'scatter', mode:'markers', x:[xSeg], y:[ySeg], xaxis:'x', yaxis:'y',
+        showlegend:false, marker:{color:c, size:8, symbol:'square-open',
+                                  line:{color:c, width:2}, opacity: closed?0.4:1},
+        hovertemplate:`段起点 ${ySeg}<br>${(f.seg_start_at||'').slice(5,16)}<extra></extra>`,
+      });
+      yLo = Math.min(yLo, ySeg); yHi = Math.max(yHi, ySeg);
+    }
+    // 我下判断的那一刻
+    if (xNow && f.price_at != null) {
+      traces.push({
+        type:'scatter', mode:'markers', x:[xNow], y:[f.price_at], xaxis:'x', yaxis:'y',
+        showlegend:false, marker:{color:c, size:9, symbol:'circle',
+                                  line:{color:'#fff', width:1.5}, opacity: closed?0.4:1},
+        hovertemplate:`📌 存于 ${(f.forecast_at||'').slice(5,16)} @ ${f.price_at}<extra></extra>`,
+      });
+      yLo = Math.min(yLo, f.price_at); yHi = Math.max(yHi, f.price_at);
+    }
+    // 目标点（带价签）
+    traces.push({
+      type:'scatter', mode:'markers+text', x:[xEnd], y:[yEnd], xaxis:'x', yaxis:'y',
+      showlegend:false, text:[`${dirTxt} ${yEnd}`],
+      textposition: f.direction === 'down' ? 'bottom center' : 'top center',
+      textfont:{color:c, size:11},
+      marker:{color:c, size:11, symbol:'diamond', opacity: closed?0.4:1,
+              line:{color:'#fff', width:1}},
+      hovertemplate: tip + '<extra></extra>',
+    });
+    // 目标价横贯参考线 —— 挂单位一眼可见，不用去线的末端找
+    if (!closed) {
+      shapes.push({
+        type:'line', xref:'paper', yref:'y', x0:0, x1:1, y0:yEnd, y1:yEnd,
+        line:{color:c, width:1, dash:'dot'}, opacity:0.5, layer:'above',
+      });
+    }
+    // 触达点
+    if (f.reached_at && f.reached_price != null) {
+      const xr = fcXCat(f.reached_at, data, x, false);
+      if (xr) {
+        traces.push({
+          type:'scatter', mode:'markers', x:[xr], y:[f.reached_price], xaxis:'x', yaxis:'y',
+          showlegend:false, marker:{color:'#b91c1c', size:13, symbol:'star',
+                                    line:{color:'#fff', width:1}},
+          hovertemplate:`✓ 触达 ${f.reached_price}<br>${(f.reached_at||'').slice(5,16)}<extra></extra>`,
+        });
+        yLo = Math.min(yLo, f.reached_price); yHi = Math.max(yHi, f.reached_price);
+      }
+    }
+    yLo = Math.min(yLo, yEnd); yHi = Math.max(yHi, yEnd);
+  });
+  if (!traces.length) return null;
+  return { traces, shapes, yLo, yHi };
+}
+
+function toggleClosedForecasts(el) {
+  FC_SHOW_CLOSED = !!(el && el.checked);
+  drawKline();
+}
+
 function buildProjection(data) {
   if (!data || !data.length) return null;
   const pt = projAmpTarget();
@@ -913,6 +1095,7 @@ async function loadCycles() {
   renderTradePanels();   // 拟合就绪后刷新"买卖标准"面板（空仓+下跌→建议买入价）
   drawKline();           // 拟合就绪后在 15m 图上补画淡灰预估路径
   applyMtfP();           // 始终按 15/30/60 趋势自动覆盖分位 P（无需勾选）
+  loadForecasts();       // 已保存的周期预估（顺带刷新触达/作废状态）
 }
 
 // 与 renderDist 同口径的正态拟合（已完成周期，取最近 60 个）。样本不足返回 null。
@@ -1032,6 +1215,7 @@ async function applyMtfP() {
   if (st) st.textContent = mtfStateText(MTF_DIRS, pAmp, pLen);
   if (conf == null) return;
   AMP_PCT = pAmp; LEN_PCT = pLen;
+  AMP_P_SRC = 'auto'; LEN_P_SRC = 'auto';   // 保存预估时要记清这个 P 是自动定的还是手调的
   syncPct('ampPctSlider', 'ampPctLabel', pAmp, null);
   syncPct('lenPctSlider', 'lenPctLabel', pLen, null);
   renderEstimateAmp(); renderEstimateLen(); renderTradePanels(); drawKline();
@@ -1080,8 +1264,8 @@ function syncPct(sliderId, inputId, n, src) {
   if (src !== 'slider' && s) s.value = n;
   if (src !== 'input' && i) i.value = n;
 }
-function onAmpPct(v, src) { AMP_PCT = clampPct(v); syncPct('ampPctSlider','ampPctLabel',AMP_PCT,src); renderEstimateAmp(); renderTradePanels(); drawKline(); }
-function onLenPct(v, src) { LEN_PCT = clampPct(v); syncPct('lenPctSlider','lenPctLabel',LEN_PCT,src); renderEstimateLen(); drawKline(); }
+function onAmpPct(v, src) { AMP_PCT = clampPct(v); AMP_P_SRC = 'manual'; syncPct('ampPctSlider','ampPctLabel',AMP_PCT,src); renderEstimateAmp(); renderTradePanels(); drawKline(); }
+function onLenPct(v, src) { LEN_PCT = clampPct(v); LEN_P_SRC = 'manual'; syncPct('lenPctSlider','lenPctLabel',LEN_PCT,src); renderEstimateLen(); drawKline(); }
 
 // 当前方向、所选分位下，整段周期的预估振幅(%) 与目标价（上涨=顶 / 下跌=底）。
 // 振幅预估面板与"空仓建议买入价"共用，保证两处口径一致。
@@ -1102,6 +1286,139 @@ function projAmpTarget() {
   const projAmp = Math.max(0, AMP_FIT.mean + invNorm(AMP_PCT / 100) * AMP_FIT.std);
   const target = down ? start * (1 - projAmp / 100) : start * (1 + projAmp / 100);
   return { down, start, projAmp, target };
+}
+
+// ===================== 周期预估（存下来当交易计划用）=====================
+// 面板算出的目标价与结束时间刷新即丢；存下来既能挂着等触达，也是日后校准
+// 「多周期自动定 P」那张硬编码表的样本。后端见 services/cycle_forecast_service.py。
+let AMP_P_SRC = 'auto', LEN_P_SRC = 'auto';   // 当前 P 是「多周期自动定」还是手调的
+let FORECASTS = [];        // 已保存的预估，K 线上要画出来
+let FC_SHOW_CLOSED = false; // 是否连已结案(作废/被覆盖)的一起画
+const FC_ST_COLOR = {
+  pending:['#4f46e5','#eef2ff'], reached:['#b91c1c','#fee2e2'],
+  expired:['#9a3412','#ffedd5'], invalidated:['#6b7280','#f3f4f6'],
+  superseded:['#9ca3af','#f9fafb'], converted:['#15803d','#dcfce7'],
+  cancelled:['#9ca3af','#f9fafb'],
+};
+
+function fcNum(v, d){ return (v==null||isNaN(v)) ? null : Number(Number(v).toFixed(d==null?2:d)); }
+
+// 收集当前两个面板的全部参数 —— P、拟合均值σ、起点价一起存，否则事后没法复盘
+function collectForecast(){
+  const t = CURRENT_TREND;
+  if (!t) return { err: '没有当前趋势数据' };
+  const pt = projAmpTarget();
+  if (!pt) return { err: '振幅拟合不可用（样本不足）' };
+  let projLen = null, remaining = null, endAt = null;
+  if (LEN_FIT) {
+    projLen = Math.max(1, Math.round(LEN_FIT.mean + invNorm(LEN_PCT/100) * LEN_FIT.std));
+    remaining = Math.max(0, projLen - (t.bars_in_trend || 0));
+    const d = addTradingBars(LATEST_LIVE_DATE, remaining);
+    endAt = d ? _fmtDT(d) : null;
+  }
+  return {
+    direction: pt.down ? 'down' : 'up',
+    seg_start_at: t.started_at,
+    seg_start_price: fcNum(pt.start),
+    price_at: fcNum(t.last_price != null ? t.last_price : LATEST_LIVE_CLOSE),
+    bars_at: t.bars_in_trend,
+    amp_walked_pct: fcNum(t.amplitude_pct),
+    amp_p: AMP_PCT, amp_p_source: AMP_P_SRC,
+    proj_amp_pct: fcNum(pt.projAmp),
+    target_price: fcNum(pt.target),
+    amp_fit_mean: fcNum(AMP_FIT && AMP_FIT.mean), amp_fit_std: fcNum(AMP_FIT && AMP_FIT.std),
+    len_p: LEN_PCT, len_p_source: LEN_P_SRC,
+    proj_len_bars: projLen, remaining_bars: remaining,
+    proj_end_at: endAt ? endAt.replace('T',' ') : null,
+    len_fit_mean: fcNum(LEN_FIT && LEN_FIT.mean, 0), len_fit_std: fcNum(LEN_FIT && LEN_FIT.std, 0),
+    note: (document.getElementById('fcNote') || {}).value || null,
+  };
+}
+
+async function saveForecast(){
+  const btn = document.getElementById('fcSaveBtn');
+  const payload = collectForecast();
+  if (payload.err) { alert('无法保存：' + payload.err); return; }
+  btn.disabled = true; const txt = btn.textContent; btn.textContent = '保存中…';
+  try{
+    const r = await fetch(`/stock/api/${CODE}/forecast`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(payload)}).then(x=>x.json());
+    if (!r.success) { alert('保存失败：' + (r.message||'')); return; }
+    const ap = r.data.already_passed;
+    if (ap) alert('已保存，但请注意：\n' + ap.hint + '\n（' + ap.at + '）');
+    const n = document.getElementById('fcNote'); if (n) n.value = '';
+    loadForecasts();
+  }catch(e){ alert('保存失败：' + e.message); }
+  finally{ btn.disabled = false; btn.textContent = txt; }
+}
+
+async function loadForecasts(){
+  const box = document.getElementById('fcList');
+  if (!box) return;
+  try{
+    const r = await fetch(`/stock/api/${CODE}/forecasts?limit=20`).then(x=>x.json());
+    if (!r.success) { box.innerHTML = `<span style="color:#9ca3af;font-size:.8rem;">读取失败：${r.message||''}</span>`; return; }
+    const list = r.data.forecasts || [];
+    FORECASTS = list;
+    drawKline();                 // 预估点要画到 15m 图上
+    if (!list.length) { box.innerHTML = '<span style="color:#9ca3af;font-size:.8rem;">还没有保存过预估</span>'; return; }
+    const cur = curPrice();
+    box.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:.78rem;">
+      <thead><tr style="color:#6b7280;">
+        <th style="text-align:left;padding:.2rem .35rem;">保存时间</th>
+        <th style="text-align:right;">目标价</th><th style="text-align:right;">距现价</th>
+        <th style="text-align:right;" title="预估的整段价格振幅">振幅%</th>
+        <th style="text-align:right;" title="预估的整段周期长度(15m根数)">长度</th>
+        <th style="text-align:right;">P(幅/长)</th><th style="text-align:left;">预估结束</th>
+        <th style="text-align:left;">状态</th><th style="text-align:left;">复盘</th><th></th>
+      </tr></thead><tbody>` + list.map(f=>{
+      const [fg,bg] = FC_ST_COLOR[f.status] || FC_ST_COLOR.pending;
+      let gap = '—';
+      if (cur != null && f.target_price != null && ['pending','expired'].includes(f.status)) {
+        const g = (f.direction === 'down') ? (cur - f.target_price)/cur*100 : (f.target_price - cur)/cur*100;
+        gap = g > 0.05 ? `还需${f.direction==='down'?'跌':'涨'} ${g.toFixed(2)}%`
+                       : '<b style="color:#b91c1c;">已到位</b>';
+      }
+      const rev = (f.actual_amp_pct != null)
+        ? `实际 ${f.actual_amp_pct}% / ${f.actual_len_bars}根　误差 ${f.amp_err_pct>0?'+':''}${f.amp_err_pct}% / ${f.len_err_bars>0?'+':''}${f.len_err_bars}根`
+        : (f.reviewed_at ? '—' : '<span style="color:#9ca3af;">段未结束</span>');
+      const act = ['pending','reached','expired'].includes(f.status)
+        ? `<a onclick="convertForecast(${f.id})" style="color:#15803d;cursor:pointer;">转计划</a>
+           · <a onclick="cancelForecast(${f.id})" style="color:#9ca3af;cursor:pointer;">作废</a>`
+        : (f.plan_id ? `<span style="color:#9ca3af;">${f.plan_id}</span>` : '');
+      return `<tr style="border-top:1px solid #f3f4f6;">
+        <td style="padding:.25rem .35rem;font-family:monospace;">${(f.forecast_at||'').slice(5,16)}</td>
+        <td style="text-align:right;font-family:monospace;font-weight:700;color:${f.direction==='down'?'#15803d':'#b91c1c'};">${f.target_price}</td>
+        <td style="text-align:right;">${gap}</td>
+        <td style="text-align:right;font-family:monospace;">${f.proj_amp_pct==null?'—':f.proj_amp_pct+'%'}</td>
+        <td style="text-align:right;font-family:monospace;">${f.proj_len_bars==null?'—':f.proj_len_bars+'根'}</td>
+        <td style="text-align:right;font-family:monospace;">P${f.amp_p}/P${f.len_p}</td>
+        <td style="font-family:monospace;">${(f.proj_end_at||'—').slice(5,16)}</td>
+        <td><span style="padding:1px 6px;border-radius:3px;background:${bg};color:${fg};" title="${f.status_note||''}">${f.status_label}</span></td>
+        <td style="color:#6b7280;">${rev}</td>
+        <td style="text-align:right;white-space:nowrap;">${act}</td>
+      </tr>`;
+    }).join('') + '</tbody></table>';
+  }catch(e){ box.innerHTML = `<span style="color:#9ca3af;font-size:.8rem;">读取失败：${e.message}</span>`; }
+}
+
+async function convertForecast(id){
+  const qty = prompt('转成交易计划，买入数量（股）：', '100');
+  if (qty == null) return;
+  const r = await fetch(`/stock/api/forecast/${id}/convert`, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({quantity: parseInt(qty)||100})}).then(x=>x.json());
+  if (!r.success) { alert('失败：' + (r.message||'')); return; }
+  alert(`已生成交易计划 ${r.data.plan_id}\n计划买入价 ${r.data.entry_price}`);
+  loadForecasts();
+}
+
+async function cancelForecast(id){
+  if (!confirm('作废这条预估？（不删除，仍保留为日后校准 P 的样本）')) return;
+  await fetch(`/stock/api/forecast/${id}/cancel`, {
+    method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'});
+  loadForecasts();
 }
 
 // 振幅 → 目标价
