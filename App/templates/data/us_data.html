@@ -1,0 +1,348 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="us-container">
+
+    <div class="us-header">
+        <h2>🇺🇸 美股 1m 历史数据下载</h2>
+        <div class="us-src">数据源：富途 OpenAPI（需 FutuOpenD 运行中）</div>
+    </div>
+
+    <!-- 额度面板：这是与 A 股页面最本质的区别，必须常驻可见 -->
+    <div class="card quota-card">
+        <div class="card-title">
+            历史K线额度
+            <button class="btn-sm ghost" onclick="loadQuota()">刷新</button>
+        </div>
+        <div class="quota-row">
+            <div class="quota-num" id="quotaRemain">-</div>
+            <div class="quota-meta">
+                <div>剩余 / 合计 <span id="quotaTotal">-</span></div>
+                <div class="hint">额度按<b>股票只数</b>计，与下载区间长短、次数无关；
+                    窗口内重复拉同一只<b>不重复扣</b>。所以策略是「一次拉满」。</div>
+            </div>
+        </div>
+        <div id="quotaDetail" class="quota-detail"></div>
+        <div id="quotaErr" class="err-line"></div>
+    </div>
+
+    <!-- 输入 + 体检 -->
+    <div class="card">
+        <div class="card-title">1. 输入标的并体检</div>
+        <div class="input-row">
+            <input type="text" id="codesInput" class="codes-input"
+                   placeholder="输入美股代码，逗号或空格分隔，如：AAPL, NVDA, TSLA"
+                   onkeydown="if(event.key==='Enter')doCheck()">
+            <button class="btn" onclick="doCheck()">检查本地数据</button>
+        </div>
+        <div class="hint">
+            体检不只看「有没有数据」——会按美股交易日历逐日核对根数
+            （全天 390 根 / 半日市 210 根），中间缺的交易日、根数不足的日子都会列出来。
+            此步骤<b>不消耗额度</b>。
+        </div>
+        <div id="checkResult"></div>
+    </div>
+
+    <!-- 下载 -->
+    <div class="card">
+        <div class="card-title">2. 下载</div>
+        <div class="input-row">
+            <label class="lbl">回溯年数
+                <select id="yearsSel" class="sel">
+                    <option value="8" selected>8 年（拉满，推荐）</option>
+                    <option value="5">5 年</option>
+                    <option value="3">3 年</option>
+                    <option value="1">1 年</option>
+                </select>
+            </label>
+            <button class="btn primary" id="dlBtn" onclick="doDownload()" disabled>开始下载</button>
+            <button class="btn danger" id="stopBtn" onclick="doStop()" style="display:none;">停止</button>
+        </div>
+        <div class="hint">
+            富途 1m 最深保留 8 年。既然扣的是「只」不是「量」，就该一次拉到底——
+            分批拉省不下额度，反而可能因跨过释放窗口而<b>重复扣费</b>。
+        </div>
+        <div id="dlSummary" class="dl-summary"></div>
+        <div class="progress-wrap"><div class="progress-bar" id="progBar"></div></div>
+        <div id="dlStatus" class="dl-status">尚未开始</div>
+        <pre id="dlLog" class="dl-log"></pre>
+    </div>
+
+</div>
+
+<style>
+.us-container { max-width: 1200px; margin: 0 auto; padding: 1rem; }
+.us-header { display:flex; align-items:baseline; justify-content:space-between;
+             margin-bottom:1rem; flex-wrap:wrap; gap:.5rem; }
+.us-header h2 { margin:0; }
+.us-src { font-size:.8rem; color:var(--text-secondary,#6b7280); }
+
+.card { background:var(--card-background,#fff); border-radius:.6rem; padding:1rem;
+        margin-bottom:1rem; box-shadow:var(--shadow-sm,0 1px 3px rgba(0,0,0,.1)); }
+.card-title { font-weight:600; margin-bottom:.75rem; display:flex;
+              align-items:center; gap:.6rem; }
+
+.quota-row { display:flex; align-items:center; gap:1rem; }
+.quota-num { font-size:2.2rem; font-weight:700; color:var(--primary-color,#2563eb);
+             min-width:4rem; text-align:center; }
+.quota-meta { font-size:.85rem; }
+.quota-detail { margin-top:.6rem; font-size:.78rem; color:var(--text-secondary,#6b7280);
+                display:flex; flex-wrap:wrap; gap:.4rem; }
+.quota-detail span { background:var(--background-color,#f3f4f6);
+                     padding:.15rem .5rem; border-radius:.25rem; }
+.hint { font-size:.78rem; color:var(--text-secondary,#6b7280); line-height:1.6; margin-top:.4rem; }
+.err-line { color:#b91c1c; font-size:.82rem; margin-top:.5rem; white-space:pre-wrap; }
+
+.input-row { display:flex; gap:.5rem; align-items:center; flex-wrap:wrap; }
+.codes-input { flex:1; min-width:260px; padding:.45rem .6rem; font-size:.9rem;
+               border:1px solid #d1d5db; border-radius:.35rem; }
+.lbl { font-size:.8rem; color:var(--text-secondary,#6b7280);
+       display:inline-flex; align-items:center; gap:.35rem; }
+.sel { padding:.35rem .5rem; border:1px solid #d1d5db; border-radius:.35rem; font-size:.85rem; }
+
+.btn { padding:.45rem .9rem; border:none; border-radius:.35rem; cursor:pointer;
+       background:var(--primary-color,#2563eb); color:#fff; font-size:.85rem; }
+.btn:disabled { background:#9ca3af; cursor:not-allowed; }
+.btn.primary { background:#7c3aed; }
+.btn.danger { background:#dc2626; }
+.btn-sm { padding:.15rem .5rem; font-size:.75rem; border:none; border-radius:.25rem;
+          cursor:pointer; background:var(--primary-color,#2563eb); color:#fff; }
+.btn-sm.ghost { background:#6b7280; }
+
+.chk-table { width:100%; border-collapse:collapse; margin-top:.75rem; font-size:.82rem; }
+.chk-table th, .chk-table td { padding:.4rem .5rem; border-bottom:1px solid #e5e7eb;
+                               text-align:left; white-space:nowrap; }
+.chk-table th { background:var(--background-color,#f9fafb); font-weight:600; }
+.tag { display:inline-block; padding:.1rem .45rem; border-radius:.25rem;
+       font-size:.72rem; font-weight:600; color:#fff; }
+.tag.ok { background:#16a34a; }
+.tag.warn { background:#f59e0b; }
+.tag.none { background:#6b7280; }
+.tag.cost { background:#dc2626; }
+.tag.free { background:#16a34a; }
+/* 缺口详情单行截断，点开看全部——同 A 股修复页的处理 */
+.gap-cell { max-width:320px; overflow:hidden; text-overflow:ellipsis;
+            white-space:nowrap; color:#b91c1c; }
+.gap-cell.clickable { cursor:pointer; text-decoration:underline dotted; text-underline-offset:2px; }
+
+.dl-summary { margin-top:.6rem; font-size:.85rem; }
+.dl-summary b { color:#b91c1c; }
+.progress-wrap { height:6px; background:#e5e7eb; border-radius:3px;
+                 overflow:hidden; margin-top:.75rem; }
+.progress-bar { height:100%; width:0; background:var(--primary-color,#2563eb);
+                transition:width .3s; }
+.dl-status { font-size:.85rem; margin-top:.5rem; }
+.dl-log { margin-top:.5rem; max-height:220px; overflow:auto; font-size:.75rem;
+          background:#111827; color:#d1d5db; padding:.6rem; border-radius:.35rem;
+          white-space:pre-wrap; }
+
+/* 缺口弹窗 */
+.gm { display:none; position:fixed; inset:0; z-index:1000; background:rgba(17,24,39,.5);
+      align-items:center; justify-content:center; padding:1rem; }
+.gm.open { display:flex; }
+.gm-box { background:#fff; border-radius:.5rem; width:min(680px,100%);
+          max-height:80vh; display:flex; flex-direction:column; }
+.gm-head { display:flex; justify-content:space-between; align-items:center;
+           padding:.75rem 1rem; border-bottom:1px solid #e5e7eb; font-weight:600; }
+.gm-body { padding:1rem; overflow:auto; font-size:.82rem; white-space:pre-wrap;
+           line-height:1.7; }
+.gm-x { background:none; border:none; font-size:1.3rem; cursor:pointer; color:#6b7280; }
+</style>
+
+<div class="gm" id="gapModal" onclick="if(event.target===this)closeGap()">
+    <div class="gm-box">
+        <div class="gm-head"><span id="gapTitle">缺口详情</span>
+            <button class="gm-x" onclick="closeGap()">&times;</button></div>
+        <div class="gm-body" id="gapBody"></div>
+    </div>
+</div>
+
+<script>
+let _checked = [];       // 最近一次体检结果
+let _pollTimer = null;
+let _gapTexts = {};
+
+function esc(s) {
+    return String(s == null ? '' : s)
+        .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function parseCodes() {
+    return (document.getElementById('codesInput').value || '')
+        .split(/[,，\s]+/).map(s => s.trim()).filter(Boolean);
+}
+
+// ---- 额度 ----
+function loadQuota() {
+    fetch('/api/us_data/quota').then(r => r.json()).then(j => {
+        const errEl = document.getElementById('quotaErr');
+        if (!j.success) {
+            errEl.textContent = j.message || '查询失败';
+            document.getElementById('quotaRemain').textContent = '-';
+            return;
+        }
+        errEl.textContent = '';
+        const q = j.quota;
+        document.getElementById('quotaRemain').textContent = q.remain;
+        document.getElementById('quotaTotal').textContent = q.total;
+        document.getElementById('quotaDetail').innerHTML = q.detail.length
+            ? '<span style="background:none;padding:0;">已占用：</span>' +
+              q.detail.map(d => `<span>${esc(d.code)} ${esc(d.name||'')} · ${esc(d.request_time||'')}</span>`).join('')
+            : '<span style="background:none;padding:0;">尚未占用任何额度</span>';
+    }).catch(e => {
+        document.getElementById('quotaErr').textContent = '查询额度失败：' + e.message;
+    });
+}
+
+// ---- 体检 ----
+function doCheck() {
+    const codes = parseCodes();
+    if (!codes.length) { alert('请先输入股票代码'); return; }
+    const box = document.getElementById('checkResult');
+    box.innerHTML = '<div class="hint">体检中…（正在读取本地数据并核对美股交易日历）</div>';
+    document.getElementById('dlBtn').disabled = true;
+
+    fetch('/api/us_data/check', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ codes })
+    }).then(r => r.json()).then(j => {
+        if (!j.success) { box.innerHTML = `<div class="err-line">${esc(j.message)}</div>`; return; }
+        _checked = j.items || [];
+        renderCheck(_checked);
+        document.getElementById('dlBtn').disabled = !_checked.length;
+        loadQuota();
+    }).catch(e => {
+        box.innerHTML = `<div class="err-line">体检失败：${esc(e.message)}</div>`;
+    });
+}
+
+function renderCheck(items) {
+    _gapTexts = {};
+    const rows = items.map((it, i) => {
+        let status, gaps = '';
+        if (!it.has_data) {
+            status = '<span class="tag none">本地无数据</span>';
+        } else if (it.ok) {
+            status = '<span class="tag ok">完整</span>';
+        } else {
+            status = '<span class="tag warn">有缺口</span>';
+            const parts = [];
+            if (it.missing_days.length)
+                parts.push(`整天缺失 ${it.missing_days.length} 天：` + it.missing_days.join(', '));
+            if (it.short_days.length)
+                parts.push(`根数不足 ${it.short_days.length} 天：` +
+                    it.short_days.map(s => `${s.date} ${s.got}/${s.expect}(${s.type})`).join(', '));
+            const txt = parts.join('\n\n');
+            _gapTexts[i] = `${it.code}\n\n${txt}`;
+            gaps = `<span class="gap-cell clickable" onclick="showGap(${i})"
+                     title="点击查看完整缺口清单">${esc(txt.replace(/\n+/g,' | '))}</span>`;
+        }
+        const cost = it.in_quota
+            ? '<span class="tag free">免费重拉</span>'
+            : '<span class="tag cost">消耗 1 额度</span>';
+        return `<tr>
+            <td><b>${esc(it.symbol)}</b></td>
+            <td>${status}</td>
+            <td>${cost}</td>
+            <td>${it.bars ? it.bars.toLocaleString() : '-'}</td>
+            <td>${it.days || '-'}</td>
+            <td>${it.start || '-'}</td>
+            <td>${it.end || '-'}</td>
+            <td>${gaps}</td>
+        </tr>`;
+    }).join('');
+
+    const newCount = items.filter(x => !x.in_quota).length;
+    document.getElementById('checkResult').innerHTML = `
+        <table class="chk-table">
+            <thead><tr><th>代码</th><th>本地状态</th><th>额度</th><th>根数</th>
+                <th>交易日</th><th>起</th><th>止</th><th>缺口</th></tr></thead>
+            <tbody>${rows}</tbody>
+        </table>`;
+    document.getElementById('dlSummary').innerHTML = newCount
+        ? `本次下载将消耗 <b>${newCount}</b> 个历史K线额度（其余为窗口内重拉，免费）。`
+        : `所选标的均已在额度窗口内，本次下载 <b>不消耗额度</b>。`;
+}
+
+function showGap(i) {
+    const t = _gapTexts[i]; if (!t) return;
+    document.getElementById('gapTitle').textContent = '缺口详情';
+    document.getElementById('gapBody').textContent = t;
+    document.getElementById('gapModal').classList.add('open');
+}
+function closeGap() { document.getElementById('gapModal').classList.remove('open'); }
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeGap(); });
+
+// ---- 下载 ----
+function doDownload() {
+    const codes = parseCodes();
+    if (!codes.length) { alert('请先输入并体检'); return; }
+    const years = document.getElementById('yearsSel').value;
+    const newCount = _checked.filter(x => !x.in_quota).length;
+    const msg = newCount
+        ? `将下载 ${codes.length} 只，回溯 ${years} 年。\n\n其中 ${newCount} 只是新标的，`
+          + `会消耗 ${newCount} 个历史K线额度（额度按只计，不可撤销）。\n\n确认开始？`
+        : `将下载 ${codes.length} 只，回溯 ${years} 年。\n\n均在额度窗口内，不消耗额度。\n\n确认开始？`;
+    if (!confirm(msg)) return;
+
+    fetch('/api/us_data/download', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ codes, years: parseInt(years, 10) })
+    }).then(r => r.json()).then(j => {
+        if (!j.success) { alert(j.message || '启动失败'); return; }
+        startPoll();
+    }).catch(e => alert('启动失败：' + e.message));
+}
+
+function doStop() {
+    fetch('/api/us_data/stop', { method: 'POST' })
+        .then(() => { document.getElementById('dlStatus').textContent = '正在停止…（当前标的处理完即停）'; });
+}
+
+function startPoll() {
+    document.getElementById('dlBtn').disabled = true;
+    document.getElementById('stopBtn').style.display = '';
+    if (_pollTimer) clearInterval(_pollTimer);
+    _pollTimer = setInterval(pollOnce, 1500);
+    pollOnce();
+}
+
+function pollOnce() {
+    fetch('/api/us_data/status').then(r => r.json()).then(j => {
+        const s = j.data || {};
+        const pct = s.total ? Math.round(s.done / s.total * 100) : 0;
+        document.getElementById('progBar').style.width = pct + '%';
+        document.getElementById('dlLog').textContent = (s.log || []).join('\n');
+        const el = document.getElementById('dlLog');
+        el.scrollTop = el.scrollHeight;
+
+        if (s.running) {
+            document.getElementById('dlStatus').textContent =
+                `下载中… ${s.done}/${s.total} (${pct}%)｜成功 ${s.ok} 失败 ${s.fail}`
+                + `｜当前 ${s.cur || '—'}（第 ${s.cur_pages} 页 / ${(s.cur_bars||0).toLocaleString()} 根）`
+                + `｜累计新增 ${(s.added||0).toLocaleString()} 根`;
+        } else {
+            clearInterval(_pollTimer); _pollTimer = null;
+            document.getElementById('dlBtn').disabled = false;
+            document.getElementById('stopBtn').style.display = 'none';
+            if (s.started) {
+                document.getElementById('dlStatus').textContent =
+                    (s.stopped ? '⏹ 已停止' : (s.error ? '✗ 异常：' + s.error : '✓ 完成'))
+                    + `｜共 ${s.done}/${s.total}，成功 ${s.ok} 失败 ${s.fail}`
+                    + `｜新增 ${(s.added||0).toLocaleString()} 根`
+                    + (s.failed && s.failed.length ? `｜失败：${s.failed.join(', ')}` : '');
+            }
+            loadQuota();
+            if (_checked.length) doCheck();   // 下完自动复检，直接看缺口是否补上
+        }
+    }).catch(() => {});
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    loadQuota();
+    // 页面打开时若已有任务在跑，接上进度
+    fetch('/api/us_data/status').then(r => r.json()).then(j => {
+        if (j.data && j.data.running) startPoll();
+    }).catch(() => {});
+});
+</script>
+{% endblock %}

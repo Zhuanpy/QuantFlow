@@ -171,6 +171,12 @@ def register_blueprints(app):
         print(f"警告: 无法导入 data_viewer_route 蓝图: {e}")
 
     try:
+        from App.routes.data.us_data_route import us_data_bp
+        app.register_blueprint(us_data_bp)
+    except ImportError as e:
+        print(f"警告: 无法导入 us_data_route 蓝图: {e}")
+
+    try:
         from App.routes.data.stock_detail_route import stock_detail_bp
         app.register_blueprint(stock_detail_bp)
     except ImportError as e:
