@@ -1,0 +1,453 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="up-container">
+
+    <div class="up-header">
+        <div>
+            <h2>🇺🇸 <span id="symTitle"></span> 长期跟踪档案</h2>
+            <div class="up-quote" id="quoteLine">日K加载中…</div>
+        </div>
+        <div class="up-actions">
+            <button class="btn ghost" onclick="updateBars()" id="btnBars">更新K线（富途）</button>
+            <button class="btn" onclick="secRunOnce()" id="btnSec">立即检查 SEC 披露</button>
+        </div>
+    </div>
+
+    <div class="card sec-card">
+        <div class="sec-line" id="secLine">SEC 监控状态加载中…</div>
+        <div class="hint" id="secHint"></div>
+        <div class="dl-status" id="barsStatus"></div>
+    </div>
+
+    <div class="card warn-card" id="lockupWarn" style="display:none">
+        ⚠️ 尚未录入<b>锁定期解禁</b>事件。IPO 锁定期常见为 180 天（约 2026-12 上旬），
+        但具体日期与分批条款以 424B4 招股书 “Lock-up” 章节为准——核实后在下方「添加事件」选分类「解禁」录入。
+    </div>
+
+    <div class="card">
+        <div class="card-title">日K与事件 <span class="hint">图钉 = 事件（落在事件日或之后第一个交易日），颜色越深越重要</span></div>
+        <div id="chart" style="height:460px"></div>
+        <div class="hint" id="chartEmpty" style="display:none">本地还没有日K数据：点右上「更新K线」从富途拉取（首次会占用 1 个历史K线额度）。</div>
+    </div>
+
+    <div class="card">
+        <div class="card-title">
+            事件时间线
+            <select id="evFilter" class="sel" onchange="renderEvents()"><option value="">全部分类</option></select>
+            <button class="btn-sm" onclick="openEvent()">＋ 添加事件</button>
+        </div>
+        <div class="hint">「当日%」= 事件后首个交易日相对前收；「5日%」= 第 5 个交易日收盘相对前收。盘后发布的披露看 5 日更可信。</div>
+        <div class="tbl-wrap">
+            <table class="tbl">
+                <thead><tr><th>日期</th><th>分类</th><th>重要</th><th>事件</th><th>当日%</th><th>5日%</th><th>我的预期</th><th>复盘</th><th></th></tr></thead>
+                <tbody id="evBody"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-title">季度 KPI <button class="btn-sm" onclick="openKpi()">＋ 添加/更新季度</button></div>
+        <div class="tbl-wrap">
+            <table class="tbl"><thead id="kpiHead"></thead><tbody id="kpiBody"></tbody></table>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-title">
+            SEC 披露
+            <select id="fFilter" class="sel" onchange="renderFilings()">
+                <option value="major">重要（8-K/10-Q/10-K/424B…）</option>
+                <option value="insider">内部人（Form 3/4/5/144）</option>
+                <option value="">全部</option>
+            </select>
+        </div>
+        <div class="tbl-wrap">
+            <table class="tbl">
+                <thead><tr><th>提交日</th><th>表格</th><th>内容</th><th>报告期</th><th>文档</th></tr></thead>
+                <tbody id="fBody"></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- 事件弹窗 -->
+<div class="gm" id="evModal">
+    <div class="gm-box">
+        <div class="card-title" id="evModalTitle">添加事件</div>
+        <input type="hidden" id="evId">
+        <div class="form-grid">
+            <label>日期<input type="date" id="evDate"></label>
+            <label>分类<select id="evCat"></select></label>
+            <label>重要性<select id="evImp"><option value="1">低</option><option value="2" selected>中</option><option value="3">高</option></select></label>
+            <label class="full">标题<input type="text" id="evTitle" maxlength="200"></label>
+            <label class="full">内容<textarea id="evDetail" rows="2"></textarea></label>
+            <label class="full">我的预期（事前）<textarea id="evExp" rows="2"></textarea></label>
+            <label class="full">复盘（事后）<textarea id="evReview" rows="2"></textarea></label>
+            <label class="full">来源链接<input type="text" id="evUrl"></label>
+        </div>
+        <div class="err-line" id="evErr"></div>
+        <div class="modal-actions">
+            <button class="btn ghost" onclick="closeModal('evModal')">取消</button>
+            <button class="btn" onclick="saveEvent()">保存</button>
+        </div>
+    </div>
+</div>
+
+<!-- KPI 弹窗 -->
+<div class="gm" id="kpiModal">
+    <div class="gm-box">
+        <div class="card-title">季度 KPI</div>
+        <input type="hidden" id="kpiId">
+        <div class="form-grid">
+            <label>期间<input type="text" id="kpiPeriod" placeholder="2026Q3"></label>
+            <label>报告期末<input type="date" id="kpiEnd"></label>
+        </div>
+        <div class="form-grid" id="kpiFields"></div>
+        <div class="form-grid"><label class="full">备注<textarea id="kpiNotes" rows="2"></textarea></label></div>
+        <div class="err-line" id="kpiErr"></div>
+        <div class="modal-actions">
+            <button class="btn ghost" onclick="closeModal('kpiModal')">取消</button>
+            <button class="btn" onclick="saveKpi()">保存</button>
+        </div>
+    </div>
+</div>
+
+<style>
+.up-container { max-width:1200px; margin:0 auto; padding:1rem; }
+.up-header { display:flex; justify-content:space-between; align-items:flex-end; flex-wrap:wrap; gap:.75rem; margin-bottom:.75rem; }
+.up-header h2 { margin:0; }
+.up-quote { font-size:.95rem; margin-top:.3rem; }
+.up-quote .px { font-size:1.4rem; font-weight:700; margin-right:.5rem; }
+.up { color:#16a34a; } .down { color:#dc2626; }
+.up-actions { display:flex; gap:.5rem; flex-wrap:wrap; }
+.card { background:var(--card-bg,#fff); border:1px solid #e5e7eb; border-radius:.5rem; padding:.9rem 1rem; margin-bottom:.9rem; }
+.card-title { font-weight:600; margin-bottom:.5rem; display:flex; align-items:center; gap:.6rem; flex-wrap:wrap; }
+.warn-card { background:#fffbeb; border-color:#fcd34d; font-size:.85rem; line-height:1.6; }
+.sec-line { font-size:.85rem; }
+.hint { font-size:.78rem; color:var(--text-secondary,#6b7280); line-height:1.6; font-weight:400; }
+.err-line { color:#b91c1c; font-size:.82rem; margin-top:.5rem; white-space:pre-wrap; }
+.dl-status { font-size:.82rem; margin-top:.3rem; }
+.sel { padding:.25rem .4rem; border:1px solid #d1d5db; border-radius:.3rem; font-size:.8rem; font-weight:400; }
+.btn { padding:.45rem .9rem; border:none; border-radius:.35rem; cursor:pointer; background:var(--primary-color,#2563eb); color:#fff; font-size:.85rem; }
+.btn:disabled { background:#9ca3af; cursor:not-allowed; }
+.btn.ghost { background:#6b7280; }
+.btn-sm { padding:.15rem .5rem; font-size:.75rem; border:none; border-radius:.25rem; cursor:pointer; background:var(--primary-color,#2563eb); color:#fff; font-weight:400; }
+.btn-sm.ghost { background:#6b7280; } .btn-sm.danger { background:#dc2626; }
+.tbl-wrap { overflow-x:auto; }
+.tbl { width:100%; border-collapse:collapse; font-size:.8rem; }
+.tbl th, .tbl td { padding:.35rem .5rem; border-bottom:1px solid #e5e7eb; text-align:left; vertical-align:top; }
+.tbl th { background:var(--background-color,#f9fafb); font-weight:600; white-space:nowrap; }
+.tbl td.num { text-align:right; white-space:nowrap; }
+.tbl td.txt { max-width:220px; white-space:pre-wrap; color:#374151; }
+.tag { display:inline-block; padding:.05rem .4rem; border-radius:.25rem; font-size:.72rem; color:#fff; background:#6b7280; white-space:nowrap; }
+.tag.sec { background:#7c3aed; }
+.imp3 { color:#b91c1c; font-weight:700; } .imp2 { color:#d97706; } .imp1 { color:#9ca3af; }
+.gm { display:none; position:fixed; inset:0; z-index:1000; background:rgba(17,24,39,.5); align-items:center; justify-content:center; padding:1rem; }
+.gm.show { display:flex; }
+.gm-box { background:#fff; border-radius:.5rem; padding:1rem 1.2rem; width:min(640px,100%); max-height:90vh; overflow:auto; }
+.form-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:.5rem .75rem; margin-bottom:.5rem; }
+.form-grid label { display:flex; flex-direction:column; font-size:.78rem; color:#4b5563; gap:.2rem; }
+.form-grid label.full { grid-column:1/-1; }
+.form-grid input, .form-grid select, .form-grid textarea { padding:.35rem .5rem; border:1px solid #d1d5db; border-radius:.3rem; font-size:.85rem; font-family:inherit; }
+.modal-actions { display:flex; justify-content:flex-end; gap:.5rem; margin-top:.5rem; }
+</style>
+
+<script src="{{ url_for('static', filename='js/echarts.js') }}"></script>
+<script>
+const SYM = {{ symbol|tojson }};
+const CATS = {{ categories|tojson }};
+const INSIDER = ['3','4','5','144','3/A','4/A','5/A','144/A'];
+const MAJOR_PREFIX = ['8-K','10-Q','10-K','DEF 14A','S-1','S-3','424B','SC 13D','SC 13G','SCHEDULE 13D','SCHEDULE 13G','6-K'];
+let EVENTS = [], FILINGS = [], KPI = {defs:[], rows:[]}, BARS = [];
+let chart = null;
+
+function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function pct(v) {
+    if (v == null) return '<span class="hint">-</span>';
+    const cls = v >= 0 ? 'up' : 'down';
+    return `<span class="${cls}">${v >= 0 ? '+' : ''}${v.toFixed(2)}%</span>`;
+}
+async function api(url, opt) {
+    const r = await fetch(url, opt);
+    return r.json();
+}
+function postJson(url, body) {
+    return api(url, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body || {})});
+}
+function closeModal(id) { document.getElementById(id).classList.remove('show'); }
+
+// ---------------------------------------------------------------- 日K
+async function loadDaily() {
+    const d = await api(`/api/us/${SYM}/daily`);
+    const q = document.getElementById('quoteLine');
+    if (!d.success) { q.textContent = '日K加载失败：' + d.message; return; }
+    BARS = d.bars || [];
+    const s = d.summary;
+    if (!s) {
+        q.textContent = '本地暂无日K';
+        document.getElementById('chartEmpty').style.display = '';
+    } else {
+        const cls = (s.chg_pct || 0) >= 0 ? 'up' : 'down';
+        q.innerHTML = `<span class="px ${cls}">$${s.close.toFixed(2)}</span>` +
+            (s.chg_pct != null ? `<span class="${cls}">${s.chg_pct >= 0 ? '+' : ''}${s.chg_pct.toFixed(2)}%</span>` : '') +
+            ` <span class="hint">截至 ${s.last_day} ｜ 本地区间 ${s.first_day}~${s.last_day}（${s.days} 天） ｜ 高 $${s.high_all.toFixed(2)} / 低 $${s.low_all.toFixed(2)}</span>`;
+    }
+    drawChart();
+}
+
+function drawChart() {
+    if (!BARS.length) return;
+    if (!chart) {
+        chart = echarts.init(document.getElementById('chart'));
+        window.addEventListener('resize', () => chart.resize());
+    }
+    const days = BARS.map(b => b[0]);
+    const highByDay = {};
+    BARS.forEach(b => highByDay[b[0]] = b[4]);
+    // 事件按 t0 聚合成图钉
+    const pins = {};
+    EVENTS.forEach(e => {
+        if (!e.t0 || !(e.t0 in highByDay)) return;
+        (pins[e.t0] = pins[e.t0] || []).push(e);
+    });
+    const impColor = {1:'#9ca3af', 2:'#f59e0b', 3:'#b91c1c'};
+    const pinData = Object.entries(pins).map(([day, evs]) => {
+        const imp = Math.max(...evs.map(e => e.importance || 2));
+        return {value:[day, highByDay[day] * 1.03], evs, itemStyle:{color: impColor[imp]}};
+    });
+    chart.setOption({
+        animation:false,
+        tooltip:{trigger:'axis', axisPointer:{type:'cross'}, formatter: params => {
+            let out = '';
+            params.forEach(p => {
+                if (p.seriesName === 'K') {
+                    const [o, c, l, h] = p.data.slice(1);
+                    out += `${p.axisValue}<br>开 ${o} 收 ${c}<br>低 ${l} 高 ${h}<br>`;
+                } else if (p.seriesName === '事件') {
+                    p.data.evs.forEach(e => out += `📌 [${esc(e.category_label)}] ${esc(e.title)}<br>`);
+                }
+            });
+            return out;
+        }},
+        grid:[{left:55, right:20, top:20, height:'62%'}, {left:55, right:20, top:'76%', height:'16%'}],
+        xAxis:[{type:'category', data:days, boundaryGap:true},
+               {type:'category', data:days, gridIndex:1, axisLabel:{show:false}}],
+        yAxis:[{scale:true}, {gridIndex:1, splitNumber:2, axisLabel:{formatter: v => (v/1e6).toFixed(0) + 'M'}}],
+        dataZoom:[{type:'inside', xAxisIndex:[0,1]}, {type:'slider', xAxisIndex:[0,1], bottom:0, height:16}],
+        series:[
+            {name:'K', type:'candlestick', data:BARS.map(b => [b[1], b[2], b[3], b[4]]),
+             itemStyle:{color:'#16a34a', color0:'#dc2626', borderColor:'#16a34a', borderColor0:'#dc2626'}},
+            {name:'事件', type:'scatter', symbol:'pin', symbolSize:22, data:pinData, z:5},
+            {name:'量', type:'bar', xAxisIndex:1, yAxisIndex:1,
+             data:BARS.map(b => ({value:b[5], itemStyle:{color: b[2] >= b[1] ? '#86efac' : '#fca5a5'}}))},
+        ],
+    }, true);
+}
+
+// 富途下载复用 /api/us_data/download（额度按只计，首次占 1 个）
+async function updateBars() {
+    const st = document.getElementById('barsStatus');
+    const chk = await postJson('/api/us_data/check', {codes:[SYM]});
+    if (!chk.success) { st.textContent = '富途体检失败：' + chk.message; return; }
+    const it = chk.items && chk.items[0];
+    if (it && it.in_quota === false && !confirm(`${SYM} 尚未在富途历史K线额度内，本次会永久占用 1 个额度。继续？`)) return;
+    const r = await postJson('/api/us_data/download', {codes:[SYM]});
+    if (!r.success) { st.textContent = 'K线更新启动失败：' + r.message; return; }
+    document.getElementById('btnBars').disabled = true;
+    const timer = setInterval(async () => {
+        const s = await api('/api/us_data/status');
+        const d = s.data || {};
+        st.textContent = `K线更新：${d.running ? '进行中' : '完成'} ｜ 新增 ${d.added || 0} 根` + (d.error ? ` ｜ 错误：${d.error}` : '');
+        if (!d.running) {
+            clearInterval(timer);
+            document.getElementById('btnBars').disabled = false;
+            await loadEvents();
+            loadDaily();
+        }
+    }, 2000);
+}
+
+// ---------------------------------------------------------------- SEC
+async function loadSecStatus() {
+    const r = await api('/api/us/sec_watch/status');
+    if (!r.success) return;
+    const d = r.data;
+    const line = document.getElementById('secLine');
+    const res = (d.last_result || {})[SYM];
+    line.innerHTML = `SEC 披露监控：${d.running ? '<b class="up">运行中</b>' : '<b class="down">未运行</b>'}`
+        + ` ｜ 每 ${Math.round(d.interval_sec/60)} 分钟 ｜ 关注 ${esc(d.watch.join(', '))}`
+        + ` ｜ 上次 ${esc(d.last_run || '-')}` + (res && !res.error ? `（新增 ${res.new}，推送 ${res.pushed}）` : '')
+        + ` ｜ 推送渠道：${r.channels.length ? esc(r.channels.join(', ')) : '<span class="down">未配置</span>'}`
+        + ` <button class="btn-sm ghost" onclick="toggleSec('${d.running ? 'stop' : 'start'}')">${d.running ? '停止' : '启动'}</button>`;
+    const hints = [];
+    if (!d.user_agent_set) hints.push('未设置环境变量 SEC_USER_AGENT（如 "QuantFlow 你的邮箱"），SEC 可能返回 403。');
+    if (d.last_error) hints.push('上次错误：' + d.last_error);
+    if (!r.channels.length) hints.push('未配置推送渠道：新披露只入库不推送（配置方式见 App/services/notifier.py）。');
+    document.getElementById('secHint').textContent = hints.join(' ');
+}
+async function toggleSec(action) {
+    const r = await postJson(`/api/us/sec_watch/${action}`);
+    if (!r.success) alert(r.message);
+    loadSecStatus();
+}
+async function secRunOnce() {
+    const b = document.getElementById('btnSec');
+    b.disabled = true; b.textContent = '检查中…';
+    try {
+        const r = await postJson('/api/us/sec_watch/run_once');
+        if (!r.success) { alert(r.message); return; }
+        const res = r.result[SYM];
+        if (res && res.error) alert('同步失败：' + res.error);
+        else if (res) alert(res.first_sync ? `首次同步：回填 ${res.new} 份披露（不推送）` : `新增 ${res.new} 份，推送 ${res.pushed} 条`);
+        await Promise.all([loadFilings(), loadEvents()]);
+        drawChart();
+        loadSecStatus();
+    } finally {
+        b.disabled = false; b.textContent = '立即检查 SEC 披露';
+    }
+}
+async function loadFilings() {
+    const r = await api(`/api/us/${SYM}/filings`);
+    FILINGS = r.success ? r.items : [];
+    renderFilings();
+}
+function renderFilings() {
+    const f = document.getElementById('fFilter').value;
+    const rows = FILINGS.filter(x => !f
+        || (f === 'insider' && INSIDER.includes(x.form))
+        || (f === 'major' && MAJOR_PREFIX.some(p => x.form === p || x.form.startsWith(p))));
+    document.getElementById('fBody').innerHTML = rows.length ? rows.map(x => `<tr>
+        <td>${esc(x.filed_date)}</td><td><span class="tag sec">${esc(x.form)}</span></td>
+        <td>${esc(x.items_desc || x.description || '')}</td><td>${esc(x.report_date || '')}</td>
+        <td>${x.doc_url ? `<a href="${esc(x.doc_url)}" target="_blank" rel="noopener">打开</a>` : ''}</td></tr>`).join('')
+        : '<tr><td colspan="5" class="hint">暂无。点右上「立即检查 SEC 披露」做首次同步。</td></tr>';
+}
+
+// ---------------------------------------------------------------- 事件
+async function loadEvents() {
+    const r = await api(`/api/us/${SYM}/events`);
+    EVENTS = r.success ? r.items : [];
+    document.getElementById('lockupWarn').style.display = EVENTS.some(e => e.category === 'lockup') ? 'none' : '';
+    renderEvents();
+}
+function renderEvents() {
+    const f = document.getElementById('evFilter').value;
+    const rows = EVENTS.filter(e => !f || e.category === f);
+    const impTxt = {1:'低', 2:'中', 3:'高'};
+    document.getElementById('evBody').innerHTML = rows.length ? rows.map(e => `<tr>
+        <td>${esc(e.event_date)}</td>
+        <td><span class="tag ${e.source === 'sec' ? 'sec' : ''}">${esc(e.category_label)}</span></td>
+        <td class="imp${e.importance}">${impTxt[e.importance] || ''}</td>
+        <td>${e.source_url ? `<a href="${esc(e.source_url)}" target="_blank" rel="noopener">${esc(e.title)}</a>` : esc(e.title)}
+            ${e.detail ? `<div class="hint">${esc(e.detail)}</div>` : ''}</td>
+        <td class="num">${pct(e.ret_d0)}</td><td class="num">${pct(e.ret_5d)}</td>
+        <td class="txt">${esc(e.expectation || '')}</td><td class="txt">${esc(e.review || '')}</td>
+        <td style="white-space:nowrap"><button class="btn-sm ghost" onclick="openEvent(${e.id})">编辑</button>
+            <button class="btn-sm danger" onclick="delEvent(${e.id})">删</button></td></tr>`).join('')
+        : '<tr><td colspan="9" class="hint">暂无事件</td></tr>';
+}
+function openEvent(id) {
+    const e = EVENTS.find(x => x.id === id) || {};
+    document.getElementById('evModalTitle').textContent = id ? '编辑事件' : '添加事件';
+    document.getElementById('evId').value = e.id || '';
+    document.getElementById('evDate').value = e.event_date || new Date().toISOString().slice(0, 10);
+    document.getElementById('evCat').value = e.category || 'other';
+    document.getElementById('evImp').value = e.importance || 2;
+    document.getElementById('evTitle').value = e.title || '';
+    document.getElementById('evDetail').value = e.detail || '';
+    document.getElementById('evExp').value = e.expectation || '';
+    document.getElementById('evReview').value = e.review || '';
+    document.getElementById('evUrl').value = e.source_url || '';
+    document.getElementById('evErr').textContent = '';
+    document.getElementById('evModal').classList.add('show');
+}
+async function saveEvent() {
+    const body = {
+        id: parseInt(document.getElementById('evId').value) || null,
+        event_date: document.getElementById('evDate').value,
+        category: document.getElementById('evCat').value,
+        importance: parseInt(document.getElementById('evImp').value),
+        title: document.getElementById('evTitle').value,
+        detail: document.getElementById('evDetail').value,
+        expectation: document.getElementById('evExp').value,
+        review: document.getElementById('evReview').value,
+        source_url: document.getElementById('evUrl').value,
+    };
+    const r = await postJson(`/api/us/${SYM}/events`, body);
+    if (!r.success) { document.getElementById('evErr').textContent = r.message; return; }
+    closeModal('evModal');
+    await loadEvents();
+    drawChart();
+}
+async function delEvent(id) {
+    const e = EVENTS.find(x => x.id === id);
+    if (!confirm(`删除事件「${e ? e.title : id}」？`)) return;
+    const r = await api(`/api/us/events/${id}`, {method:'DELETE'});
+    if (!r.success) { alert(r.message); return; }
+    await loadEvents();
+    drawChart();
+}
+
+// ---------------------------------------------------------------- KPI
+async function loadKpis() {
+    const r = await api(`/api/us/${SYM}/kpis`);
+    if (!r.success) return;
+    KPI = r;
+    document.getElementById('kpiHead').innerHTML = '<tr><th>期间</th>'
+        + KPI.defs.map(d => `<th>${esc(d.label)}</th>`).join('') + '<th>备注</th><th></th></tr>';
+    document.getElementById('kpiBody').innerHTML = KPI.rows.length ? KPI.rows.map(row => '<tr>'
+        + `<td>${esc(row.period)}</td>`
+        + KPI.defs.map(d => `<td class="num">${row.metrics[d.key] != null ? esc(row.metrics[d.key]) : '<span class="hint">-</span>'}</td>`).join('')
+        + `<td class="txt">${esc(row.notes || '')}</td>`
+        + `<td style="white-space:nowrap"><button class="btn-sm ghost" onclick="openKpi(${row.id})">编辑</button>`
+        + ` <button class="btn-sm danger" onclick="delKpi(${row.id})">删</button></td></tr>`).join('')
+        : `<tr><td colspan="${KPI.defs.length + 3}" class="hint">暂无。每季财报（10-Q/10-K）出来后录一行，看趋势。</td></tr>`;
+}
+function openKpi(id) {
+    const row = KPI.rows.find(x => x.id === id) || {metrics:{}};
+    document.getElementById('kpiId').value = row.id || '';
+    document.getElementById('kpiPeriod').value = row.period || '';
+    document.getElementById('kpiEnd').value = row.period_end || '';
+    document.getElementById('kpiNotes').value = row.notes || '';
+    document.getElementById('kpiFields').innerHTML = KPI.defs.map(d =>
+        `<label>${esc(d.label)}<input type="number" step="any" data-k="${esc(d.key)}" value="${row.metrics[d.key] != null ? esc(row.metrics[d.key]) : ''}"></label>`).join('');
+    document.getElementById('kpiErr').textContent = '';
+    document.getElementById('kpiModal').classList.add('show');
+}
+async function saveKpi() {
+    const metrics = {};
+    document.querySelectorAll('#kpiFields input').forEach(i => metrics[i.dataset.k] = i.value);
+    const r = await postJson(`/api/us/${SYM}/kpis`, {
+        id: parseInt(document.getElementById('kpiId').value) || null,
+        period: document.getElementById('kpiPeriod').value,
+        period_end: document.getElementById('kpiEnd').value || null,
+        notes: document.getElementById('kpiNotes').value,
+        metrics,
+    });
+    if (!r.success) { document.getElementById('kpiErr').textContent = r.message; return; }
+    closeModal('kpiModal');
+    loadKpis();
+}
+async function delKpi(id) {
+    if (!confirm('删除这一季 KPI？')) return;
+    const r = await api(`/api/us/kpis/${id}`, {method:'DELETE'});
+    if (!r.success) { alert(r.message); return; }
+    loadKpis();
+}
+
+// ---------------------------------------------------------------- init
+(function init() {
+    document.getElementById('symTitle').textContent = SYM;
+    const opts = Object.entries(CATS).map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join('');
+    document.getElementById('evCat').innerHTML = opts;
+    document.getElementById('evFilter').innerHTML += opts;
+    loadSecStatus();
+    loadFilings();
+    loadKpis();
+    // 事件先到，图钉才能画上
+    loadEvents().then(loadDaily);
+})();
+</script>
+{% endblock %}

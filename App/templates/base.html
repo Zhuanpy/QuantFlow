@@ -252,13 +252,14 @@
             <a href="{{ url_for('main_bp.index') }}" class="nav-logo">智能股票交易系统</a>
             <ul class="nav-menu">
                 {# 数据：获取 / 处理 / 管理 #}
-                {% set data_eps = ['dl_bp.dl', 'dl_funds_awkward_bp.download_funds_awake_index', 'process_data.process_15m_data_page', 'data_bp.stock_classification', 'data_bp.stock_market_data', 'data_bp.record_stock_minute', 'daily_viewer.daily_viewer_page', 'stock_detail_bp.stock_onemin_check_page', 'task_status.task_status_page', 'compare_bp.compare_page'] %}
+                {% set data_eps = ['dl_bp.dl', 'dl_funds_awkward_bp.download_funds_awake_index', 'process_data.process_15m_data_page', 'data_bp.stock_classification', 'data_bp.stock_market_data', 'data_bp.record_stock_minute', 'daily_viewer.daily_viewer_page', 'stock_detail_bp.stock_onemin_check_page', 'task_status.task_status_page', 'compare_bp.compare_page', 'us_data.us_data_page', 'us_data.us_profile_page'] %}
                 <li class="nav-item dropdown">
                     <span class="nav-link dropdown-toggle {% if request.endpoint in data_eps %}active{% endif %}" tabindex="0">数据</span>
                     <ul class="dropdown-menu">
                         <li class="dropdown-header">下载 / 获取</li>
                         <li><a href="{{ url_for('dl_bp.dl') }}" {% if request.endpoint == 'dl_bp.dl' %}class="active"{% endif %}>股票数据下载</a></li>
                         <li><a href="{{ url_for('dl_funds_awkward_bp.download_funds_awake_index') }}" {% if request.endpoint == 'dl_funds_awkward_bp.download_funds_awake_index' %}class="active"{% endif %}>基金数据分析</a></li>
+                        <li><a href="{{ url_for('us_data.us_data_page') }}" {% if request.endpoint == 'us_data.us_data_page' %}class="active"{% endif %}>美股 1m 数据下载</a></li>
                         <li class="dropdown-divider"></li>
                         <li class="dropdown-header">处理</li>
                         <li><a href="{{ url_for('process_data.process_15m_data_page') }}" {% if request.endpoint == 'process_data.process_15m_data_page' %}class="active"{% endif %}>15分钟数据处理</a></li>
@@ -269,6 +270,7 @@
                         <li><a href="{{ url_for('data_bp.record_stock_minute') }}" {% if request.endpoint == 'data_bp.record_stock_minute' %}class="active"{% endif %}>股票分钟数据记录</a></li>
                         <li class="dropdown-divider"></li>
                         <li class="dropdown-header">查看 / 检测</li>
+                        <li><a href="{{ url_for('us_data.us_profile_page') }}" {% if request.endpoint == 'us_data.us_profile_page' %}class="active"{% endif %}>🇺🇸 美股档案 SPCX</a></li>
                         <li><a href="{{ url_for('compare_bp.compare_page') }}" {% if request.endpoint == 'compare_bp.compare_page' %}class="active"{% endif %}>多标的对比分析</a></li>
                         <li><a href="{{ url_for('daily_viewer.daily_viewer_page') }}" {% if request.endpoint == 'daily_viewer.daily_viewer_page' %}class="active"{% endif %}>日线数据查看器</a></li>
                         <li><a href="{{ url_for('stock_detail_bp.stock_onemin_check_page') }}" {% if request.endpoint == 'stock_detail_bp.stock_onemin_check_page' %}class="active"{% endif %}>1分钟完整性检测</a></li>

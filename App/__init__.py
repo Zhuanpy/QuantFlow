@@ -70,6 +70,9 @@ def create_app(config_name='default'):
     # 持仓当日 1m 自动拉取（交易时段每 5 分钟）——后台 daemon 线程
     _maybe_start_holdings_autofetch(app)
 
+    # 美股 SEC 披露监控（每 30 分钟）——后台 daemon 线程
+    _maybe_start_us_sec_watch(app)
+
     return app
 
 
@@ -99,6 +102,18 @@ def _maybe_start_holdings_autofetch(app):
         print(f"持仓 1m 自动拉取: {msg}")
     except Exception as e:
         print(f"警告: 持仓 1m 自动拉取未启动: {e}")
+
+def _maybe_start_us_sec_watch(app):
+    """启动 SEC 披露监控线程。与持仓自动拉取同理只在 reloader 子进程起；
+    未走 reloader 时由首次打开 /us/profile 兜底自启。"""
+    if os.environ.get('WERKZEUG_RUN_MAIN') != 'true':
+        return
+    try:
+        from App.services.us_sec_watch import start_watch
+        ok, msg = start_watch(app)
+        print(f"美股 SEC 披露监控: {msg}")
+    except Exception as e:
+        print(f"警告: 美股 SEC 披露监控未启动: {e}")
 
 def register_blueprints(app):
     """注册所有蓝图"""
